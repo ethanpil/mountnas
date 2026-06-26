@@ -33,9 +33,10 @@ openssh
 openssh-client
 openssh-sftp-server
 
-# --- mesh VPN (service OFF by default) ---
+# --- mesh VPN (services OFF by default) ---
 tailscale
-# (ZeroTier is not packaged in Alpine; Tailscale covers the same mesh-VPN need.)
+# zerotier-one is injected by CI from ethanpil/ZeroTierOne-AlpineLinux-Binaries
+# (prebuilt static apk; not in Alpine repos), so it is not listed here.
 
 # --- name resolution / discovery ---
 avahi

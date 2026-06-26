@@ -20,6 +20,8 @@ jobs:
             squashfs-tools mtools dosfstools grub grub-efi git e2fsprogs gptfdisk util-linux
       - name: Build
         shell: alpine.sh --root {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
@@ -35,13 +37,14 @@ jobs:
           su build -s /bin/sh -c '
             set -eu; export HOME=/home/build
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
+            export ZT_TOKEN="'"$GH_TOKEN"'"
             cd "$HOME"; git clone --depth=1 --branch "'"$APORTS_REF"'" https://gitlab.alpinelinux.org/alpine/aports.git
             echo "== preflight =="
             apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -vE "^(mountnas-tools|snapraid|mergerfs)$") linux-lts
             echo "== verify every enabled service has an init script =="
             # install just the openrc service-script packages into a throwaway root
             # (no firmware) and confirm each rc_add service name resolves to a script.
-            apk add --root "$HOME/checkroot" --initdb --quiet \
+            apk add --root "$HOME/checkroot" --initdb --usermode --quiet \
               openrc busybox-openrc openssh-server-common-openrc dbus-openrc avahi-openrc \
               chrony-openrc acpid-openrc rpcbind-openrc smartmontools-openrc \
               docker-openrc samba-server-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc
@@ -57,6 +60,29 @@ jobs:
             ( cd "$HOME"/repo/snapraid && abuild checksum && abuild -r )
             echo "== build mergerfs (repackage upstream static binary) =="
             ( cd "$HOME"/repo/mergerfs && abuild checksum && abuild -r )
+            echo "== bake in ZeroTier (optional; prebuilt static apk) =="
+            # Pull the latest matching zerotier-one apk from the binaries repo, drop
+            # it into our local repo, and re-sign the index with our build key so apk
+            # trusts it like any local package. Every failure path is non-fatal (the
+            # su script runs under set -e): if the asset is missing or a fetch fails
+            # we warn and ZeroTier is simply not baked in; the rest of the image is
+            # unaffected. It is appended to world only on a fully successful fetch.
+            zt_repo="ethanpil/ZeroTierOne-AlpineLinux-Binaries"
+            if [ -n "$ZT_TOKEN" ]; then
+              zt_json=$(wget -q -O - --header="Authorization: Bearer $ZT_TOKEN" "https://api.github.com/repos/$zt_repo/releases/latest" || true)
+            else
+              zt_json=$(wget -q -O - "https://api.github.com/repos/$zt_repo/releases/latest" || true)
+            fi
+            zt_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+$ARCH\.apk" | head -n1 || true)
+            if [ -n "$zt_url" ] && ( cd "$HOME/packages/repo/$ARCH" \
+                && wget -q "$zt_url" \
+                && apk index -o APKINDEX.tar.gz *.apk \
+                && abuild-sign APKINDEX.tar.gz ); then
+              echo zerotier-one >> "$HOME/repo/packages.list"
+              echo "ZeroTier baked in: $zt_url"
+            else
+              echo "::warning::ZeroTier not baked in (no $ARCH .apk in latest release of $zt_repo, or fetch failed)."
+            fi
             echo "== ISO =="
             cp "$HOME"/repo/scripts/* aports/scripts/
             mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"

@@ -133,7 +133,8 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Docker** (started once `/mnt/nasdata` is up): data-root is `/mnt/nasdata/docker`. Put compose files and appdata under `/mnt/nasdata` so they survive a dead USB and travel with the data.
 - **Samba** (started once `/mnt/nasdata` is up): edit `/etc/samba/smb.conf`, `smbpasswd -a <user>`, `rc-service samba restart`, `nas commit`.
 - **NFS** (started once `/mnt/nasdata` is up): edit `/etc/exports`, `rc-service nfs restart`, `nas commit`.
-- **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`. (ZeroTier isn't packaged in Alpine; Tailscale covers the same need.)
+- **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`.
+- **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
 - **New admin user**: `adduser <name> wheel` (so `doas` works), then `nas commit`.
 
 ## Disk health (smartd) and UPS (nut)
@@ -221,8 +222,8 @@ __Disk Partitioning__
 
 __Parity / Volume Management__
 
-* snapraid
-* mergerfs
+* snapraid (Built from source, not Alpine repo)
+* mergerfs (Download static binary from GitHub release page)
 * mdadm
 * lvm2
 
@@ -255,6 +256,7 @@ __Networking / Transfer__
 __Overlay / Mesh VPN (services OFF by default)__
 
 * tailscale
+* zerotier-one
 
 __Name Resolution / Discovery__
 
