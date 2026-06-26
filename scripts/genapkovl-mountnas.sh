@@ -129,7 +129,6 @@ mk root:root 0644 "$tmp/etc/lbu/include" <<'EOF'
 usr/local/bin
 root
 var/lib/samba
-var/lib/zerotier-one
 var/lib/tailscale
 var/spool/cron/crontabs
 EOF
@@ -172,14 +171,12 @@ rc_add acpid default
 rc_add crond default
 rc_add rpcbind default          # for NFS server deps; harmless otherwise
 rc_add smartd default
-rc_add sysstat default
 rc_add local default
 rc_add mountnas-issue default    # console /etc/issue banner with the live IP
 rc_add mountnas default         # storage guard + starts docker/samba/nfs when ready
 # Data services are NOT in any runlevel — 'mountnas' starts them when storage is up.
 # OFF by default (enable per host, then nas commit):
 # rc_add tailscale default
-# rc_add zerotier-one default
 # rc_add nut-upsd default
 # rc_add nut-upsmon default
 

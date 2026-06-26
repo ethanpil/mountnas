@@ -1,0 +1,38 @@
+# Maintainer: MountNAS
+# mergerfs isn't in the stable repos, and the edge apk is unsafe to drop onto a
+# stable userland (compiled against edge's libstdc++). Upstream, however, ships
+# FULLY STATIC per-arch binaries with no libc/libstdc++ runtime dependency, so we
+# simply repackage the official static release into a local apk. No compilation.
+pkgname=mergerfs
+pkgver=2.42.0
+pkgrel=0
+pkgdesc="Featureful union filesystem (upstream prebuilt static binary)"
+url="https://github.com/trapexit/mergerfs"
+arch="x86_64 aarch64 x86 riscv64"
+license="ISC"
+depends="fuse3"
+options="!check !strip !tracedeps"
+
+# Map the Alpine CARCH to upstream's release arch suffix.
+case "$CARCH" in
+	x86_64)  _ma="amd64"   ;;
+	aarch64) _ma="arm64"   ;;
+	x86)     _ma="i386"    ;;
+	riscv64) _ma="riscv64" ;;
+esac
+source="mergerfs-$pkgver-static-linux_$_ma.tar.gz::https://github.com/trapexit/mergerfs/releases/download/$pkgver/mergerfs-$pkgver-static-linux_$_ma.tar.gz"
+builddir="$srcdir"
+
+build() { :; }
+
+package() {
+	# The static tarball mirrors a filesystem tree whose exact layout has shifted
+	# across releases, so locate the binary (and man page) instead of hardcoding.
+	local bin man
+	bin="$(find "$srcdir" -type f -name mergerfs | head -n1)"
+	[ -n "$bin" ] || { error "mergerfs binary not found in static tarball"; return 1; }
+	install -Dm755 "$bin" "$pkgdir"/usr/bin/mergerfs
+	man="$(find "$srcdir" -type f -name 'mergerfs.1*' | head -n1)"
+	[ -n "$man" ] && install -Dm644 "$man" "$pkgdir"/usr/share/man/man1/mergerfs.1.gz
+	return 0
+}

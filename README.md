@@ -91,7 +91,13 @@ Don't forget the one-time prep after `/mnt/disk1` is mounted:` mkdir -p /mnt/dis
   * Keep `/mnt/nasdata` out of the array
 * Schedule sync/scrub with `crontab -e`, then `nas commit`
 
-**NOTE:** A unified pool (mergerfs) is NOT included; each data disk is shared individually.
+**Unified pool (mergerfs):** [mergerfs](https://github.com/trapexit/mergerfs) IS included (as upstream's static binary). To pool several data disks into one mount, add a line like the following to `/etc/fstab` (after the member disks), then `nas validate` and `nas commit`:
+
+```text
+/mnt/disk1:/mnt/disk2  /mnt/pool  fuse.mergerfs  nofail,allow_other,use_ino,category.create=mfs,x-mount.mkdir  0 0
+```
+
+SnapRAID and mergerfs complement each other: SnapRAID gives you parity, mergerfs gives you a single namespace. Keep `/mnt/nasdata` (the system disk) out of both.
 
 ## The MountNAS swiss army knife: `nas`
 
@@ -127,7 +133,7 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Docker** (started once `/mnt/nasdata` is up): data-root is `/mnt/nasdata/docker`. Put compose files and appdata under `/mnt/nasdata` so they survive a dead USB and travel with the data.
 - **Samba** (started once `/mnt/nasdata` is up): edit `/etc/samba/smb.conf`, `smbpasswd -a <user>`, `rc-service samba restart`, `nas commit`.
 - **NFS** (started once `/mnt/nasdata` is up): edit `/etc/exports`, `rc-service nfs restart`, `nas commit`.
-- **Tailscale / ZeroTier** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`.
+- **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`. (ZeroTier isn't packaged in Alpine; Tailscale covers the same need.)
 - **New admin user**: `adduser <name> wheel` (so `doas` works), then `nas commit`.
 
 ## Disk health (smartd) and UPS (nut)
@@ -211,12 +217,12 @@ __Disk Partitioning__
 * parted
 * gptfdisk
 * cfdisk
-* cgdisk
 * sfdisk
 
 __Parity / Volume Management__
 
 * snapraid
+* mergerfs
 * mdadm
 * lvm2
 
@@ -225,10 +231,9 @@ __Disk Health / Recovery / Benchmarking__
 * smartmontools
 * nvme-cli
 * hdparm
-* sdparm
 * lsscsi
 * sg3_utils
-* gddrescue
+* ddrescue
 * fio
 
 __Device Manager__
@@ -246,12 +251,10 @@ __Networking / Transfer__
 * openssh
 * openssh-client
 * openssh-sftp-server
-* curlftpfs
 
 __Overlay / Mesh VPN (services OFF by default)__
 
 * tailscale
-* zerotier-one
 
 __Name Resolution / Discovery__
 
@@ -274,7 +277,7 @@ __Filesystems__
 * exfatprogs
 * dosfstools
 * ntfs-3g
-* ntfs-progs
+* ntfs-3g-progs
 * hfsprogs
 * udftools
 * fuse
@@ -301,7 +304,6 @@ __Network Diagnostics__
 __System Monitoring__
 
 * btop
-* nvtop
 * iotop
 * ncdu
 * sysstat

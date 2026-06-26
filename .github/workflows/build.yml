@@ -37,22 +37,26 @@ jobs:
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
             cd "$HOME"; git clone --depth=1 --branch "'"$APORTS_REF"'" https://gitlab.alpinelinux.org/alpine/aports.git
             echo "== preflight =="
-            apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -v mountnas-tools) linux-lts
+            apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -vE "^(mountnas-tools|snapraid|mergerfs)$") linux-lts
             echo "== verify every enabled service has an init script =="
             # install just the openrc service-script packages into a throwaway root
             # (no firmware) and confirm each rc_add service name resolves to a script.
             apk add --root "$HOME/checkroot" --initdb --quiet \
-              openrc busybox-openrc openssh-server-openrc dbus-openrc avahi-openrc \
-              chrony-openrc acpid-openrc rpcbind-openrc smartmontools-openrc sysstat-openrc \
-              docker-openrc samba-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc
+              openrc busybox-openrc openssh-server-common-openrc dbus-openrc avahi-openrc \
+              chrony-openrc acpid-openrc rpcbind-openrc smartmontools-openrc \
+              docker-openrc samba-server-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc
             miss=""
-            for s in dbus avahi-daemon sshd chronyd acpid crond rpcbind smartd sysstat syslog \
+            for s in dbus avahi-daemon sshd chronyd acpid crond rpcbind smartd syslog \
                      docker samba nfs networking localmount local bootmisc; do
               [ -f "$HOME/checkroot/etc/init.d/$s" ] || miss="$miss $s"
             done
             [ -z "$miss" ] || { echo "MISSING init scripts for:$miss — add the right -openrc package(s)"; exit 1; }
             echo "== build mountnas-tools =="
             ( cd "$HOME"/repo/mountnas-tools && abuild -r )
+            echo "== build snapraid (compiled from source) =="
+            ( cd "$HOME"/repo/snapraid && abuild checksum && abuild -r )
+            echo "== build mergerfs (repackage upstream static binary) =="
+            ( cd "$HOME"/repo/mergerfs && abuild checksum && abuild -r )
             echo "== ISO =="
             cp "$HOME"/repo/scripts/* aports/scripts/
             mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"

@@ -32,11 +32,10 @@ rclone
 openssh
 openssh-client
 openssh-sftp-server
-curlftpfs
 
-# --- overlay / mesh VPN (services OFF by default) ---
+# --- mesh VPN (service OFF by default) ---
 tailscale
-zerotier-one
+# (ZeroTier is not packaged in Alpine; Tailscale covers the same mesh-VPN need.)
 
 # --- name resolution / discovery ---
 avahi
@@ -56,15 +55,18 @@ f2fs-tools
 exfatprogs
 dosfstools
 ntfs-3g
-ntfs-progs
+ntfs-3g-progs
 hfsprogs
 udftools
 fuse
 fuse3
 fuse-overlayfs
 
-# --- parity / volume mgmt ---
+# --- parity / volume mgmt (snapraid + mergerfs are built locally; see the
+#     /snapraid and /mergerfs APKBUILDs — compiled from source / repackaged
+#     from upstream's static binary, since neither is in latest-stable) ---
 snapraid
+mergerfs
 mdadm
 lvm2
 
@@ -72,17 +74,15 @@ lvm2
 parted
 gptfdisk
 cfdisk
-cgdisk
 sfdisk
 
 # --- disk health / recovery / benchmarking ---
 smartmontools
 nvme-cli
 hdparm
-sdparm
 lsscsi
 sg3_utils
-gddrescue
+ddrescue
 fio
 
 # --- hardware identification ---
@@ -102,7 +102,6 @@ bind-tools
 
 # --- monitoring ---
 btop
-nvtop
 iotop
 ncdu
 sysstat
@@ -141,16 +140,15 @@ mkinitfs
 #     enabled services silently never start). The CI build verifies every
 #     enabled service has an init script — adjust this list if the check fails.
 busybox-openrc
-openssh-server-openrc
+openssh-server-common-openrc
 dbus-openrc
 avahi-openrc
 chrony-openrc
 acpid-openrc
 rpcbind-openrc
 smartmontools-openrc
-sysstat-openrc
 docker-openrc
-samba-openrc
+samba-server-openrc
 nfs-utils-openrc
 # optional services (enable per host; their script subpackage is here so it works):
 lvm2-openrc
