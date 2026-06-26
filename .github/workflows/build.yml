@@ -25,10 +25,16 @@ jobs:
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
           apk update; adduser -D build; addgroup build abuild 2>/dev/null || true
           cp -r "$GITHUB_WORKSPACE" /home/build/repo; chown -R build:build /home/build
+          # Generate the package signing key as the build user (this sets
+          # PACKAGER_PRIVKEY in ~build/.abuild/abuild.conf). We omit -i so keygen
+          # never needs root/doas; instead we install the public key into
+          # /etc/apk/keys ourselves (as root) so apk trusts the locally-built
+          # mountnas-tools repo when mkimage pulls from it.
+          su build -s /bin/sh -c 'export HOME=/home/build; abuild-keygen -an'
+          cp /home/build/.abuild/*.rsa.pub /etc/apk/keys/
           su build -s /bin/sh -c '
             set -eu; export HOME=/home/build
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
-            abuild-keygen -ain
             cd "$HOME"; git clone --depth=1 --branch "'"$APORTS_REF"'" https://gitlab.alpinelinux.org/alpine/aports.git
             echo "== preflight =="
             apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -v mountnas-tools) linux-lts
