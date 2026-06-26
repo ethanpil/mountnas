@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+description="MountNAS console login banner (/etc/issue) with the live IP"
+# Generates the banner once at boot (after the network is up) so the IP shows on
+# the console even if no interface ever comes up. Live refreshes on DHCP/link
+# changes are handled by the /etc/network/if-up.d/mountnas-issue hook.
+depend() { after networking net; }
+
+start() {
+	ebegin "Updating console login banner (/etc/issue)"
+	/usr/libexec/mountnas/gen-issue
+	eend 0
+}

@@ -1,0 +1,92 @@
+name: Build MountNAS
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:   { description: "Release tag (image filename)", required: true, default: "dev" }
+      alpine_branch: { description: "Alpine branch", required: true, default: "latest-stable" }
+      aports_ref:    { description: "aports git ref", required: true, default: "3.23-stable" }
+      arch:          { description: "Architecture", required: true, default: "x86_64" }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jirutka/setup-alpine@v1
+        with:
+          branch: ${{ inputs.alpine_branch }}
+          arch: ${{ inputs.arch }}
+          packages: >
+            alpine-sdk alpine-conf apk-tools busybox fakeroot syslinux xorriso
+            squashfs-tools mtools dosfstools grub grub-efi git e2fsprogs gptfdisk util-linux
+      - name: Build
+        shell: alpine.sh --root {0}
+        run: |
+          set -eu
+          TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
+          apk update; adduser -D build; addgroup build abuild 2>/dev/null || true
+          cp -r "$GITHUB_WORKSPACE" /home/build/repo; chown -R build:build /home/build
+          su build -s /bin/sh -c '
+            set -eu; export HOME=/home/build
+            export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
+            abuild-keygen -ain
+            cd "$HOME"; git clone --depth=1 --branch "'"$APORTS_REF"'" https://gitlab.alpinelinux.org/alpine/aports.git
+            echo "== preflight =="
+            apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -v mountnas-tools) linux-lts
+            echo "== verify every enabled service has an init script =="
+            # install just the openrc service-script packages into a throwaway root
+            # (no firmware) and confirm each rc_add service name resolves to a script.
+            apk add --root "$HOME/checkroot" --initdb --quiet \
+              openrc busybox-openrc openssh-server-openrc dbus-openrc avahi-openrc \
+              chrony-openrc acpid-openrc rpcbind-openrc smartmontools-openrc sysstat-openrc \
+              docker-openrc samba-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc
+            miss=""
+            for s in dbus avahi-daemon sshd chronyd acpid crond rpcbind smartd sysstat syslog \
+                     docker samba nfs networking localmount local bootmisc; do
+              [ -f "$HOME/checkroot/etc/init.d/$s" ] || miss="$miss $s"
+            done
+            [ -z "$miss" ] || { echo "MISSING init scripts for:$miss — add the right -openrc package(s)"; exit 1; }
+            echo "== build mountnas-tools =="
+            ( cd "$HOME"/repo/mountnas-tools && abuild -r )
+            echo "== ISO =="
+            cp "$HOME"/repo/scripts/* aports/scripts/
+            mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"
+            sh aports/scripts/mkimage.sh --tag "'"$TAG"'" --outdir "$HOME/iso" --arch "'"$ARCH"'" \
+              --repository "$HOME/packages/repo" --profile nas
+            echo "== seed overlay + world.base (embedded into the ISO) =="
+            ( cd "$HOME/iso"
+              sh "$HOME"/repo/scripts/genapkovl-mountnas.sh mountnas
+              { echo alpine-base; sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$PACKAGES_LIST"; echo linux-firmware mkinitfs; } \
+                | tr " " "\n" | sort -u > world.base
+              # embed world.base inside the ISO so upgrades need only the .iso
+              ISO=$(ls "$HOME"/iso/*.iso)
+              xorriso -dev "$ISO" -map "$HOME/iso/world.base" /world.base -commit )
+          '
+          echo "== assemble two-slot .img (A populated, B empty) =="
+          ISO=$(ls /home/build/iso/*.iso); OVL=$(ls /home/build/iso/*.apkovl.tar.gz); WB=/home/build/iso/world.base
+          IMG="/home/build/iso/mountnas-$TAG.img"
+          truncate -s 6G "$IMG"; LOOP=$(losetup -fP --show "$IMG")
+          sgdisk --zap-all "$LOOP"
+          sgdisk -n1:0:+4GiB -t1:ef00 -c1:BOOT "$LOOP"
+          sgdisk -n2:0:0 -t2:8300 -c2:MNASCFG "$LOOP"
+          partprobe "$LOOP"; sleep 1
+          mkfs.vfat -F32 -n BOOT "${LOOP}p1"
+          mkfs.ext4 -F -L MNASCFG "${LOOP}p2"     # found by label; no magic UUID
+          M=$(mktemp -d); mount "${LOOP}p1" "$M"
+          setup-bootable "$ISO" "$M"
+          mkdir -p "$M/A/boot" "$M/A/apks"
+          mv "$M"/boot/vmlinuz-lts "$M"/boot/initramfs-lts "$M"/boot/modloop-lts "$M/A/boot/" 2>/dev/null || true
+          [ -d "$M/apks" ] && mv "$M"/apks/* "$M/A/apks/" 2>/dev/null || true
+          cp "$WB" "$M/A/world.base"
+          echo "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4 console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG" > "$M/cmdline.base"
+          echo A > "$M/mountnas-active"; touch "$M/.nas-boot"
+          # generate bootloader config (uses the same helper the device ships)
+          install -Dm755 /home/build/repo/mountnas-tools/src/write-bootcfg /usr/libexec/mountnas/write-bootcfg
+          /usr/libexec/mountnas/write-bootcfg "$M" A ""
+          umount "$M"
+          mount "${LOOP}p2" "$M"; cp "$OVL" "$M/$(basename "$OVL")"; sync; umount "$M"
+          losetup -d "$LOOP"; gzip -9 "$IMG"
+          mkdir -p out; cp /home/build/iso/*.iso /home/build/iso/*.apkovl.tar.gz out/ || true
+          cp "$IMG.gz" out/; ( cd out && sha256sum * > SHA256SUMS )
+      - uses: actions/upload-artifact@v4
+        with: { name: mountnas-${{ inputs.release_tag }}, path: out/*, if-no-files-found: error }
+      # Optional: publish a GitHub Release with out/* (softprops/action-gh-release on a tag).

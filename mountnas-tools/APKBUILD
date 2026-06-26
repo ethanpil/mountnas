@@ -1,0 +1,28 @@
+# Maintainer: MountNAS
+pkgname=mountnas-tools
+pkgver=1.0.0
+pkgrel=0
+pkgdesc="MountNAS CLI, storage supervisor, and helpers"
+url="https://github.com/youruser/mountnas"
+arch="noarch"
+license="MIT"
+depends="alpine-conf lbu util-linux e2fsprogs smartmontools openrc busybox
+	docker samba nfs-utils"
+options="!check"
+source=""
+
+package() {
+	install -Dm755 "$srcdir"/../src/nas           "$pkgdir"/usr/sbin/nas
+	install -Dm755 "$srcdir"/../src/nas-make-usb  "$pkgdir"/usr/sbin/nas-make-usb
+	install -Dm755 "$srcdir"/../src/mountnas       "$pkgdir"/etc/init.d/mountnas
+	install -Dm755 "$srcdir"/../src/mountnas-net   "$pkgdir"/etc/init.d/mountnas-net
+	install -Dm755 "$srcdir"/../src/mountnas-sshkey "$pkgdir"/etc/init.d/mountnas-sshkey
+	install -Dm755 "$srcdir"/../src/mountnas-issue  "$pkgdir"/etc/init.d/mountnas-issue
+	install -Dm755 "$srcdir"/../src/write-bootcfg  "$pkgdir"/usr/libexec/mountnas/write-bootcfg
+	install -Dm755 "$srcdir"/../src/gen-issue      "$pkgdir"/usr/libexec/mountnas/gen-issue
+	install -Dm755 "$srcdir"/../src/issue-ifupdown "$pkgdir"/etc/network/if-up.d/mountnas-issue
+	install -Dm644 "$srcdir"/../src/profile-nas-welcome.sh "$pkgdir"/etc/profile.d/nas-welcome.sh
+	install -Dm644 "$srcdir"/../src/profile-nas-aliases.sh "$pkgdir"/etc/profile.d/nas-aliases.sh
+	install -Dm644 "$srcdir"/../src/profile-nas-prompt.sh  "$pkgdir"/etc/profile.d/nas-prompt.sh
+	echo "$pkgver" | install -Dm644 /dev/stdin "$pkgdir"/usr/share/mountnas/version
+}

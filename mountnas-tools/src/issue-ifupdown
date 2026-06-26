@@ -1,0 +1,6 @@
+#!/bin/sh
+# Installed as /etc/network/if-up.d/mountnas-issue.
+# Refresh the console /etc/issue banner whenever an interface comes up, so the
+# displayed IP tracks DHCP leases and link changes.
+[ -x /usr/libexec/mountnas/gen-issue ] && /usr/libexec/mountnas/gen-issue
+exit 0

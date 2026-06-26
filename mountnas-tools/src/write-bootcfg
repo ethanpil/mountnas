@@ -1,0 +1,36 @@
+#!/bin/sh
+# write-bootcfg <bootmnt> <active-slot> [fallback-slot]
+set -eu
+B="$1"; ACT="$2"; FB="${3:-}"
+BASE=$(cat "$B/cmdline.base" 2>/dev/null || echo \
+  "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4 console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG")
+append() { echo "$BASE modloop=/$1/boot/modloop-lts alpine_repo=/$1/apks"; }
+
+# BIOS / syslinux
+{
+	echo "SERIAL 0 115200"; echo "PROMPT 1"; echo "TIMEOUT 30"; echo "DEFAULT $ACT"; echo
+	for s in "$ACT" $FB; do
+		[ -d "$B/$s/boot" ] || continue
+		echo "LABEL $s"
+		echo "  MENU LABEL MountNAS (slot $s)"
+		echo "  KERNEL /$s/boot/vmlinuz-lts"
+		echo "  INITRD /$s/boot/initramfs-lts"
+		echo "  APPEND $(append "$s")"
+		echo
+	done
+} > "$B/syslinux.cfg"
+mkdir -p "$B/boot/syslinux"; cp "$B/syslinux.cfg" "$B/boot/syslinux/syslinux.cfg" 2>/dev/null || true
+
+# UEFI / grub
+mkdir -p "$B/boot/grub"
+{
+	echo "set timeout=30"; echo "set default=0"
+	for s in "$ACT" $FB; do
+		[ -d "$B/$s/boot" ] || continue
+		echo "menuentry \"MountNAS (slot $s)\" {"
+		echo "  linux /$s/boot/vmlinuz-lts $(append "$s")"
+		echo "  initrd /$s/boot/initramfs-lts"
+		echo "}"
+	done
+} > "$B/boot/grub/grub.cfg"
+sync

@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+description="MountNAS first-boot SSH key injection from the BOOT partition"
+# Drop a public-key file named 'authorized_keys' onto the FAT BOOT partition
+# (the one labelled BOOT) after flashing — it's readable/writable from any OS.
+# On every boot this installs those keys into /root/.ssh so a headless box is
+# reachable by key immediately, no console needed. It only APPENDS keys that
+# aren't already present, so it never fights your committed authorized_keys.
+depend() { need localmount; before sshd; }
+
+start() {
+	mp=$(mktemp -d) || return 0
+	if mount -o ro LABEL=BOOT "$mp" 2>/dev/null; then
+		src=""
+		for f in authorized_keys mountnas_authorized_keys mountnas-authorized_keys; do
+			[ -f "$mp/$f" ] && { src="$mp/$f"; break; }
+		done
+		if [ -n "$src" ]; then
+			mkdir -p /root/.ssh; chmod 700 /root/.ssh
+			while IFS= read -r k; do
+				case "$k" in ""|\#*) continue ;; esac
+				grep -qxF "$k" /root/.ssh/authorized_keys 2>/dev/null || printf '%s\n' "$k" >> /root/.ssh/authorized_keys
+			done < "$src"
+			chmod 600 /root/.ssh/authorized_keys
+			einfo "Installed SSH key(s) from BOOT:/$(basename "$src")"
+		fi
+		umount "$mp" 2>/dev/null
+	fi
+	rmdir "$mp" 2>/dev/null
+	return 0
+}

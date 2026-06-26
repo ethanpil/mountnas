@@ -1,0 +1,158 @@
+# --- MountNAS code (locally built apk) ---
+mountnas-tools
+
+# --- core shell / base utilities ---
+bash
+coreutils
+findutils
+util-linux
+less
+file
+tree
+pv
+mc
+tmux
+nano
+lsof
+psmisc
+jq
+yq
+tzdata
+
+# --- device manager (eudev, replaces mdev) ---
+eudev
+udev-init-scripts
+udev-init-scripts-openrc
+
+# --- networking / transfer ---
+curl
+wget
+rsync
+rclone
+openssh
+openssh-client
+openssh-sftp-server
+curlftpfs
+
+# --- overlay / mesh VPN (services OFF by default) ---
+tailscale
+zerotier-one
+
+# --- name resolution / discovery ---
+avahi
+dbus
+
+# --- file sharing servers ---
+samba
+samba-client
+samba-common-tools
+nfs-utils
+
+# --- filesystems ---
+e2fsprogs
+xfsprogs
+btrfs-progs
+f2fs-tools
+exfatprogs
+dosfstools
+ntfs-3g
+ntfs-progs
+hfsprogs
+udftools
+fuse
+fuse3
+fuse-overlayfs
+
+# --- parity / volume mgmt ---
+snapraid
+mdadm
+lvm2
+
+# --- partitioning ---
+parted
+gptfdisk
+cfdisk
+cgdisk
+sfdisk
+
+# --- disk health / recovery / benchmarking ---
+smartmontools
+nvme-cli
+hdparm
+sdparm
+lsscsi
+sg3_utils
+gddrescue
+fio
+
+# --- hardware identification ---
+pciutils
+usbutils
+dmidecode
+lshw
+lm-sensors
+lm-sensors-detect
+
+# --- network diagnostics ---
+ethtool
+iperf3
+tcpdump
+mtr
+bind-tools
+
+# --- monitoring ---
+btop
+nvtop
+iotop
+ncdu
+sysstat
+fastfetch
+
+# --- containers ---
+docker
+docker-cli-compose
+
+# --- time / power / privilege ---
+chrony
+acpid
+doas
+
+# --- UPS monitoring (NUT); services off until configured ---
+nut
+nut-openrc
+nut-udev
+
+# --- device firmware (full set; not trimmed) ---
+linux-firmware-amd
+linux-firmware-amdgpu
+linux-firmware-intel
+linux-firmware-realtek
+linux-firmware-mediatek
+linux-firmware-ath10k
+linux-firmware-ath11k
+linux-firmware-brcm
+linux-firmware-nvidia
+
+# --- initramfs builder ---
+mkinitfs
+
+# --- OpenRC service scripts (modern Alpine ships init scripts in -openrc
+#     subpackages; without these the /etc/init.d/* files don't exist and the
+#     enabled services silently never start). The CI build verifies every
+#     enabled service has an init script — adjust this list if the check fails.
+busybox-openrc
+openssh-server-openrc
+dbus-openrc
+avahi-openrc
+chrony-openrc
+acpid-openrc
+rpcbind-openrc
+smartmontools-openrc
+sysstat-openrc
+docker-openrc
+samba-openrc
+nfs-utils-openrc
+# optional services (enable per host; their script subpackage is here so it works):
+lvm2-openrc
+mdadm-openrc
+tailscale-openrc

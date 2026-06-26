@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+description="MountNAS first-boot network bootstrap"
+depend() { need localmount; before networking; }
+
+start() {
+	# Do nothing if the user has configured any non-lo interface already.
+	if awk '/^[[:space:]]*(auto|iface)[[:space:]]+/ && $2!="lo"{found=1} END{exit !found}' /etc/network/interfaces; then
+		return 0
+	fi
+	# Pick the first real wired NIC (prefer one with carrier).
+	pick=""
+	for path in /sys/class/net/*; do
+		n=$(basename "$path")
+		case "$n" in lo|veth*|docker*|br-*|virbr*|tap*|tun*|zt*|tailscale*|wg*|bond*|dummy*) continue ;; esac
+		[ -e "$path/wireless" ] && continue
+		ip link set "$n" up 2>/dev/null
+		[ -z "$pick" ] && pick="$n"
+		[ "$(cat "$path/carrier" 2>/dev/null)" = 1 ] && { pick="$n"; break; }
+	done
+	[ -n "$pick" ] || { ewarn "no wired NIC found to auto-configure"; return 0; }
+	einfo "First-boot: configuring DHCP on $pick (edit /etc/network/interfaces to customize)"
+	cat >> /etc/network/interfaces <<EOF
+
+auto $pick
+iface $pick inet dhcp
+EOF
+	return 0
+}

@@ -1,0 +1,106 @@
+#!/sbin/openrc-run
+description="MountNAS storage guard and data-service supervisor"
+DATA=/mnt/nasdata
+STATE=/run/mountnas
+BOOTMNT=/media/mnasboot
+LOG=/var/log/mountnas.log
+DATA_SERVICES="docker samba nfs"
+
+depend() { need localmount; after net; }
+
+log() { printf '%s mountnas: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
+_running_slot() {
+	s=$(sed -n 's#.*modloop=/\([AB]\)/.*#\1#p' /proc/cmdline 2>/dev/null)
+	[ -n "$s" ] && { echo "$s"; return; }
+	[ -f "$BOOTMNT/mountnas-active" ] && cat "$BOOTMNT/mountnas-active" || echo A
+}
+# fstab fstype for a mountpoint; "" if not declared
+_fstype() { awk '$1!~/^#/ && $2=="'"$1"'"{print $3; exit}' /etc/fstab; }
+_is_network_fs() { case "$1" in nfs|nfs4|cifs|smbfs|fuse.*|sshfs|glusterfs|ceph) return 0;; *) return 1;; esac; }
+
+start() {
+	mkdir -p "$STATE"; : > "$LOG" 2>/dev/null || true
+	log "storage check starting (slot $(_running_slot))"
+
+	# Seed the prompt's unsaved-count cache. The PS1 indicator only READS this
+	# file (never runs lbu itself), so the interactive prompt stays instant.
+	lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || echo 0 > "$STATE/unsaved"
+
+	# config partition (saves persist here). localmount already tried this entry;
+	# we retry here only to cover the case where busybox 'mount' ignored the
+	# fstab x-mount.mkdir option and so couldn't create /cfg the first time. /cfg
+	# is a LOCAL ext4 partition, so this retry cannot hang the way a remote can.
+	mountpoint -q /cfg || { mkdir -p /cfg; mount /cfg 2>>"$LOG" || log "/cfg mount failed"; }
+	if mountpoint -q /cfg; then echo ok > "$STATE/cfg"; else echo fail > "$STATE/cfg"
+		ewarn "Config partition /cfg NOT mounted — 'nas commit' will refuse to save."; log "/cfg NOT mounted"; fi
+
+	# Bind the running slot's local apk repo to a stable path for offline apk.
+	# The '! mountpoint -q' guard makes this idempotent: on 'mountnas restart' a
+	# second bind would STACK another mount on the same target instead of
+	# replacing it, slowly leaking mounts. Bind only when nothing is there yet.
+	if mountpoint -q "$BOOTMNT" || mount -o ro LABEL=BOOT "$BOOTMNT" 2>>"$LOG"; then
+		slot=$(_running_slot); mkdir -p "$STATE/apks"
+		if [ -d "$BOOTMNT/$slot/apks" ] && ! mountpoint -q "$STATE/apks"; then
+			mount --bind "$BOOTMNT/$slot/apks" "$STATE/apks" 2>>"$LOG" || log "apks bind failed"
+		fi
+	fi
+
+	# Protect declared LOCAL data mounts that failed to mount, with a read-only
+	# tmpfs placeholder (browsable but unwritable). Skip /mnt/nasdata (handled
+	# specially below). Skip network filesystems entirely: we must never try to
+	# mount them (a dead remote would hang boot) nor placeholder them (that would
+	# clobber a mountpoint that may come up later or be written by a daemon).
+	awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $2}' /etc/fstab | while read -r mp; do
+		[ "$mp" = "$DATA" ] && continue
+		ft=$(_fstype "$mp"); _is_network_fs "$ft" && continue
+		if mountpoint -q "$mp"; then continue; fi
+		mkdir -p "$mp"
+		if mount -t tmpfs -o ro,size=4k,mode=0555 mountnas-blocked "$mp" 2>>"$LOG"; then
+			log "placeholder (ro tmpfs) over unmounted $mp"
+		fi
+	done
+
+	# data tier (system disk, always local)
+	if ! awk '$1!~/^#/ && $2=="'"$DATA"'"{f=1} END{exit !f}' /etc/fstab; then
+		echo fresh > "$STATE/data"; log "no data disk configured"
+		ewarn "No data disk configured. Add it to /etc/fstab, then: nas commit"
+		ewarn "Docker/Samba/NFS stay off until $DATA is mounted."
+		return 0
+	fi
+	# retry /mnt/nasdata once (local disk; safe, no hang). No placeholder exists
+	# here — the loop above skipped it and stop() clears placeholders on restart.
+	if ! mountpoint -q "$DATA"; then
+		mkdir -p "$DATA"; mount "$DATA" 2>>"$LOG" || true
+	fi
+	if mountpoint -q "$DATA"; then
+		mkdir -p "$DATA/docker" "$DATA/appdata" "$DATA/backups"
+		echo ok > "$STATE/data"; log "$DATA mounted; starting data services"
+		einfo "$DATA mounted — starting data services."
+		for s in $DATA_SERVICES; do
+			rc-service "$s" status >/dev/null 2>&1 || rc-service "$s" start 2>>"$LOG" || log "$s failed to start"
+		done
+		return 0
+	fi
+	dev=$(awk '$1!~/^#/ && $2=="'"$DATA"'"{print $1; exit}' /etc/fstab)
+	if [ -n "$dev" ] && ! findfs "$dev" >/dev/null 2>&1; then
+		echo disconnected > "$STATE/data"; log "$DATA device $dev NOT FOUND"
+		eerror "Data disk $DATA ($dev) NOT FOUND — check power/cabling. Services held."
+	else
+		echo mountfail > "$STATE/data"; log "$DATA present but mount failed"
+		eerror "Data disk $DATA present but FAILED to mount. Services held."
+	fi
+	# block stray writes to the empty system mountpoint, too
+	mkdir -p "$DATA"; mount -t tmpfs -o ro,size=4k,mode=0555 mountnas-blocked "$DATA" 2>>"$LOG" || true
+	return 0     # always succeed; state is reported, never a failed boot service
+}
+
+stop() {
+	for s in $DATA_SERVICES; do
+		rc-service "$s" status >/dev/null 2>&1 && rc-service "$s" stop
+	done
+	# drop any read-only placeholders so a restart can retry the real mounts
+	awk '$1=="mountnas-blocked"{print $2}' /proc/mounts | while read -r mp; do
+		umount "$mp" 2>/dev/null || true
+	done
+	return 0
+}

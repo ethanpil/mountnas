@@ -1,0 +1,387 @@
+#!/bin/sh
+# nas — MountNAS control CLI
+set -u
+DATA=/mnt/nasdata
+BACKUPS="$DATA/backups"
+CFG=/cfg
+STATE=/run/mountnas
+BOOTMNT=/media/mnasboot
+WBCFG=/usr/libexec/mountnas/write-bootcfg
+VERSION=$(cat /usr/share/mountnas/version 2>/dev/null || echo "?")
+ok()  { printf '  [ OK ] %s\n' "$*"; }
+warn(){ printf '  [WARN] %s\n' "$*"; }
+bad() { printf '  [FAIL] %s\n' "$*"; }
+confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
+running_slot() { s=$(sed -n 's#.*modloop=/\([AB]\)/.*#\1#p' /proc/cmdline 2>/dev/null); echo "${s:-A}"; }
+other_slot() { [ "$1" = A ] && echo B || echo A; }
+# Refresh the prompt's unsaved-count cache. Called after every command so the
+# PS1 indicator stays current without ever running lbu from the prompt itself.
+_refresh_unsaved() { mkdir -p "$STATE"; lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || true; }
+
+cmd_version() { echo "MountNAS $VERSION (slot $(running_slot))"; }
+
+cmd_help() {
+	cat <<EOF
+MountNAS $VERSION — control CLI
+
+  nas setup      Guided first-run setup (password, timezone, SSH key)
+  nas status     Fast health glance
+  nas disks      Every disk + how fstab maps it
+  nas validate   Pre-flight storage checker (run after editing fstab)
+  nas checkup    Deep health (validate + SMART, RAM, SnapRAID, time)
+  nas restart    Re-mount disks + (re)start services (no reboot)
+  nas commit     Save changes to the USB            (alias: nas save)
+  nas backup     Copy saved config to the data disk (--to <dest> off-box)
+  nas restore    Restore a saved config (dead-USB recovery)
+  nas shutdown   Power off (warns on unsaved changes)
+  nas reboot     Reboot   (warns on unsaved changes)
+  nas upgrade    Upgrade the OS — see UPGRADE.md
+  nas help / version
+
+Important paths:
+  /cfg                     Config partition (your saved overlay)
+  $DATA              System disk: Docker data-root, appdata, backups
+  /mnt/disk* /mnt/parity*  SnapRAID disks (you define them in fstab)
+  /etc/fstab               WHERE YOU CONFIGURE DISKS (not a tool, not storage.conf)
+  /etc/docker/daemon.json  Docker (data-root = $DATA/docker)
+  /etc/samba/smb.conf      Samba    /etc/exports  NFS    /etc/snapraid.conf SnapRAID
+  $BACKUPS          Automatic config backups (made on every commit)
+
+To grant a new user admin rights:  adduser <user> wheel   (then: nas commit)
+Nothing persists across reboot until you run 'nas commit'.
+EOF
+}
+
+cmd_status() {
+	echo "MountNAS $VERSION (slot $(running_slot))  —  $(hostname)  —  up $(cut -d. -f1 /proc/uptime)s"
+	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')
+	echo "  IP: ${ip:-none}    RAM: $(free -m | awk '/Mem:/{print $3"/"$2" MB"}')"
+	mountpoint -q "$CFG" && ok "config partition mounted ($CFG)" || bad "config partition NOT mounted — saves will be lost"
+	case "$(cat $STATE/data 2>/dev/null)" in
+		ok)           ok "data disk mounted ($DATA)" ;;
+		fresh)        warn "no data disk configured — add to /etc/fstab, then nas commit" ;;
+		disconnected) bad "data disk NOT FOUND — check power/cabling" ;;
+		mountfail)    bad "data disk failed to mount — check filesystem" ;;
+		*)            warn "data disk state unknown" ;;
+	esac
+	for s in docker samba nfs sshd avahi-daemon; do
+		rc-service "$s" status >/dev/null 2>&1 && ok "$s running" || warn "$s not running"
+	done
+	n=$(lbu status 2>/dev/null | grep -c .)
+	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
+}
+
+cmd_disks() {
+	echo "Detected disks:"
+	lsblk -dno NAME,SIZE,TYPE,FSTYPE,UUID | awk '$3=="disk"||$3=="part"{printf "  %-10s %-7s %-7s %s\n",$1,$2,$4,$5}'
+	echo
+	echo "Configured in /etc/fstab:"
+	awk '$1!~/^#/ && $2 ~ /^(\/cfg|\/mnt\/)/ {printf "  %-14s %s\n",$2,$1}' /etc/fstab
+}
+
+cmd_validate() {
+	rc=0
+	mountpoint -q "$CFG" && ok "/cfg config partition mounted" || { bad "/cfg not mounted (saves would be lost)"; rc=1; }
+	# per data mount
+	awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $1" "$2" "$4}' /etc/fstab | while read -r spec mp opts; do
+		case "$spec" in UUID=*) u=${spec#UUID=}
+			findfs "UUID=$u" >/dev/null 2>&1 && ok "$mp: UUID resolves" || bad "$mp: UUID $u NOT FOUND" ;;
+		esac
+		echo "$opts" | grep -q nofail        && ok "$mp: nofail present"        || warn "$mp: missing nofail"
+		echo "$opts" | grep -q x-mount.mkdir && ok "$mp: x-mount.mkdir present" || warn "$mp: missing x-mount.mkdir"
+		mountpoint -q "$mp" && ok "$mp: mounted" || warn "$mp: declared but not mounted"
+	done
+	# duplicates
+	dupu=$(awk '$1~/^UUID=/ && $2!~/^#/{print $1}' /etc/fstab | sort | uniq -d)
+	[ -n "$dupu" ] && bad "duplicate UUID in fstab: $dupu"
+	dupm=$(awk '$1!~/^#/ && $2 ~ /^\/(cfg|mnt)/{print $2}' /etc/fstab | sort | uniq -d)
+	[ -n "$dupm" ] && bad "duplicate mountpoint in fstab: $dupm"
+	# docker data-root under /mnt/nasdata
+	dr=$(awk -F'"' '/data-root/{print $4}' /etc/docker/daemon.json 2>/dev/null)
+	[ -n "$dr" ] && { [ "${dr#"$DATA"}" != "$dr" ] && ok "Docker data-root under $DATA" || bad "Docker data-root ($dr) NOT under $DATA"; }
+	# no data path tracked
+	grep -qE "^(/?mnt/nasdata|/?mnt/disk|/?mnt/parity)" /etc/lbu/include 2>/dev/null \
+		&& bad "a data path is in /etc/lbu/include (commit would copy your disk!)" \
+		|| ok "lbu include has no data paths"
+	# share paths must be live mountpoints
+	awk -F= '/^[[:space:]]*path[[:space:]]*=/{gsub(/[[:space:]]/,"",$2);print $2}' /etc/samba/smb.conf 2>/dev/null | while read -r p; do
+		[ -z "$p" ] && continue
+		td=$p; while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
+		mountpoint -q "$td" && ok "samba path $p on a mounted fs" || bad "samba path $p is on RAM (no disk mounted)"
+	done
+	[ -f /etc/exports ] && awk '/^\//{print $1}' /etc/exports | while read -r p; do
+		td=$p; while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
+		mountpoint -q "$td" && ok "nfs export $p on a mounted fs" || bad "nfs export $p is on RAM (no disk mounted)"
+	done
+	# snapraid parity sizing (best-effort)
+	if grep -q '^data ' /etc/snapraid.conf 2>/dev/null; then
+		maxd=$(awk '/^data /{print $3}' /etc/snapraid.conf | while read -r d; do df -k "$d" 2>/dev/null|awk 'NR==2{print $2}'; done | sort -n | tail -1)
+		par=$(awk '/^parity /{print $2}' /etc/snapraid.conf | sed 's#/[^/]*$##')
+		[ -n "$par" ] && { ps=$(df -k "$par" 2>/dev/null|awk 'NR==2{print $2}')
+			[ -n "$ps" ] && [ -n "$maxd" ] && { [ "$ps" -ge "$maxd" ] && ok "SnapRAID parity >= largest data disk" || bad "SnapRAID parity SMALLER than largest data disk"; }; }
+	fi
+	# data services must NOT be in a runlevel — mountnas owns them. A user who runs
+	# 'rc-update add docker default' would start Docker before the disk mounts.
+	for s in docker samba nfs; do
+		if rc-update show 2>/dev/null | grep -qE "^\s*$s\b"; then
+			bad "$s is in a runlevel — mountnas must own it. Remove: rc-update del $s default"
+		else ok "$s not in a runlevel (managed by mountnas)"; fi
+	done
+	return 0
+}
+
+cmd_checkup() {
+	echo "== storage validation =="; cmd_validate
+	echo "== hardware / runtime =="
+	df -h / 2>/dev/null | awk 'NR==2{print "  root (RAM) used: "$5}'
+	for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}'); do
+		h=$(smartctl -H "/dev/$d" 2>/dev/null | awk -F: '/overall-health/{gsub(/ /,"",$2);print $2}')
+		[ -n "$h" ] && { [ "$h" = PASSED ] && ok "/dev/$d SMART PASSED" || bad "/dev/$d SMART $h"; }
+	done
+	command -v snapraid >/dev/null 2>&1 && grep -q '^data ' /etc/snapraid.conf 2>/dev/null && \
+		snapraid status 2>/dev/null | grep -iE 'days|sync|scrub' | sed 's/^/  /'
+	chronyc tracking >/dev/null 2>&1 && ok "time sync active" || warn "time not synced"
+}
+
+cmd_restart() {
+	# Re-run the storage supervisor: re-mount data disks and (re)start
+	# docker/samba/nfs, without rebooting. Handy after editing /etc/fstab.
+	rc-service mountnas restart
+}
+
+_backup() {
+	mountpoint -q "$DATA" || { warn "data disk not mounted — skipping off-USB backup"; return 0; }
+	mkdir -p "$BACKUPS"
+	f=$(ls -1 "$CFG"/*.apkovl.tar.gz 2>/dev/null | head -n1); [ -f "$f" ] || return 0
+	dest="$BACKUPS/$(hostname)-$(date +%Y%m%d-%H%M%S).apkovl.tar.gz"
+	cp "$f" "$dest" && ok "config backed up: $dest"
+	ls -1t "$BACKUPS"/*.apkovl.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
+	[ -n "${1:-}" ] && { cp "$f" "$1" 2>/dev/null && ok "also copied to $1" || warn "could not copy to $1"; }
+}
+
+cmd_commit() {
+	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
+	grep -qE "^(/?mnt/nasdata|/?mnt/disk|/?mnt/parity)" /etc/lbu/include 2>/dev/null \
+		&& { bad "a data path is in /etc/lbu/include — refusing (would tar your data disk)"; return 1; }
+	echo "Saving configuration..."
+	lbu commit -v || { bad "lbu commit failed"; return 1; }
+	sz=$(du -k "$CFG"/*.apkovl.tar.gz 2>/dev/null | awk '{s+=$1}END{print s}')
+	[ "${sz:-0}" -gt 51200 ] && warn "overlay is large (${sz}KB) — a big file in a tracked path (e.g. /root)?"
+	ok "saved to $CFG"; _backup
+}
+
+cmd_backup() { dest=""; [ "${1:-}" = "--to" ] && dest="${2:-}"
+	mountpoint -q "$CFG" || { bad "config partition not mounted"; return 1; }; _backup "$dest"; }
+
+cmd_restore() {
+	# Collect ALL backups across the default path and every attached disk, newest
+	# first, then require an explicit choice — never silently pick first-found.
+	echo "Searching for MountNAS config backups (newest first)..."
+	work=$(mktemp -d); idx="$work/list"; : > "$idx"
+	add_from() { # <mounted-dir> <label>
+		for f in "$1"/backups/*.apkovl.tar.gz; do
+			[ -f "$f" ] || continue
+			printf '%s\t%s\t%s\n' "$(stat -c %Y "$f" 2>/dev/null || echo 0)" "$2:$(basename "$f")" "$f" >> "$idx"
+		done
+	}
+	# default path first (if the data disk is already mounted)
+	mountpoint -q "$DATA" && add_from "$DATA" "$DATA"
+	# then every attached block device, mounted read-only
+	for dev in $(blkid -o device 2>/dev/null); do
+		case "$dev" in *loop*) continue ;; esac
+		mountpoint -q "$DATA" && [ "$(findmnt -no SOURCE "$DATA" 2>/dev/null)" = "$dev" ] && continue
+		mp=$(mktemp -d); if mount -o ro "$dev" "$mp" 2>/dev/null; then
+			# copy candidates out before unmounting
+			n=0; for f in "$mp"/backups/*.apkovl.tar.gz; do
+				[ -f "$f" ] || continue; n=$((n+1))
+				c="$work/$(echo "$dev" | tr -c 'A-Za-z0-9' _).$n"; cp "$f" "$c"
+				printf '%s\t%s\t%s\n' "$(stat -c %Y "$f" 2>/dev/null || echo 0)" "$dev:$(basename "$f")" "$c" >> "$idx"
+			done
+			umount "$mp" 2>/dev/null
+		fi; rmdir "$mp" 2>/dev/null
+	done
+	[ -s "$idx" ] || { bad "no backups/*.apkovl.tar.gz found anywhere"; rm -rf "$work"; return 1; }
+	sort -rn "$idx" > "$idx.sorted"
+	echo "Available backups:"
+	i=0; while IFS="$(printf '\t')" read -r ts label path; do
+		i=$((i+1)); printf '  %2d) %s   %s\n' "$i" "$(date -d "@$ts" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$ts")" "$label"
+	done < "$idx.sorted"
+	printf 'Select a backup number to restore (1=newest, blank to cancel): '; read -r sel
+	[ -n "$sel" ] || { echo "Cancelled."; rm -rf "$work"; return 1; }
+	chosen=$(sed -n "${sel}p" "$idx.sorted" | cut -f3); clabel=$(sed -n "${sel}p" "$idx.sorted" | cut -f2)
+	[ -f "$chosen" ] || { bad "invalid selection"; rm -rf "$work"; return 1; }
+	confirm "Restore $clabel to the USB and reboot to apply?" || { rm -rf "$work"; return 1; }
+	mountpoint -q "$CFG" || { mkdir -p "$CFG"; mount /cfg; }
+	cp "$CFG"/*.apkovl.tar.gz "$CFG/pre-restore.$(date +%s).bak" 2>/dev/null || true
+	cp "$chosen" "$CFG/$(hostname).apkovl.tar.gz" && ok "restored — reboot to apply: nas reboot"
+	rm -rf "$work"
+}
+
+_power() { act="$1"; word="$2"
+	n=$(lbu status 2>/dev/null | grep -c .)
+	if [ "${n:-0}" -gt 0 ]; then
+		echo "You have $n unsaved change(s)."
+		printf 'Before %s: [S]ave / [D]iscard / [C]ancel: ' "$word"; read -r a
+		case "$a" in S|s) cmd_commit || return 1 ;; D|d) : ;; *) echo "Cancelled."; return 1 ;; esac
+	fi
+	# $act is always an absolute path (/sbin/poweroff|/sbin/reboot). exec of a
+	# pathname bypasses shell aliases/functions, and this script is non-interactive
+	# (never sources /etc/profile), so the reboot/poweroff aliases don't exist here
+	# anyway — no recursion back into 'nas'. Quoted for hygiene.
+	exec "$act"
+}
+cmd_shutdown() { _power "/sbin/poweroff" "shutdown"; }
+cmd_reboot()   { _power "/sbin/reboot"   "reboot"; }
+
+cmd_setup() {
+	echo "=== MountNAS first-run setup (identity only) ==="
+	echo "[1/4] Root password"; passwd
+	printf '[2/4] Timezone (e.g. America/New_York), blank to skip: '; read -r tz
+	[ -n "$tz" ] && setup-timezone -z "$tz"
+	echo "[3/4] SSH public key (paste one line, blank to skip):"; read -r key
+	[ -n "$key" ] && { mkdir -p /root/.ssh; printf '%s\n' "$key" >> /root/.ssh/authorized_keys
+		chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; }
+	echo "[4/4] Saving..."; cmd_commit
+	cat <<EOF
+
+Setup complete. NEXT: add your data disk(s).
+  1) nas disks                              (find your disk + its UUID)
+  2) (blank disk?) mkfs.ext4 -L nasdata /dev/sdX
+  3) edit /etc/fstab, add the system disk:
+       UUID=<uuid>  /mnt/nasdata  ext4  rw,noatime,nofail,x-mount.mkdir  0 2
+  4) nas validate        (check it)
+  5) rc-service mountnas restart    (mounts + starts services, no reboot)
+  6) nas commit
+EOF
+}
+
+# ---------- upgrade (A/B; full detail in UPGRADE.md) ----------
+_mount_boot_rw() {
+	mkdir -p "$BOOTMNT"
+	mountpoint -q "$BOOTMNT" || mount LABEL=BOOT "$BOOTMNT" 2>/dev/null || { bad "cannot mount BOOT partition"; return 1; }
+	mount -o remount,rw "$BOOTMNT" 2>/dev/null || true
+	[ -f "$BOOTMNT/.nas-boot" ] || { bad "BOOT partition missing .nas-boot marker — refusing"; return 1; }
+}
+bootloader_default() { sed -n 's/^DEFAULT //p' "$BOOTMNT/syslinux.cfg" 2>/dev/null | head -n1; }
+# Refuse to stage/finalize while a boot switch is queued but not yet applied
+# (bootloader default != the slot we're running). Otherwise staging — which
+# targets the non-running slot — could overwrite the very slot the bootloader is
+# about to boot, or finalize could lock in a slot the user hasn't actually booted.
+_check_no_pending() {
+	def=$(bootloader_default); run=$(running_slot)
+	if [ -n "$def" ] && [ "$def" != "$run" ]; then
+		bad "A slot switch is pending (boot default=$def, running=$run)."
+		bad "Reboot first ('nas reboot'), then retry."; return 1
+	fi
+}
+
+cmd_upgrade() {
+	case "${1:-}" in
+		--finish)   _upgrade_finish; return $? ;;
+		--rollback) _upgrade_rollback; return $? ;;
+		"") echo "usage: nas upgrade <new.iso> | --finish | --rollback   (see UPGRADE.md)"; return 1 ;;
+	esac
+	iso="$1"; [ -f "$iso" ] || { bad "not found: $iso"; return 1; }
+	_mount_boot_rw || return 1
+	_check_no_pending || return 1
+	# Always stage into the NON-running slot, so we can never overwrite the system
+	# we're currently executing from. The running slot stays as the rollback target.
+	run=$(running_slot); tgt=$(other_slot "$run")
+	echo "Running slot: $run    Staging new system into: slot $tgt"
+	echo "(Your current slot $run stays intact and becomes the rollback target.)"
+	confirm "Stage and boot slot $tgt next? (config + data untouched)" || return 1
+	m=$(mktemp -d); mount -o loop,ro "$iso" "$m" || { bad "cannot mount iso"; rmdir "$m"; return 1; }
+	rm -rf "${BOOTMNT:?}/$tgt"; mkdir -p "$BOOTMNT/$tgt/boot" "$BOOTMNT/$tgt/apks"
+	cp "$m"/boot/vmlinuz-lts "$m"/boot/initramfs-lts "$m"/boot/modloop-lts "$BOOTMNT/$tgt/boot/" || { bad "copy failed"; umount "$m"; rmdir "$m"; return 1; }
+	cp -r "$m"/apks/. "$BOOTMNT/$tgt/apks/" 2>/dev/null || true
+	if [ -f "$m/world.base" ]; then cp "$m/world.base" "$BOOTMNT/$tgt/world.base"
+	else warn "world.base missing from ISO — new tool names won't add at --finish"; fi
+	echo "$(basename "$iso")" > "$BOOTMNT/$tgt/.release"
+	umount "$m"; rmdir "$m"; sync
+	"$WBCFG" "$BOOTMNT" "$tgt" "$run"; sync     # default = new slot, running slot kept as rollback
+	ok "Slot $tgt staged. Reboot to boot it:  nas reboot"
+	echo "After it comes up, verify (nas status; nas validate), then:  nas upgrade --finish"
+	echo "If anything is wrong: reboot and pick slot $run from the menu, or: nas upgrade --rollback"
+}
+
+_upgrade_finish() {
+	_mount_boot_rw || return 1
+	_check_no_pending || return 1
+	run=$(running_slot); old=$(other_slot "$run")
+	new_wb="$BOOTMNT/$run/world.base"; old_wb="$BOOTMNT/$old/world.base"
+	# Regenerate /etc/apk/world so an upgrade handles BOTH packages this release
+	# ADDED and packages it DROPPED, while preserving anything the user installed
+	# themselves. Plain "apk add the new names" can only add — a package the
+	# release removed would linger in the committed world and then fail to resolve
+	# on a later slot whose local repo no longer ships it. The math:
+	#     user_extras = current world  −  the OLD release's world.base
+	#     new world   = the NEW release's world.base  ∪  user_extras
+	# We keep both slots, so the old release's world.base is right here. If it's
+	# somehow missing we fall back to add-only (union) so we never drop a user's
+	# package by mistake — we just can't detect release removals that one time.
+	# awk is used instead of comm so we depend on no extra binary and need no
+	# pre-sorting (comm requires sorted input; coreutils may not be on PATH early).
+	if [ -f "$new_wb" ]; then
+		if [ -f "$old_wb" ]; then
+			# extras = lines in current world that are NOT in the old base
+			awk 'NR==FNR{a[$1];next} !($1 in a)' "$old_wb" /etc/apk/world > "$STATE/extras.$$"
+			cat "$new_wb" "$STATE/extras.$$" | sort -u > "$STATE/desired.$$"
+		else
+			cat "$new_wb" /etc/apk/world | sort -u > "$STATE/desired.$$"
+			warn "previous world.base missing — can't drop removed packages this upgrade"
+		fi
+		# packages to actually pull now = desired names not already in world
+		awk 'NR==FNR{a[$1];next} !($1 in a)' /etc/apk/world "$STATE/desired.$$" > "$STATE/install.$$"
+		cp "$STATE/desired.$$" /etc/apk/world          # realize adds + drops for next boot
+		add=$(cat "$STATE/install.$$")
+		if [ -n "$add" ]; then
+			echo "Installing packages added by this release: $add"
+			apk add --repository "$STATE/apks" --no-network $add 2>>"$STATE/finish.log" \
+				|| apk add $add 2>>"$STATE/finish.log" || warn "new-package install incomplete (see $STATE/finish.log)"
+		else echo "No new packages in this release."; fi
+		rm -f "$STATE/extras.$$" "$STATE/desired.$$" "$STATE/install.$$"
+	fi
+	cmd_commit
+	echo "$run" > "$BOOTMNT/mountnas-active"; sync
+	# BOTH slots are kept: slot $old remains as a downgrade target.
+	if [ -d "$BOOTMNT/$old/boot" ]; then
+		ok "Finalized on slot $run. Previous version (slot $old) kept for downgrade (nas upgrade --rollback)."
+	else
+		ok "Finalized on slot $run."
+	fi
+}
+
+_upgrade_rollback() {
+	_mount_boot_rw || return 1
+	run=$(running_slot); old=$(other_slot "$run")
+	[ -d "$BOOTMNT/$old/boot" ] || { bad "no previous slot to roll back to"; return 1; }
+	rel=$(cat "$BOOTMNT/$old/.release" 2>/dev/null || echo "slot $old")
+	confirm "Set next boot to the previous version ($rel)?" || return 1
+	"$WBCFG" "$BOOTMNT" "$old" "$run"; sync
+	ok "Next boot set to slot $old ($rel)."
+	printf 'Reboot now? [Y/n] '; read -r a
+	case "$a" in n|N) echo "Reboot later: nas reboot  (do NOT run 'nas upgrade' until you reboot)";; *) exec /sbin/reboot ;; esac
+}
+
+case "${1:-help}" in
+	setup) cmd_setup ;;
+	status) cmd_status ;;
+	disks) cmd_disks ;;
+	validate) cmd_validate ;;
+	checkup) cmd_checkup ;;
+	restart) cmd_restart ;;
+	commit|save) cmd_commit ;;
+	backup) shift; cmd_backup "$@" ;;
+	restore) cmd_restore ;;
+	shutdown) cmd_shutdown ;;
+	reboot) cmd_reboot ;;
+	upgrade) shift; cmd_upgrade "$@" ;;
+	version) cmd_version ;;
+	help|--help|-h) cmd_help ;;
+	*) echo "unknown command: $1"; echo; cmd_help; exit 1 ;;
+esac
+
+# Keep the prompt's [unsaved:N] indicator current after any command that may have
+# changed state (e.g. commit zeroes it). Commands that exec (shutdown/reboot) never
+# reach here, which is fine — the box is on its way down.
+_refresh_unsaved

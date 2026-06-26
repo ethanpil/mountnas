@@ -1,0 +1,33 @@
+#!/bin/sh
+# nas-make-usb <iso> <seed.apkovl.tar.gz> <target-disk>
+set -eu
+[ $# -eq 3 ] || { echo "usage: $0 <iso> <apkovl> <disk>  (disk ERASED)"; exit 1; }
+ISO="$1"; OVL="$2"; DISK="$3"
+for f in "$ISO" "$OVL"; do [ -f "$f" ] || { echo "missing: $f"; exit 1; }; done
+[ -b "$DISK" ] || { echo "not a block device: $DISK"; exit 1; }
+echo "Target:"; lsblk -dno NAME,SIZE,MODEL "$DISK"
+printf 'ERASE %s entirely? type the device name to confirm: ' "$DISK"; read -r a; [ "$a" = "$DISK" ] || { echo aborted; exit 1; }
+
+sgdisk --zap-all "$DISK"
+sgdisk -n1:0:+4GiB -t1:ef00 -c1:BOOT    "$DISK"
+sgdisk -n2:0:0     -t2:8300 -c2:MNASCFG "$DISK"
+sleep 2; partprobe "$DISK" 2>/dev/null || true; sleep 1
+case "$DISK" in *[0-9]) P1="${DISK}p1" P2="${DISK}p2";; *) P1="${DISK}1" P2="${DISK}2";; esac
+mkfs.vfat -F32 -n BOOT "$P1"
+mkfs.ext4 -F -L MNASCFG "$P2"     # found by label; no magic UUID to match
+
+# pull world.base out of the ISO (it travels inside the ISO now)
+iso_mnt=$(mktemp -d); mount -o loop,ro "$ISO" "$iso_mnt"
+m=$(mktemp -d); mount "$P1" "$m"
+# install bootloader files, then lay out slot A
+setup-bootable "$ISO" "$m"
+mkdir -p "$m/A/boot" "$m/A/apks"
+mv "$m"/boot/vmlinuz-lts "$m"/boot/initramfs-lts "$m"/boot/modloop-lts "$m/A/boot/" 2>/dev/null || true
+[ -d "$m/apks" ] && mv "$m"/apks/* "$m/A/apks/" 2>/dev/null || true
+cp "$iso_mnt/world.base" "$m/A/world.base" 2>/dev/null || echo "warning: world.base not in ISO"
+echo "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4 console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG" > "$m/cmdline.base"
+echo A > "$m/mountnas-active"; touch "$m/.nas-boot"
+/usr/libexec/mountnas/write-bootcfg "$m" A ""
+umount "$m"; umount "$iso_mnt"; rmdir "$iso_mnt"
+mount "$P2" "$m"; cp "$OVL" "$m/$(basename "$OVL")"; sync; umount "$m"; rmdir "$m"
+echo "Done: $DISK"

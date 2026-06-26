@@ -1,2 +1,4 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# MountNAS ships POSIX shell scripts, an APKBUILD, and seed config files that
+# run on Alpine Linux. Force LF in the working tree so a CRLF checkout on
+# Windows can never break a shebang line or a heredoc.
+* text=auto eol=lf
