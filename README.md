@@ -123,6 +123,7 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **SSH** (`sshd`, on): see [First boot](#first-boot) for first-login access. Manage keys in `/root/.ssh/authorized_keys`, harden `/etc/ssh/sshd_config`, then `nas commit`.
 - **mDNS / discovery** (`avahi`, on): reach the box at `mountnas.local` without knowing its IP.
 - **Time sync** (`chronyd`, on): on an isolated LAN, point it at a local source in `/etc/chrony/chrony.conf`, then `nas commit`.
+- **Network UPS Tools (NUT)** (`nut`, off by default): [Determine the UPS USB params](https://wiki.alpinelinux.org/wiki/Nut-ups) and update in `/etc/nut/`: `nut.conf`,`ups.conf`,`upsd.conf`, then `rc-update add nut-upsd` then nas commit`.
 - **Docker** (started once `/mnt/nasdata` is up): data-root is `/mnt/nasdata/docker`. Put compose files and appdata under `/mnt/nasdata` so they survive a dead USB and travel with the data.
 - **Samba** (started once `/mnt/nasdata` is up): edit `/etc/samba/smb.conf`, `smbpasswd -a <user>`, `rc-service samba restart`, `nas commit`.
 - **NFS** (started once `/mnt/nasdata` is up): edit `/etc/exports`, `rc-service nfs restart`, `nas commit`.
@@ -247,7 +248,7 @@ __Networking / Transfer__
 * openssh-sftp-server
 * curlftpfs
 
-__Overlay / Mesh VPN (services OFF by default) __
+__Overlay / Mesh VPN (services OFF by default)__
 
 * tailscale
 * zerotier-one
@@ -306,18 +307,18 @@ __System Monitoring__
 * sysstat
 * fastfetch
 
-__Containers __
+__Containers__
 
 * docker
 * docker-cli-compose
 
-__UPS monitoring (NUT); services off until configured __
+__UPS monitoring (NUT)__
 
 * nut
 * nut-openrc
 * nut-udev
 
-__Device Firmware __
+__Device Firmware__
 
 * linux-firmware-amd
 * linux-firmware-amdgpu
