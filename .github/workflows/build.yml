@@ -57,23 +57,29 @@ jobs:
           # NOT match the published .rsa.pub filename, and apk looks the key up BY
           # that embedded name. So we read the name out of the apk itself and install
           # the published x86_64 key under exactly that name. Non-fatal.
-          zt_repo="ethanpil/ZeroTierOne-AlpineLinux-Binaries"
-          zt_json=$(wget -q -O - --header="Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$zt_repo/releases/latest" || true)
-          zt_apk_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.apk" | head -n1 || true)
-          zt_key_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.rsa\.pub" | head -n1 || true)
-          if [ -n "$zt_apk_url" ] && [ -n "$zt_key_url" ]; then
-            ztd=$(mktemp -d)
-            wget -q -O "$ztd/zt.apk" "$zt_apk_url" || true
-            zt_keyname=$(tar -tzf "$ztd/zt.apk" 2>/dev/null | grep -m1 '^\.SIGN\.RSA\.' | sed 's/^\.SIGN\.RSA\.//')
-            if [ -n "$zt_keyname" ]; then
-              wget -q -O "/etc/apk/keys/$zt_keyname" "$zt_key_url" \
-                && echo "trusted ZeroTier signing key as $zt_keyname" \
-                || echo "WARN: could not install ZeroTier key"
-            else
-              echo "WARN: could not read ZeroTier signing keyname from apk"
+          # Run in a subshell with -e/-u OFF (and || true on the outside) so this
+          # best-effort step can NEVER abort the build — busybox ash is stricter than
+          # bash about set -e/-u. The key install is a filesystem write, so it still
+          # persists out of the subshell.
+          ( set +eu
+            zt_repo="ethanpil/ZeroTierOne-AlpineLinux-Binaries"
+            zt_json=$(wget -q -O - --header="Authorization: Bearer ${GH_TOKEN:-}" "https://api.github.com/repos/$zt_repo/releases/latest")
+            zt_apk_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.apk" | head -n1)
+            zt_key_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.rsa\.pub" | head -n1)
+            if [ -n "$zt_apk_url" ] && [ -n "$zt_key_url" ]; then
+              ztd=$(mktemp -d)
+              wget -q -O "$ztd/zt.apk" "$zt_apk_url"
+              zt_keyname=$(tar -tzf "$ztd/zt.apk" 2>/dev/null | grep '^\.SIGN\.RSA\.' | head -n1 | sed 's/^\.SIGN\.RSA\.//')
+              if [ -n "$zt_keyname" ]; then
+                wget -q -O "/etc/apk/keys/$zt_keyname" "$zt_key_url" \
+                  && echo "trusted ZeroTier signing key as $zt_keyname" \
+                  || echo "WARN: could not install ZeroTier key"
+              else
+                echo "WARN: could not read ZeroTier signing keyname from apk"
+              fi
+              rm -rf "$ztd"
             fi
-            rm -rf "$ztd"
-          fi
+          ) || true
           su build -s /bin/sh -c '
             set -eu; export HOME=/home/build
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
