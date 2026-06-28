@@ -4,7 +4,7 @@ on:
     inputs:
       release_tag:   { description: "Release tag (image filename)", required: true, default: "dev" }
       alpine_branch: { description: "Alpine branch", required: true, default: "latest-stable" }
-      aports_ref:    { description: "aports git ref", required: true, default: "3.23-stable" }
+      aports_ref:    { description: "aports git ref — MUST match alpine_branch's version (latest-stable is currently 3.24, so use 3.24-stable)", required: true, default: "3.24-stable" }
       arch:          { description: "Architecture", required: true, default: "x86_64" }
 jobs:
   build:
@@ -57,6 +57,7 @@ jobs:
             # install just the openrc service-script packages into a throwaway root
             # (no firmware) and confirm each rc_add service name resolves to a script.
             apk add --root "$HOME/checkroot" --initdb --usermode --quiet \
+              --repositories-file /etc/apk/repositories --allow-untrusted \
               openrc busybox-openrc openssh-server-common-openrc dbus-openrc avahi-openrc \
               chrony-openrc acpid-openrc rpcbind-openrc smartmontools-openrc \
               docker-openrc samba-server-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc
