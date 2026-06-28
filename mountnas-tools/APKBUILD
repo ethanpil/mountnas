@@ -11,24 +11,26 @@ depends="alpine-conf util-linux e2fsprogs smartmontools openrc busybox
 options="!check"
 source=""
 
-# No sources to fetch/compile; this package only installs files from ../src.
-# Point builddir at the (existing) srcdir so abuild's prepare/build phases don't
-# try to cd into a non-existent $pkgname-$pkgver dir, and make build a no-op.
-builddir="$srcdir"
+# No sources to fetch/compile; this package only installs the files under
+# ./files. We read them from $startdir (the APKBUILD's dir), NOT $srcdir, because
+# abuild WIPES $srcdir (==$startdir/src) during its clean phase — that is exactly
+# why the files live in files/ and not src/. builddir points at $startdir so the
+# prepare/build phases have an existing dir to cd into; build itself is a no-op.
+builddir="$startdir"
 build() { :; }
 
 package() {
-	install -Dm755 "$srcdir"/../src/nas           "$pkgdir"/usr/sbin/nas
-	install -Dm755 "$srcdir"/../src/nas-make-usb  "$pkgdir"/usr/sbin/nas-make-usb
-	install -Dm755 "$srcdir"/../src/mountnas       "$pkgdir"/etc/init.d/mountnas
-	install -Dm755 "$srcdir"/../src/mountnas-net   "$pkgdir"/etc/init.d/mountnas-net
-	install -Dm755 "$srcdir"/../src/mountnas-sshkey "$pkgdir"/etc/init.d/mountnas-sshkey
-	install -Dm755 "$srcdir"/../src/mountnas-issue  "$pkgdir"/etc/init.d/mountnas-issue
-	install -Dm755 "$srcdir"/../src/write-bootcfg  "$pkgdir"/usr/libexec/mountnas/write-bootcfg
-	install -Dm755 "$srcdir"/../src/gen-issue      "$pkgdir"/usr/libexec/mountnas/gen-issue
-	install -Dm755 "$srcdir"/../src/issue-ifupdown "$pkgdir"/etc/network/if-up.d/mountnas-issue
-	install -Dm644 "$srcdir"/../src/profile-nas-welcome.sh "$pkgdir"/etc/profile.d/nas-welcome.sh
-	install -Dm644 "$srcdir"/../src/profile-nas-aliases.sh "$pkgdir"/etc/profile.d/nas-aliases.sh
-	install -Dm644 "$srcdir"/../src/profile-nas-prompt.sh  "$pkgdir"/etc/profile.d/nas-prompt.sh
+	install -Dm755 "$startdir"/files/nas           "$pkgdir"/usr/sbin/nas
+	install -Dm755 "$startdir"/files/nas-make-usb  "$pkgdir"/usr/sbin/nas-make-usb
+	install -Dm755 "$startdir"/files/mountnas       "$pkgdir"/etc/init.d/mountnas
+	install -Dm755 "$startdir"/files/mountnas-net   "$pkgdir"/etc/init.d/mountnas-net
+	install -Dm755 "$startdir"/files/mountnas-sshkey "$pkgdir"/etc/init.d/mountnas-sshkey
+	install -Dm755 "$startdir"/files/mountnas-issue  "$pkgdir"/etc/init.d/mountnas-issue
+	install -Dm755 "$startdir"/files/write-bootcfg  "$pkgdir"/usr/libexec/mountnas/write-bootcfg
+	install -Dm755 "$startdir"/files/gen-issue      "$pkgdir"/usr/libexec/mountnas/gen-issue
+	install -Dm755 "$startdir"/files/issue-ifupdown "$pkgdir"/etc/network/if-up.d/mountnas-issue
+	install -Dm644 "$startdir"/files/profile-nas-welcome.sh "$pkgdir"/etc/profile.d/nas-welcome.sh
+	install -Dm644 "$startdir"/files/profile-nas-aliases.sh "$pkgdir"/etc/profile.d/nas-aliases.sh
+	install -Dm644 "$startdir"/files/profile-nas-prompt.sh  "$pkgdir"/etc/profile.d/nas-prompt.sh
 	echo "$pkgver" | install -Dm644 /dev/stdin "$pkgdir"/usr/share/mountnas/version
 }
