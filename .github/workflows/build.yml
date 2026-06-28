@@ -35,9 +35,13 @@ jobs:
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
           apk update; adduser -D build; addgroup build abuild 2>/dev/null || true
-          # snapraid is compiled from source; pre-install its build dep as root here,
-          # since the non-root build user cannot 'apk add' it during 'abuild -r'.
-          apk add linux-headers
+          # abuild runs as the non-root build user but must 'apk add' build deps
+          # ('-r' installs both make- and regular depends), which needs root. Give it
+          # passwordless doas — abuild's standard elevation (it shells out to doas).
+          # Also pre-install snapraid's compile dep (linux-headers) as a safety net.
+          apk add doas linux-headers
+          echo "permit nopass keepenv build" > /etc/doas.conf
+          chmod 0400 /etc/doas.conf
           cp -r "$GITHUB_WORKSPACE" /home/build/repo; chown -R build:build /home/build
           # Generate the package signing key as the build user (this sets
           # PACKAGER_PRIVKEY in ~build/.abuild/abuild.conf). We omit -i so keygen

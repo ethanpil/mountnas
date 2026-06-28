@@ -6,7 +6,7 @@ pkgdesc="MountNAS CLI, storage supervisor, and helpers"
 url="https://github.com/youruser/mountnas"
 arch="noarch"
 license="MIT"
-depends="alpine-conf lbu util-linux e2fsprogs smartmontools openrc busybox
+depends="alpine-conf util-linux e2fsprogs smartmontools openrc busybox
 	docker samba nfs-utils"
 options="!check"
 source=""
