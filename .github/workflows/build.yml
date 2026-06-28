@@ -50,18 +50,30 @@ jobs:
           # mountnas-tools repo when mkimage pulls from it.
           su build -s /bin/sh -c 'export HOME=/home/build; abuild-keygen -an'
           cp /home/build/.abuild/*.rsa.pub /etc/apk/keys/
-          # Trust the ZeroTier package signing key(s) so apk accepts its prebuilt
-          # apk both now (when mkimage installs it) and in the booted image — the key
-          # rides the same /etc/apk/keys path as our own build key. We never issue a
-          # manual 'apk add zerotier-one' (mkimage installs it as part of world, and
-          # the diskless system installs it again at boot), so --allow-untrusted has
-          # no command to attach to; trusting the key is the fix. Fetch every
-          # published *.rsa.pub so key rotation just works. Non-fatal.
+          # Trust the ZeroTier package signing key so apk accepts its prebuilt apk
+          # (when mkimage installs it, and in the booted image — the key rides the
+          # same /etc/apk/keys path as our own build key). The catch: the apk is
+          # signed with a per-build key whose embedded name (.SIGN.RSA.<name>) does
+          # NOT match the published .rsa.pub filename, and apk looks the key up BY
+          # that embedded name. So we read the name out of the apk itself and install
+          # the published x86_64 key under exactly that name. Non-fatal.
           zt_repo="ethanpil/ZeroTierOne-AlpineLinux-Binaries"
           zt_json=$(wget -q -O - --header="Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$zt_repo/releases/latest" || true)
-          printf "%s" "$zt_json" | grep -oE "https://[^\"]+\.rsa\.pub" | while read -r u; do
-            ( cd /etc/apk/keys && wget -q "$u" ) && echo "trusted ZeroTier key: $u" || echo "WARN: could not fetch $u"
-          done
+          zt_apk_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.apk" | head -n1 || true)
+          zt_key_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.rsa\.pub" | head -n1 || true)
+          if [ -n "$zt_apk_url" ] && [ -n "$zt_key_url" ]; then
+            ztd=$(mktemp -d)
+            wget -q -O "$ztd/zt.apk" "$zt_apk_url" || true
+            zt_keyname=$(tar -tzf "$ztd/zt.apk" 2>/dev/null | grep -m1 '^\.SIGN\.RSA\.' | sed 's/^\.SIGN\.RSA\.//')
+            if [ -n "$zt_keyname" ]; then
+              wget -q -O "/etc/apk/keys/$zt_keyname" "$zt_key_url" \
+                && echo "trusted ZeroTier signing key as $zt_keyname" \
+                || echo "WARN: could not install ZeroTier key"
+            else
+              echo "WARN: could not read ZeroTier signing keyname from apk"
+            fi
+            rm -rf "$ztd"
+          fi
           su build -s /bin/sh -c '
             set -eu; export HOME=/home/build
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
@@ -117,8 +129,17 @@ jobs:
             echo "== ISO =="
             cp "$HOME"/repo/scripts/* aports/scripts/
             mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"
+            # mkimage only uses the repositories passed via --repository (it does NOT
+            # inherit the host apk repos), so the stable main/community repos must be
+            # passed explicitly alongside our local repo — else linux-lts/alpine-base
+            # etc. cannot resolve. Build the --repository args from the host config.
+            REPO_ARGS=""
+            while IFS= read -r r; do
+              case "$r" in ""|\#*) continue ;; esac
+              REPO_ARGS="$REPO_ARGS --repository $r"
+            done < /etc/apk/repositories
             sh aports/scripts/mkimage.sh --tag "'"$TAG"'" --outdir "$HOME/iso" --arch "'"$ARCH"'" \
-              --repository "$HOME/packages/repo" --profile nas
+              $REPO_ARGS --repository "$HOME/packages/repo" --profile nas
             echo "== seed overlay + world.base (embedded into the ISO) =="
             ( cd "$HOME/iso"
               sh "$HOME"/repo/scripts/genapkovl-mountnas.sh mountnas
