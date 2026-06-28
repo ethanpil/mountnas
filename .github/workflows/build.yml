@@ -34,6 +34,18 @@ jobs:
           # mountnas-tools repo when mkimage pulls from it.
           su build -s /bin/sh -c 'export HOME=/home/build; abuild-keygen -an'
           cp /home/build/.abuild/*.rsa.pub /etc/apk/keys/
+          # Trust the ZeroTier package signing key(s) so apk accepts its prebuilt
+          # apk both now (when mkimage installs it) and in the booted image — the key
+          # rides the same /etc/apk/keys path as our own build key. We never issue a
+          # manual 'apk add zerotier-one' (mkimage installs it as part of world, and
+          # the diskless system installs it again at boot), so --allow-untrusted has
+          # no command to attach to; trusting the key is the fix. Fetch every
+          # published *.rsa.pub so key rotation just works. Non-fatal.
+          zt_repo="ethanpil/ZeroTierOne-AlpineLinux-Binaries"
+          zt_json=$(wget -q -O - --header="Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$zt_repo/releases/latest" || true)
+          printf "%s" "$zt_json" | grep -oE "https://[^\"]+\.rsa\.pub" | while read -r u; do
+            ( cd /etc/apk/keys && wget -q "$u" ) && echo "trusted ZeroTier key: $u" || echo "WARN: could not fetch $u"
+          done
           su build -s /bin/sh -c '
             set -eu; export HOME=/home/build
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
@@ -63,7 +75,9 @@ jobs:
             echo "== bake in ZeroTier (optional; prebuilt static apk) =="
             # Pull the latest matching zerotier-one apk from the binaries repo, drop
             # it into our local repo, and re-sign the index with our build key so apk
-            # trusts it like any local package. Every failure path is non-fatal (the
+            # finds and trusts the index entry (the prebuilt apk signature itself is
+            # trusted via the ZeroTier key added to /etc/apk/keys above). Every
+            # failure path is non-fatal (the
             # su script runs under set -e): if the asset is missing or a fetch fails
             # we warn and ZeroTier is simply not baked in; the rest of the image is
             # unaffected. It is appended to world only on a fully successful fetch.
