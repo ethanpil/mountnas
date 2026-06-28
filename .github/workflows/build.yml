@@ -125,6 +125,7 @@ jobs:
             zt_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+$ARCH\.apk" | head -n1 || true)
             if [ -n "$zt_url" ] && ( cd "$HOME/packages/repo/$ARCH" \
                 && wget -q "$zt_url" \
+                && for f in zerotier-one-*-$ARCH.apk; do mv -f "$f" "${f%-$ARCH.apk}.apk"; done \
                 && apk index -o APKINDEX.tar.gz *.apk \
                 && abuild-sign APKINDEX.tar.gz ); then
               echo zerotier-one >> "$HOME/repo/packages.list"
