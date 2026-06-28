@@ -18,6 +18,15 @@ jobs:
           packages: >
             alpine-sdk alpine-conf apk-tools busybox fakeroot syslinux xorriso
             squashfs-tools mtools dosfstools grub grub-efi git e2fsprogs gptfdisk util-linux
+      # apk sandboxes package scripts with unshare(); the non-root build user can
+      # only do that if unprivileged user namespaces are allowed. ubuntu-latest
+      # (24.04) blocks them by default via AppArmor — re-enable so apk scripts,
+      # abuild, and mkimage all work as the build user. Runs on the host, not Alpine.
+      - name: Allow unprivileged user namespaces (apk script sandbox)
+        shell: bash
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
       - name: Build
         shell: alpine.sh --root {0}
         env:
@@ -26,6 +35,9 @@ jobs:
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
           apk update; adduser -D build; addgroup build abuild 2>/dev/null || true
+          # snapraid is compiled from source; pre-install its build dep as root here,
+          # since the non-root build user cannot 'apk add' it during 'abuild -r'.
+          apk add linux-headers
           cp -r "$GITHUB_WORKSPACE" /home/build/repo; chown -R build:build /home/build
           # Generate the package signing key as the build user (this sets
           # PACKAGER_PRIVKEY in ~build/.abuild/abuild.conf). We omit -i so keygen
@@ -57,7 +69,7 @@ jobs:
             # install just the openrc service-script packages into a throwaway root
             # (no firmware) and confirm each rc_add service name resolves to a script.
             apk add --root "$HOME/checkroot" --initdb --usermode --quiet \
-              --repositories-file /etc/apk/repositories --allow-untrusted \
+              --repositories-file /etc/apk/repositories --allow-untrusted --no-scripts \
               openrc busybox-openrc openssh-server-common-openrc dbus-openrc avahi-openrc \
               chrony-openrc acpid-openrc rpcbind-openrc smartmontools-openrc \
               docker-openrc samba-server-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc
