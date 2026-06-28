@@ -27,12 +27,12 @@ build() { :; }
 
 package() {
 	# The static tarball mirrors a filesystem tree whose exact layout has shifted
-	# across releases, so locate the binary (and man page) instead of hardcoding.
-	local bin man
+	# across releases, so locate the binary instead of hardcoding. We skip the man
+	# page on purpose: abuild requires it gzipped/-doc-split, and an appliance image
+	# does not need it ('mergerfs --help' covers usage).
+	local bin
 	bin="$(find "$srcdir" -type f -name mergerfs | head -n1)"
 	[ -n "$bin" ] || { error "mergerfs binary not found in static tarball"; return 1; }
 	install -Dm755 "$bin" "$pkgdir"/usr/bin/mergerfs
-	man="$(find "$srcdir" -type f -name 'mergerfs.1*' | head -n1)"
-	[ -n "$man" ] && install -Dm644 "$man" "$pkgdir"/usr/share/man/man1/mergerfs.1.gz
 	return 0
 }

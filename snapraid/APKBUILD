@@ -22,4 +22,8 @@ build() {
 
 package() {
 	make DESTDIR="$pkgdir" install
+	# Drop the man pages (snapraid ships 15 language translations). abuild requires
+	# man pages gzipped or split into a -doc subpackage; an appliance image running
+	# from RAM needs neither ('snapraid --help' covers usage), so just remove them.
+	rm -rf "$pkgdir"/usr/share/man
 }
