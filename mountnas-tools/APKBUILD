@@ -1,4 +1,4 @@
-# Maintainer: MountNAS
+# Maintainer: MountNAS <ethan@piliavin.com>
 pkgname=mountnas-tools
 pkgver=1.0.0
 pkgrel=0
@@ -10,6 +10,12 @@ depends="alpine-conf lbu util-linux e2fsprogs smartmontools openrc busybox
 	docker samba nfs-utils"
 options="!check"
 source=""
+
+# No sources to fetch/compile; this package only installs files from ../src.
+# Point builddir at the (existing) srcdir so abuild's prepare/build phases don't
+# try to cd into a non-existent $pkgname-$pkgver dir, and make build a no-op.
+builddir="$srcdir"
+build() { :; }
 
 package() {
 	install -Dm755 "$srcdir"/../src/nas           "$pkgdir"/usr/sbin/nas

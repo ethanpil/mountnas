@@ -1,4 +1,4 @@
-# Maintainer: MountNAS
+# Maintainer: MountNAS <ethan@piliavin.com>
 # mergerfs isn't in the stable repos, and the edge apk is unsafe to drop onto a
 # stable userland (compiled against edge's libstdc++). Upstream, however, ships
 # FULLY STATIC per-arch binaries with no libc/libstdc++ runtime dependency, so we

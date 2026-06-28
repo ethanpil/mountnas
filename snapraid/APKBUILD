@@ -1,4 +1,4 @@
-# Maintainer: MountNAS
+# Maintainer: MountNAS <ethan@piliavin.com>
 # SnapRAID is only in Alpine edge/testing, so MountNAS compiles it from source
 # against the stable base's own toolchain. The resulting apk lands in the same
 # local repo as mountnas-tools and is installed by world like any other package.
