@@ -24,6 +24,8 @@ package() {
 	# The upstream apk is itself a tarball; unpack its payload and install it,
 	# skipping the apk metadata (.PKGINFO/.SIGN/...). abuild re-traces the shared
 	# library dependencies (libstdc++, libssl, libcrypto, libgcc, musl).
+	# abuild does not pre-create $pkgdir, and plain cp won't make it, so do so.
+	mkdir -p "$pkgdir"
 	tar -xzf "$srcdir/upstream-zerotier-one-$pkgver-r0-$CARCH.apk" -C "$srcdir" 2>/dev/null || true
 	cp -a "$srcdir/usr" "$pkgdir/usr"
 	install -Dm755 "$srcdir/zerotier-one.initd" "$pkgdir/etc/init.d/zerotier-one"
