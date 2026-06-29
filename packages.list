@@ -35,8 +35,9 @@ openssh-sftp-server
 
 # --- mesh VPN (services OFF by default) ---
 tailscale
-# zerotier-one is injected by CI from ethanpil/ZeroTierOne-AlpineLinux-Binaries
-# (prebuilt static apk; not in Alpine repos), so it is not listed here.
+# zerotier-one is built locally (see the /zerotier-one APKBUILD): it repackages
+# the upstream prebuilt apk under our signing key, since it is not in Alpine.
+zerotier-one
 
 # --- name resolution / discovery ---
 avahi

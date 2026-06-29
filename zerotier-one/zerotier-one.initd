@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+description="ZeroTier One network virtualization service"
+
+command="/usr/sbin/zerotier-one"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+	need net
+	use dns logger
+	after firewall
+}

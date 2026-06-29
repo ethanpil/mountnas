@@ -1,0 +1,30 @@
+# Maintainer: MountNAS <ethan@piliavin.com>
+# ZeroTier is not in Alpine. ethanpil/ZeroTierOne-AlpineLinux-Binaries publishes
+# prebuilt apks, but they are signed with a per-build key that mkimage's isolated
+# build root and the booted image do not trust. Rather than propagate that foreign
+# key into both keystores, we repackage the upstream apk's payload into a fresh apk
+# signed by OUR build key — the same trust path as our other local packages. The
+# upstream apk ships only the binaries, so we add an OpenRC init script too.
+# To update: bump pkgver to match a published release tag in the binaries repo.
+pkgname=zerotier-one
+pkgver=1.16.2
+pkgrel=0
+pkgdesc="ZeroTier One - secure peer-to-peer mesh networking"
+url="https://github.com/zerotier/ZeroTierOne"
+arch="x86_64"
+license="MPL-2.0"
+options="!check"
+source="upstream-zerotier-one-$pkgver-r0-$CARCH.apk::https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries/releases/download/$pkgver/zerotier-one-$pkgver-r0-$CARCH.apk
+	zerotier-one.initd"
+builddir="$srcdir"
+
+build() { :; }
+
+package() {
+	# The upstream apk is itself a tarball; unpack its payload and install it,
+	# skipping the apk metadata (.PKGINFO/.SIGN/...). abuild re-traces the shared
+	# library dependencies (libstdc++, libssl, libcrypto, libgcc, musl).
+	tar -xzf "$srcdir/upstream-zerotier-one-$pkgver-r0-$CARCH.apk" -C "$srcdir" 2>/dev/null || true
+	cp -a "$srcdir/usr" "$pkgdir/usr"
+	install -Dm755 "$srcdir/zerotier-one.initd" "$pkgdir/etc/init.d/zerotier-one"
+}

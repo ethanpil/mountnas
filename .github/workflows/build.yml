@@ -29,8 +29,6 @@ jobs:
           sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
       - name: Build
         shell: alpine.sh --root {0}
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
@@ -50,43 +48,12 @@ jobs:
           # mountnas-tools repo when mkimage pulls from it.
           su build -s /bin/sh -c 'export HOME=/home/build; abuild-keygen -an'
           cp /home/build/.abuild/*.rsa.pub /etc/apk/keys/
-          # Trust the ZeroTier package signing key so apk accepts its prebuilt apk
-          # (when mkimage installs it, and in the booted image — the key rides the
-          # same /etc/apk/keys path as our own build key). The catch: the apk is
-          # signed with a per-build key whose embedded name (.SIGN.RSA.<name>) does
-          # NOT match the published .rsa.pub filename, and apk looks the key up BY
-          # that embedded name. So we read the name out of the apk itself and install
-          # the published x86_64 key under exactly that name. Non-fatal.
-          # Run in a subshell with -e/-u OFF (and || true on the outside) so this
-          # best-effort step can NEVER abort the build — busybox ash is stricter than
-          # bash about set -e/-u. The key install is a filesystem write, so it still
-          # persists out of the subshell.
-          ( set +eu
-            zt_repo="ethanpil/ZeroTierOne-AlpineLinux-Binaries"
-            zt_json=$(wget -q -O - --header="Authorization: Bearer ${GH_TOKEN:-}" "https://api.github.com/repos/$zt_repo/releases/latest")
-            zt_apk_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.apk" | head -n1)
-            zt_key_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+x86_64\.rsa\.pub" | head -n1)
-            if [ -n "$zt_apk_url" ] && [ -n "$zt_key_url" ]; then
-              ztd=$(mktemp -d)
-              wget -q -O "$ztd/zt.apk" "$zt_apk_url"
-              zt_keyname=$(tar -tzf "$ztd/zt.apk" 2>/dev/null | grep '^\.SIGN\.RSA\.' | head -n1 | sed 's/^\.SIGN\.RSA\.//')
-              if [ -n "$zt_keyname" ]; then
-                wget -q -O "/etc/apk/keys/$zt_keyname" "$zt_key_url" \
-                  && echo "trusted ZeroTier signing key as $zt_keyname" \
-                  || echo "WARN: could not install ZeroTier key"
-              else
-                echo "WARN: could not read ZeroTier signing keyname from apk"
-              fi
-              rm -rf "$ztd"
-            fi
-          ) || true
           su build -s /bin/sh -c '
             set -eu; export HOME=/home/build
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
-            export ZT_TOKEN="'"$GH_TOKEN"'"
             cd "$HOME"; git clone --depth=1 --branch "'"$APORTS_REF"'" https://gitlab.alpinelinux.org/alpine/aports.git
             echo "== preflight =="
-            apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -vE "^(mountnas-tools|snapraid|mergerfs)$") linux-lts
+            apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -vE "^(mountnas-tools|snapraid|mergerfs|zerotier-one)$") linux-lts
             echo "== verify every enabled service has an init script =="
             # install just the openrc service-script packages into a throwaway root
             # (no firmware) and confirm each rc_add service name resolves to a script.
@@ -107,32 +74,8 @@ jobs:
             ( cd "$HOME"/repo/snapraid && abuild checksum && abuild -r )
             echo "== build mergerfs (repackage upstream static binary) =="
             ( cd "$HOME"/repo/mergerfs && abuild checksum && abuild -r )
-            echo "== bake in ZeroTier (optional; prebuilt static apk) =="
-            # Pull the latest matching zerotier-one apk from the binaries repo, drop
-            # it into our local repo, and re-sign the index with our build key so apk
-            # finds and trusts the index entry (the prebuilt apk signature itself is
-            # trusted via the ZeroTier key added to /etc/apk/keys above). Every
-            # failure path is non-fatal (the
-            # su script runs under set -e): if the asset is missing or a fetch fails
-            # we warn and ZeroTier is simply not baked in; the rest of the image is
-            # unaffected. It is appended to world only on a fully successful fetch.
-            zt_repo="ethanpil/ZeroTierOne-AlpineLinux-Binaries"
-            if [ -n "$ZT_TOKEN" ]; then
-              zt_json=$(wget -q -O - --header="Authorization: Bearer $ZT_TOKEN" "https://api.github.com/repos/$zt_repo/releases/latest" || true)
-            else
-              zt_json=$(wget -q -O - "https://api.github.com/repos/$zt_repo/releases/latest" || true)
-            fi
-            zt_url=$(printf "%s" "$zt_json" | grep -oE "https://[^\"]+$ARCH\.apk" | head -n1 || true)
-            if [ -n "$zt_url" ] && ( cd "$HOME/packages/repo/$ARCH" \
-                && wget -q "$zt_url" \
-                && for f in zerotier-one-*-$ARCH.apk; do mv -f "$f" "${f%-$ARCH.apk}.apk"; done \
-                && apk index -o APKINDEX.tar.gz *.apk \
-                && abuild-sign APKINDEX.tar.gz ); then
-              echo zerotier-one >> "$HOME/repo/packages.list"
-              echo "ZeroTier baked in: $zt_url"
-            else
-              echo "::warning::ZeroTier not baked in (no $ARCH .apk in latest release of $zt_repo, or fetch failed)."
-            fi
+            echo "== build zerotier-one (repackage upstream apk under our key) =="
+            ( cd "$HOME"/repo/zerotier-one && abuild checksum && abuild -r )
             echo "== ISO =="
             cp "$HOME"/repo/scripts/* aports/scripts/
             mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"
