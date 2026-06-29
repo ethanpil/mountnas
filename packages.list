@@ -75,6 +75,7 @@ lvm2
 # --- partitioning ---
 parted
 gptfdisk
+sgdisk
 cfdisk
 sfdisk
 

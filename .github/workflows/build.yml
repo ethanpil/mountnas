@@ -103,7 +103,7 @@ jobs:
               xorriso -dev "$ISO" -map "$HOME/iso/world.base" /world.base -commit )
           '
           echo "== assemble two-slot .img (A populated, B empty) =="
-          apk add gptfdisk parted   # sgdisk + partprobe for the GPT layout below
+          apk add sgdisk parted   # sgdisk (own package, not in gptfdisk) + partprobe
           ISO=$(ls /home/build/iso/*.iso); OVL=$(ls /home/build/iso/*.apkovl.tar.gz); WB=/home/build/iso/world.base
           IMG="/home/build/iso/mountnas-$TAG.img"
           truncate -s 6G "$IMG"; LOOP=$(losetup -fP --show "$IMG")
