@@ -90,17 +90,14 @@ jobs:
             done < /etc/apk/repositories
             sh aports/scripts/mkimage.sh --tag "'"$TAG"'" --outdir "$HOME/iso" --arch "'"$ARCH"'" \
               $REPO_ARGS --repository "$HOME/packages/repo" --profile nas
-            echo "== seed overlay + world.base (embedded into the ISO) =="
+            echo "== seed overlay + world.base =="
             ( cd "$HOME/iso"
               # Run genapkovl under fakeroot so its chown root:root calls succeed
               # (it runs as the non-root build user); otherwise the overlay records
               # the build uid and /etc/doas.conf gets rejected by doas at runtime.
               fakeroot sh "$HOME"/repo/scripts/genapkovl-mountnas.sh mountnas
               { echo alpine-base; sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$PACKAGES_LIST"; echo linux-firmware mkinitfs; } \
-                | tr " " "\n" | sort -u > world.base
-              # embed world.base inside the ISO so upgrades need only the .iso
-              ISO=$(ls "$HOME"/iso/*.iso)
-              xorriso -dev "$ISO" -map "$HOME/iso/world.base" /world.base -commit )
+                | tr " " "\n" | sort -u > world.base )
           '
           echo "== assemble two-slot .img (A populated, B empty) =="
           apk add sgdisk parted   # sgdisk (own package, not in gptfdisk) + partprobe
@@ -127,6 +124,11 @@ jobs:
           umount "$M"
           mount "${LOOP}p2" "$M"; cp "$OVL" "$M/$(basename "$OVL")"; sync; umount "$M"
           losetup -d "$LOOP"; gzip -9 "$IMG"
+          # Embed world.base into the release ISO now, AFTER setup-bootable consumed
+          # the clean ISO. Embedding earlier re-lays-out the ISO and breaks the
+          # streaming reader (uniso) that setup-bootable uses ("non-linear reads").
+          # At runtime, nas upgrade loop-mounts the ISO, which handles any layout.
+          xorriso -dev "$ISO" -map "$WB" /world.base -commit
           mkdir -p out; cp /home/build/iso/*.iso /home/build/iso/*.apkovl.tar.gz out/ || true
           cp "$IMG.gz" out/; ( cd out && sha256sum * > SHA256SUMS )
       - uses: actions/upload-artifact@v4
