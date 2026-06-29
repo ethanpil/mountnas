@@ -92,7 +92,10 @@ jobs:
               $REPO_ARGS --repository "$HOME/packages/repo" --profile nas
             echo "== seed overlay + world.base (embedded into the ISO) =="
             ( cd "$HOME/iso"
-              sh "$HOME"/repo/scripts/genapkovl-mountnas.sh mountnas
+              # fakeroot so genapkovl's chown root:root succeeds (it runs as the
+              # non-root build user) and the overlay records root ownership — else
+              # /etc/doas.conf etc. would be owned by the build uid and rejected.
+              fakeroot sh "$HOME"/repo/scripts/genapkovl-mountnas.sh mountnas
               { echo alpine-base; sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$PACKAGES_LIST"; echo linux-firmware mkinitfs; } \
                 | tr " " "\n" | sort -u > world.base
               # embed world.base inside the ISO so upgrades need only the .iso
@@ -100,6 +103,7 @@ jobs:
               xorriso -dev "$ISO" -map "$HOME/iso/world.base" /world.base -commit )
           '
           echo "== assemble two-slot .img (A populated, B empty) =="
+          apk add gptfdisk parted   # sgdisk + partprobe for the GPT layout below
           ISO=$(ls /home/build/iso/*.iso); OVL=$(ls /home/build/iso/*.apkovl.tar.gz); WB=/home/build/iso/world.base
           IMG="/home/build/iso/mountnas-$TAG.img"
           truncate -s 6G "$IMG"; LOOP=$(losetup -fP --show "$IMG")
