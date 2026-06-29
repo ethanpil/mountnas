@@ -92,9 +92,9 @@ jobs:
               $REPO_ARGS --repository "$HOME/packages/repo" --profile nas
             echo "== seed overlay + world.base (embedded into the ISO) =="
             ( cd "$HOME/iso"
-              # fakeroot so genapkovl's chown root:root succeeds (it runs as the
-              # non-root build user) and the overlay records root ownership — else
-              # /etc/doas.conf etc. would be owned by the build uid and rejected.
+              # Run genapkovl under fakeroot so its chown root:root calls succeed
+              # (it runs as the non-root build user); otherwise the overlay records
+              # the build uid and /etc/doas.conf gets rejected by doas at runtime.
               fakeroot sh "$HOME"/repo/scripts/genapkovl-mountnas.sh mountnas
               { echo alpine-base; sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$PACKAGES_LIST"; echo linux-firmware mkinitfs; } \
                 | tr " " "\n" | sort -u > world.base
