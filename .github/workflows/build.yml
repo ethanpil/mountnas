@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # publish the build outputs as a GitHub Release
     steps:
       - uses: actions/checkout@v4
       - uses: jirutka/setup-alpine@v1
@@ -113,8 +115,15 @@ jobs:
           M=$(mktemp -d); mount "${LOOP}p1" "$M"
           setup-bootable "$ISO" "$M"
           mkdir -p "$M/A/boot" "$M/A/apks"
-          mv "$M"/boot/vmlinuz-lts "$M"/boot/initramfs-lts "$M"/boot/modloop-lts "$M/A/boot/" 2>/dev/null || true
-          [ -d "$M/apks" ] && mv "$M"/apks/* "$M/A/apks/" 2>/dev/null || true
+          # Move the kernel/initramfs/modloop into slot A. NO '|| true' here: if
+          # setup-bootable ever places them elsewhere, fail the build loudly rather
+          # than ship a green-but-unbootable image with an empty slot A.
+          mv "$M"/boot/vmlinuz-lts "$M"/boot/initramfs-lts "$M"/boot/modloop-lts "$M/A/boot/"
+          mv "$M"/apks/* "$M/A/apks/"
+          for f in vmlinuz-lts initramfs-lts modloop-lts; do
+            [ -f "$M/A/boot/$f" ] || { echo "ERROR: slot A is missing boot/$f"; exit 1; }
+          done
+          [ -n "$(ls -A "$M/A/apks" 2>/dev/null)" ] || { echo "ERROR: slot A apks/ is empty"; exit 1; }
           cp "$WB" "$M/A/world.base"
           echo "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4 console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG" > "$M/cmdline.base"
           echo A > "$M/mountnas-active"; touch "$M/.nas-boot"
@@ -127,13 +136,26 @@ jobs:
           # Embed world.base into the release ISO now, AFTER setup-bootable consumed
           # the clean ISO. Embedding earlier re-lays-out the ISO and breaks the
           # streaming reader (uniso) that setup-bootable uses ("non-linear reads").
-          # At runtime, nas upgrade loop-mounts the ISO, which handles any layout.
-          xorriso -dev "$ISO" -map "$WB" /world.base -commit
-          mkdir -p out; cp /home/build/iso/*.iso /home/build/iso/*.apkovl.tar.gz out/ || true
-          cp "$IMG.gz" out/; ( cd out && sha256sum * > SHA256SUMS )
-      - uses: actions/upload-artifact@v4
+          # -boot_image any replay PRESERVES the El Torito / isohybrid boot setup;
+          # without it xorriso DISCARDS the boot image on commit and the ISO no
+          # longer boots ("isolinux: could not read from cdrom"). At runtime, nas
+          # upgrade loop-mounts the ISO, which handles the new layout regardless.
+          xorriso -indev "$ISO" -outdev "$ISO.tmp" -boot_image any replay \
+            -map "$WB" /world.base -commit
+          mv -f "$ISO.tmp" "$ISO"
+          # Stage each release file under a branded name so they are individually
+          # downloadable (the GitHub Release publishes them un-zipped).
+          mkdir -p out
+          cp "$IMG.gz" "out/mountnas-$TAG.img.gz"
+          cp "$ISO"    "out/mountnas-$TAG.iso"
+          cp /home/build/.abuild/*.rsa.pub "out/mountnas-$TAG.rsa.pub"
+          ( cd out && sha256sum mountnas-* > SHA256SUMS )
+      # Publish each artifact (img.gz, iso, apkovl, rsa.pub, SHA256SUMS) as a
+      # SEPARATE, individually-downloadable release asset — not a single zip.
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
         with:
-          name: mountnas-${{ inputs.release_tag }}
-          path: out/*
-          if-no-files-found: error
-      # Optional: publish a GitHub Release with out/* (softprops/action-gh-release on a tag).
+          tag_name: ${{ inputs.release_tag }}
+          name: MountNAS ${{ inputs.release_tag }}
+          files: out/*
+          fail_on_unmatched_files: true
