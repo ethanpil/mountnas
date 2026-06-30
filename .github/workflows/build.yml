@@ -135,20 +135,30 @@ jobs:
           # generate bootloader config (uses the same helper the device ships)
           install -Dm755 /home/build/repo/mountnas-tools/files/write-bootcfg /usr/libexec/mountnas/write-bootcfg
           /usr/libexec/mountnas/write-bootcfg "$M" A ""
-          # Make the image boot under BOTH firmwares:
-          #  - Legacy BIOS (SeaBIOS): setup-bootable already installed the syslinux
-          #    VBR on p1; write the GPT-aware MBR boot code into the protective MBR
-          #    so SeaBIOS chainloads the partition flagged legacy-bootable above.
-          #    (setup-bootable wrote the plain mbr.bin, which can't boot GPT — we
-          #    overwrite it here, after setup-bootable has run.)
-          dd bs=440 count=1 conv=notrunc if=/usr/share/syslinux/gptmbr.bin of="$LOOP"
-          #  - UEFI (OVMF): install grub to the ESP removable fallback path
+          # --- Make the image boot under BOTH firmwares ---
+          # setup-bootable runs `syslinux <device>` only when handed a DEVICE; we
+          # hand it the mounted dir, so it copies files but leaves the partition's
+          # dosfstools dummy VBR ("This is not a bootable disk") in place. We install
+          # both loaders ourselves. Steps that need the FAT MOUNTED first:
+          #  - BIOS: syslinux 6.x loads ldlinux.sys -> ldlinux.c32, which must sit at
+          #    the FAT root next to ldlinux.sys or the boot aborts ("Failed to load
+          #    ldlinux.c32"). syslinux --install (below, unmounted) writes ldlinux.sys.
+          cp /usr/share/syslinux/ldlinux.c32 "$M"/ldlinux.c32
+          #  - UEFI (OVMF): grub at the ESP removable fallback path
           #    (/EFI/BOOT/BOOTX64.EFI) so the firmware boots with no NVRAM entry.
-          #    grub-install only lays down the core image + modules; it uses the
+          #    grub-install only lays down the core image + modules; it loads the
           #    hand-written /boot/grub/grub.cfg that write-bootcfg just generated.
           grub-install --target=x86_64-efi --efi-directory="$M" \
             --boot-directory="$M/boot" --removable --no-nvram
           umount "$M"
+          # Steps that need the FAT UNMOUNTED:
+          #  - BIOS: write the syslinux boot code into the BOOT partition VBR (+
+          #    ldlinux.sys) — the piece setup-bootable skipped.
+          syslinux --install "${LOOP}p1"
+          #  - BIOS: GPT-aware MBR boot code in the protective MBR (overwrites
+          #    setup-bootable's plain mbr.bin, which can't boot GPT). SeaBIOS -> this
+          #    MBR -> the legacy-bootable partition's VBR -> syslinux just installed.
+          dd bs=440 count=1 conv=notrunc if=/usr/share/syslinux/gptmbr.bin of="$LOOP"
           mount "${LOOP}p2" "$M"; cp "$OVL" "$M/$(basename "$OVL")"; sync; umount "$M"
           losetup -d "$LOOP"; gzip -9 "$IMG"
           # Embed world.base into the release ISO now, AFTER setup-bootable consumed

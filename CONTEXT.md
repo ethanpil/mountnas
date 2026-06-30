@@ -15,10 +15,11 @@ that will silently regress if "cleaned up" without understanding it.
   builds the 4 local apks, runs `mkimage` to produce the ISO, and assembles the
   two-slot `.img.gz`.
 - **Boot: NOT yet verified.** No successful QEMU/hardware boot has been confirmed.
-  First `.img` boot attempt (Proxmox/SeaBIOS) hung at `Booting from Hard Disk…`:
-  the GPT image had no legacy-BIOS boot setup and no UEFI loader. **Now fixed** —
-  the image is built for both BIOS and UEFI (see §6, "Dual-firmware boot"), but the
-  fix is unverified pending a rebuild + boot test (§8).
+  Proxmox/SeaBIOS bring-up peeled back two layers — a hang at `Booting from Hard
+  Disk…` (no GPT legacy-boot setup), then `This is not a bootable disk` (no syslinux
+  VBR; `setup-bootable` never installed it). Both are addressed by installing the
+  BIOS + UEFI loaders ourselves (see §6, "Dual-firmware boot"), but the latest fix
+  is unverified pending a rebuild + boot test (§8).
 - **Primary deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd).
   The `-upgrade.img` is only for `nas upgrade`. They are different things — see §4.
 
@@ -181,22 +182,31 @@ apks into `A/apks/`. This now has **no `|| true`** and asserts the three boot fi
 landed — a layout change in `setup-bootable` fails the build instead of shipping an
 empty slot A.
 
-**Dual-firmware boot (BIOS + UEFI).** The BOOT partition is a GPT ESP (`ef00`),
-and `setup-bootable` only handles the syslinux side — it does **not** make a GPT
-disk legacy-bootable, and nothing installed a UEFI loader. A SeaBIOS VM (Proxmox's
-default) therefore printed `Booting from Hard Disk…` and hung forever. Both paths
-are now set up explicitly:
-- **Legacy BIOS:** `sgdisk --attributes=1:set:2` sets the *legacy BIOS bootable*
-  attribute on the BOOT partition, and we `dd` syslinux's **`gptmbr.bin`** (the
-  GPT-aware MBR code, not `mbr.bin`) into the protective MBR — done **after**
-  `setup-bootable`, which writes the wrong `mbr.bin` we overwrite. SeaBIOS →
-  gptmbr → syslinux VBR (installed by `setup-bootable`) → `syslinux.cfg`.
-- **UEFI:** `grub-install --target=x86_64-efi --removable --no-nvram` lays the
-  grub core image at `/EFI/BOOT/BOOTX64.EFI` (the removable fallback path OVMF
-  boots with no NVRAM entry) plus modules under `/boot/grub`. It does *not* write
-  the config — it loads the hand-written `/boot/grub/grub.cfg` from `write-bootcfg`.
-  (`grub`/`grub-efi`/`syslinux` are already host build deps; nothing is added to the
-  image's own world set — the loaders live only on the FAT partition.)
+**Dual-firmware boot (BIOS + UEFI).** The BOOT partition is a GPT ESP (`ef00`).
+**`setup-bootable` does NOT make this image bootable** — it installs syslinux only
+when handed a *device*, but we hand it the mounted *directory*, so it just copies
+files and the partition keeps its dosfstools dummy VBR. Nothing installed a UEFI
+loader either. The bring-up symptoms came in this order, each a layer deeper:
+1. SeaBIOS `Booting from Hard Disk…` then **hang** — no legacy-boot setup on GPT.
+2. After adding the legacy attribute + `gptmbr.bin`: **`This is not a bootable
+   disk`** — gptmbr now chainloaded the partition, but its VBR was the dosfstools
+   dummy (no syslinux VBR).
+3. Fixed by installing the syslinux VBR ourselves.
+
+Both loaders are installed explicitly, split by whether the FAT must be mounted:
+- **Legacy BIOS** (`SeaBIOS → gptmbr → BOOT VBR → syslinux → syslinux.cfg`):
+  `sgdisk --attributes=1:set:2` flags the partition legacy-bootable; **unmounted**,
+  `syslinux --install ${LOOP}p1` writes the VBR + `ldlinux.sys`, and `dd …gptmbr.bin`
+  puts GPT-aware MBR code in the protective MBR (overwriting setup-bootable's plain
+  `mbr.bin`). **Mounted**, we first `cp ldlinux.c32` to the FAT root — syslinux 6.x
+  chains `ldlinux.sys → ldlinux.c32`, which must sit beside it or boot aborts with
+  `Failed to load ldlinux.c32`.
+- **UEFI** (OVMF): **mounted**, `grub-install --target=x86_64-efi --removable
+  --no-nvram` lays the grub core at `/EFI/BOOT/BOOTX64.EFI` (removable fallback
+  path, no NVRAM entry needed) + modules under `/boot/grub`. It does *not* write the
+  config — it loads the hand-written `/boot/grub/grub.cfg` from `write-bootcfg`.
+- (`grub`/`grub-efi`/`syslinux` are host build deps only; nothing is added to the
+  image's world set — the loaders live solely on the FAT partition.)
 
 **busybox ash strictness.** The big build step runs under busybox `ash` (stricter
 than bash about `set -eu`). Two recurring bugs:
