@@ -109,6 +109,11 @@ jobs:
           sgdisk --zap-all "$LOOP"
           sgdisk -n1:0:+4GiB -t1:ef00 -c1:BOOT "$LOOP"
           sgdisk -n2:0:0 -t2:8300 -c2:MNASCFG "$LOOP"
+          # Legacy BIOS bootable attribute (GPT bit 2) on BOOT. SeaBIOS (Proxmox's
+          # default firmware) chainloads via gptmbr.bin, which only boots a GPT
+          # partition carrying this attribute. Without it: "Booting from Hard
+          # Disk..." then an indefinite hang. (gptmbr.bin is written further down.)
+          sgdisk --attributes=1:set:2 "$LOOP"
           partprobe "$LOOP"; sleep 1
           mkfs.vfat -F32 -n BOOT "${LOOP}p1"
           mkfs.ext4 -F -L MNASCFG "${LOOP}p2"     # found by label; no magic UUID
@@ -125,11 +130,24 @@ jobs:
           done
           [ -n "$(ls -A "$M/A/apks" 2>/dev/null)" ] || { echo "ERROR: slot A apks/ is empty"; exit 1; }
           cp "$WB" "$M/A/world.base"
-          echo "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4 console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG" > "$M/cmdline.base"
+          echo "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG" > "$M/cmdline.base"
           echo A > "$M/mountnas-active"; touch "$M/.nas-boot"
           # generate bootloader config (uses the same helper the device ships)
           install -Dm755 /home/build/repo/mountnas-tools/files/write-bootcfg /usr/libexec/mountnas/write-bootcfg
           /usr/libexec/mountnas/write-bootcfg "$M" A ""
+          # Make the image boot under BOTH firmwares:
+          #  - Legacy BIOS (SeaBIOS): setup-bootable already installed the syslinux
+          #    VBR on p1; write the GPT-aware MBR boot code into the protective MBR
+          #    so SeaBIOS chainloads the partition flagged legacy-bootable above.
+          #    (setup-bootable wrote the plain mbr.bin, which can't boot GPT — we
+          #    overwrite it here, after setup-bootable has run.)
+          dd bs=440 count=1 conv=notrunc if=/usr/share/syslinux/gptmbr.bin of="$LOOP"
+          #  - UEFI (OVMF): install grub to the ESP removable fallback path
+          #    (/EFI/BOOT/BOOTX64.EFI) so the firmware boots with no NVRAM entry.
+          #    grub-install only lays down the core image + modules; it uses the
+          #    hand-written /boot/grub/grub.cfg that write-bootcfg just generated.
+          grub-install --target=x86_64-efi --efi-directory="$M" \
+            --boot-directory="$M/boot" --removable --no-nvram
           umount "$M"
           mount "${LOOP}p2" "$M"; cp "$OVL" "$M/$(basename "$OVL")"; sync; umount "$M"
           losetup -d "$LOOP"; gzip -9 "$IMG"
@@ -146,7 +164,7 @@ jobs:
           # Stage each release file under a branded name so they are individually
           # downloadable (the GitHub Release publishes them un-zipped).
           mkdir -p out
-          cp "$IMG.gz" "out/mountnas-$TAG.img.gz"
+          cp "$IMG.gz" "out/mountnas-$TAG-base.img.gz"
           # The upgrade payload is the mkimage iso9660, but published as
           # '-upgrade.img' so users don't mistake it for a bootable install ISO.
           # 'nas upgrade' loop-mounts it and detects the fs by content, not name.

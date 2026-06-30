@@ -15,9 +15,10 @@ that will silently regress if "cleaned up" without understanding it.
   builds the 4 local apks, runs `mkimage` to produce the ISO, and assembles the
   two-slot `.img.gz`.
 - **Boot: NOT yet verified.** No successful QEMU/hardware boot has been confirmed.
-  The one boot attempt was against the *ISO* and failed for a now-fixed reason (see
-  §6, xorriso boot discard). The `.img.gz` slot-A layout is now hardened to fail
-  the build loudly, but a real boot test is the top open item (§8).
+  First `.img` boot attempt (Proxmox/SeaBIOS) hung at `Booting from Hard Disk…`:
+  the GPT image had no legacy-BIOS boot setup and no UEFI loader. **Now fixed** —
+  the image is built for both BIOS and UEFI (see §6, "Dual-firmware boot"), but the
+  fix is unverified pending a rebuild + boot test (§8).
 - **Primary deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd).
   The `-upgrade.img` is only for `nas upgrade`. They are different things — see §4.
 
@@ -179,6 +180,23 @@ apks into `A/apks/`. This now has **no `|| true`** and asserts the three boot fi
 landed — a layout change in `setup-bootable` fails the build instead of shipping an
 empty slot A.
 
+**Dual-firmware boot (BIOS + UEFI).** The BOOT partition is a GPT ESP (`ef00`),
+and `setup-bootable` only handles the syslinux side — it does **not** make a GPT
+disk legacy-bootable, and nothing installed a UEFI loader. A SeaBIOS VM (Proxmox's
+default) therefore printed `Booting from Hard Disk…` and hung forever. Both paths
+are now set up explicitly:
+- **Legacy BIOS:** `sgdisk --attributes=1:set:2` sets the *legacy BIOS bootable*
+  attribute on the BOOT partition, and we `dd` syslinux's **`gptmbr.bin`** (the
+  GPT-aware MBR code, not `mbr.bin`) into the protective MBR — done **after**
+  `setup-bootable`, which writes the wrong `mbr.bin` we overwrite. SeaBIOS →
+  gptmbr → syslinux VBR (installed by `setup-bootable`) → `syslinux.cfg`.
+- **UEFI:** `grub-install --target=x86_64-efi --removable --no-nvram` lays the
+  grub core image at `/EFI/BOOT/BOOTX64.EFI` (the removable fallback path OVMF
+  boots with no NVRAM entry) plus modules under `/boot/grub`. It does *not* write
+  the config — it loads the hand-written `/boot/grub/grub.cfg` from `write-bootcfg`.
+  (`grub`/`grub-efi`/`syslinux` are already host build deps; nothing is added to the
+  image's own world set — the loaders live only on the FAT partition.)
+
 **busybox ash strictness.** The big build step runs under busybox `ash` (stricter
 than bash about `set -eu`). Two recurring bugs:
 - **Apostrophes inside a `su … -c '…'` block** close the single quote early →
@@ -221,20 +239,23 @@ a bootable-intended ISO + apks cache; `.img` partitions/mkfs/setup-bootable/slot
 layout complete; Release publishing wired.
 
 **Open / next (in priority order):**
-1. **Boot-test the `.img.gz`** (QEMU or real USB hardware). Confirms slot A boots,
-   the seed overlay applies (root-owned, doas works), and `mountnas` holds then
-   releases docker/samba/nfs around `/mnt/nasdata`. This is the single most
-   important unverified thing.
+1. **Boot-test the `.img.gz`** (QEMU/Proxmox or real USB hardware) under **both
+   SeaBIOS and OVMF** — verifies the dual-firmware boot fix (§6). Then confirms slot
+   A boots, the seed overlay applies (root-owned, doas works), and `mountnas` holds
+   then releases docker/samba/nfs around `/mnt/nasdata`. The single most important
+   unverified thing. NB: on a VM this also surfaces the module-breadth risk in #4 —
+   if the loader works but the kernel can't find root, that's #4, not the boot fix.
 2. **Verify the fixed `.iso` boots** (the `-boot_image any replay` change).
 3. **Validate the A/B upgrade flow** — the plan's highest-risk assumption: that the
    initramfs honors per-slot `modloop=/<slot>/…` + `alpine_repo=/<slot>/apks` on the
    cmdline. Test `nas upgrade <upgrade.img>` → reboot slot B → `--finish` / `--rollback`.
-4. **Boot-module breadth.** The cmdline loads only
-   `loop,squashfs,sd-mod,usb-storage,vfat,ext4` (USB-stick focused). Booting the
-   `.img` from a VM **virtio/SATA/NVMe** disk may fail to find root unless mkinitfs
-   auto-loads those drivers. If VM testing is wanted, consider adding
-   `ahci nvme virtio_scsi virtio_blk` to the cmdline (in BOTH `mkimg.nas.sh` and the
-   `.img` `cmdline.base` echo) — unconfirmed whether needed.
+4. **Boot-module breadth (addressed, verify).** The cmdline now loads
+   `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a
+   VM disk (Proxmox defaults to VirtIO SCSI) can be found at boot. The list is kept
+   in sync across **four** places — `mkimg.nas.sh` (ISO), the `.img` `cmdline.base`
+   echo in `build.yml`, the `write-bootcfg` fallback default, and `nas-make-usb`;
+   change all four together. Still unverified that the running kernel actually binds
+   the VM bus; confirm during the boot test (#1).
 5. The rest of the plan's "assumptions to validate on first build" (its §11).
 
 **Known caveats:**
@@ -246,6 +267,13 @@ layout complete; Release publishing wired.
 - The `apk index` "No provider for the dependencies" warning during local-repo
   signing is **expected** (the 4-package local index doesn't contain its stable
   deps; they resolve at install time).
+- **`nas-make-usb` produces an unbootable USB as-is.** It partitions GPT and relies
+  only on `setup-bootable`, with none of the dual-firmware boot setup the build now
+  does (no legacy-boot attribute, no `gptmbr.bin`, no grub-efi). Worse, `syslinux`
+  and `grub-efi` aren't in the image world set, so `setup-bootable` can't even
+  install the BIOS loader on-device. Left as-is (auxiliary, non-release path, §4).
+  To make it work, port the build's boot steps here AND add `syslinux`/`grub`/
+  `grub-efi` to `packages.list`.
 
 ---
 
