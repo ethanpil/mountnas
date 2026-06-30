@@ -24,7 +24,6 @@ build() { :; }
 
 package() {
 	install -Dm755 "$startdir"/files/nas           "$pkgdir"/usr/sbin/nas
-	install -Dm755 "$startdir"/files/nas-make-usb  "$pkgdir"/usr/sbin/nas-make-usb
 	install -Dm755 "$startdir"/files/mountnas       "$pkgdir"/etc/init.d/mountnas
 	install -Dm755 "$startdir"/files/mountnas-net   "$pkgdir"/etc/init.d/mountnas-net
 	install -Dm755 "$startdir"/files/mountnas-sshkey "$pkgdir"/etc/init.d/mountnas-sshkey

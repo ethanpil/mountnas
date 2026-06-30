@@ -35,7 +35,7 @@ mountnas/
 ├── mountnas-tools/                   # LOCAL apk: the nas CLI + services (noarch-ish)
 │   ├── APKBUILD
 │   └── files/                        # the actual scripts (NOT src/ — see §6)
-│       ├── nas, nas-make-usb, mountnas, mountnas-net,
+│       ├── nas, mountnas, mountnas-net,
 │       ├── mountnas-sshkey, mountnas-issue, write-bootcfg, gen-issue,
 │       ├── issue-ifupdown, profile-nas-{welcome,aliases,prompt}.sh
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
@@ -82,9 +82,8 @@ The CI publishes a **GitHub Release** (not a zip — see §6) with:
 | `SHA256SUMS` | Checksums of the above. |
 
 **The seed `.apkovl.tar.gz` is intentionally NOT published.** It's baked into the
-`.img` (MNASCFG) so the image is self-contained; its only standalone use is the
-auxiliary `nas-make-usb` path, which is not a release deliverable. (Dropped per
-decision; it's still written onto MNASCFG inside the `.img`.)
+`.img` (MNASCFG) so the image is self-contained; it has no standalone consumer (the
+auxiliary `nas-make-usb` path that once used it was removed).
 
 ---
 
@@ -95,8 +94,10 @@ latest-stable. Corrected:
 
 - `cgdisk` — **removed** (provided by `gptfdisk`, not its own package).
 - `sgdisk` — **added as its own package** (split out of `gptfdisk`; NOT included by
-  `gptfdisk`). Needed at build time for the `.img` GPT layout and at runtime by
-  `nas-make-usb`.
+  `gptfdisk`). Used by CI to lay out the `.img` GPT (installed on the build host);
+  kept in `packages.list` only for manual on-device disk partitioning — no shipped
+  tool uses it anymore (the `nas-make-usb` consumer was removed). Droppable if that
+  admin convenience isn't wanted.
 - `gddrescue` → **`ddrescue`**; `ntfs-progs` → **`ntfs-3g-progs`**.
 - `nvtop`, `sdparm`, `curlftpfs` — **removed** (not in v3.24).
 - `zerotier-one` — not in Alpine at all → built locally (§7).
@@ -252,10 +253,10 @@ layout complete; Release publishing wired.
 4. **Boot-module breadth (addressed, verify).** The cmdline now loads
    `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a
    VM disk (Proxmox defaults to VirtIO SCSI) can be found at boot. The list is kept
-   in sync across **four** places — `mkimg.nas.sh` (ISO), the `.img` `cmdline.base`
-   echo in `build.yml`, the `write-bootcfg` fallback default, and `nas-make-usb`;
-   change all four together. Still unverified that the running kernel actually binds
-   the VM bus; confirm during the boot test (#1).
+   in sync across **three** places — `mkimg.nas.sh` (ISO), the `.img` `cmdline.base`
+   echo in `build.yml`, and the `write-bootcfg` fallback default; change all three
+   together. Still unverified that the running kernel actually binds the VM bus;
+   confirm during the boot test (#1).
 5. The rest of the plan's "assumptions to validate on first build" (its §11).
 
 **Known caveats:**
@@ -267,13 +268,6 @@ layout complete; Release publishing wired.
 - The `apk index` "No provider for the dependencies" warning during local-repo
   signing is **expected** (the 4-package local index doesn't contain its stable
   deps; they resolve at install time).
-- **`nas-make-usb` produces an unbootable USB as-is.** It partitions GPT and relies
-  only on `setup-bootable`, with none of the dual-firmware boot setup the build now
-  does (no legacy-boot attribute, no `gptmbr.bin`, no grub-efi). Worse, `syslinux`
-  and `grub-efi` aren't in the image world set, so `setup-bootable` can't even
-  install the BIOS loader on-device. Left as-is (auxiliary, non-release path, §4).
-  To make it work, port the build's boot steps here AND add `syslinux`/`grub`/
-  `grub-efi` to `packages.list`.
 
 ---
 
