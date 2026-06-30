@@ -147,10 +147,13 @@ jobs:
           # downloadable (the GitHub Release publishes them un-zipped).
           mkdir -p out
           cp "$IMG.gz" "out/mountnas-$TAG.img.gz"
-          cp "$ISO"    "out/mountnas-$TAG.iso"
+          # The upgrade payload is the mkimage iso9660, but published as
+          # '-upgrade.img' so users don't mistake it for a bootable install ISO.
+          # 'nas upgrade' loop-mounts it and detects the fs by content, not name.
+          cp "$ISO"    "out/mountnas-$TAG-upgrade.img"
           cp /home/build/.abuild/*.rsa.pub "out/mountnas-$TAG.rsa.pub"
           ( cd out && sha256sum mountnas-* > SHA256SUMS )
-      # Publish each artifact (img.gz, iso, apkovl, rsa.pub, SHA256SUMS) as a
+      # Publish each artifact (img.gz, upgrade.img, rsa.pub, SHA256SUMS) as a
       # SEPARATE, individually-downloadable release asset — not a single zip.
       - name: Publish release
         uses: softprops/action-gh-release@v2

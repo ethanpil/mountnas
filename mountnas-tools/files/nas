@@ -279,7 +279,7 @@ cmd_upgrade() {
 	case "${1:-}" in
 		--finish)   _upgrade_finish; return $? ;;
 		--rollback) _upgrade_rollback; return $? ;;
-		"") echo "usage: nas upgrade <new.iso> | --finish | --rollback   (see UPGRADE.md)"; return 1 ;;
+		"") echo "usage: nas upgrade <new-upgrade.img> | --finish | --rollback   (see UPGRADE.md)"; return 1 ;;
 	esac
 	iso="$1"; [ -f "$iso" ] || { bad "not found: $iso"; return 1; }
 	_mount_boot_rw || return 1
@@ -290,12 +290,12 @@ cmd_upgrade() {
 	echo "Running slot: $run    Staging new system into: slot $tgt"
 	echo "(Your current slot $run stays intact and becomes the rollback target.)"
 	confirm "Stage and boot slot $tgt next? (config + data untouched)" || return 1
-	m=$(mktemp -d); mount -o loop,ro "$iso" "$m" || { bad "cannot mount iso"; rmdir "$m"; return 1; }
+	m=$(mktemp -d); mount -o loop,ro "$iso" "$m" || { bad "cannot mount upgrade image"; rmdir "$m"; return 1; }
 	rm -rf "${BOOTMNT:?}/$tgt"; mkdir -p "$BOOTMNT/$tgt/boot" "$BOOTMNT/$tgt/apks"
 	cp "$m"/boot/vmlinuz-lts "$m"/boot/initramfs-lts "$m"/boot/modloop-lts "$BOOTMNT/$tgt/boot/" || { bad "copy failed"; umount "$m"; rmdir "$m"; return 1; }
 	cp -r "$m"/apks/. "$BOOTMNT/$tgt/apks/" 2>/dev/null || true
 	if [ -f "$m/world.base" ]; then cp "$m/world.base" "$BOOTMNT/$tgt/world.base"
-	else warn "world.base missing from ISO — new tool names won't add at --finish"; fi
+	else warn "world.base missing from upgrade image — new tool names won't add at --finish"; fi
 	echo "$(basename "$iso")" > "$BOOTMNT/$tgt/.release"
 	umount "$m"; rmdir "$m"; sync
 	"$WBCFG" "$BOOTMNT" "$tgt" "$run"; sync     # default = new slot, running slot kept as rollback

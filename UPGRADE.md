@@ -36,13 +36,13 @@ and the second slot fills on the first upgrade.
 
 ## Upgrading, step by step
 
-You need only the new release's **`.iso`**. `world.base` travels inside the ISO,
-so nothing else is required.
+You need only the new release's **`-upgrade.img`**. `world.base` travels inside
+it, so nothing else is required.
 
 ### 1. Stage the new system
 
 ```
-nas upgrade <new.iso>
+nas upgrade <new-upgrade.img>
 ```
 
 This mounts the `BOOT` partition read-write, confirms no slot switch is already
