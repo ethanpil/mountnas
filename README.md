@@ -136,6 +136,17 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
 - **New admin user**: `adduser <name> wheel` (so `doas` works), then `nas commit`.
 
+## Design Principles & Justifications
+
+MountNAS is a *diskless, run-from-RAM* Alpine system: every boot the OS is rebuilt in RAM from packages plus a small config overlay on the USB. That single fact drives the unusual design below — each custom service/tool exists to work *with* that model, not against it.
+
+- **Nothing persists until `nas commit`.** The root filesystem is tmpfs, so runtime changes vanish on reboot. `nas commit` (Alpine's `lbu`) saves `/etc` plus a short include list back to the USB. This is why every "…then `nas commit`" reminder exists.
+- **Code ships in the apk; editable config ships in the overlay.** The overlay is applied *before* packages install, so your config files (`fstab`, `smb.conf`, `sshd_config`, …) are user-owned and survive, while the `nas` tools and services are shipped read-only by the `mountnas-tools` package. An apk can't persist your config — only the overlay can.
+- **`mountnas` supervises data services.** Docker/Samba/NFS are deliberately *not* in any runlevel; the `mountnas` service starts them only once `/mnt/nasdata` is mounted, and drops a read-only placeholder over any disk that fails — so a missing disk can never silently fill RAM.
+- **`mountnas-mkdirs` creates mountpoints before mounting.** fstab's `x-mount.mkdir` auto-create option is a util-linux feature that the busybox `mount` used at early boot rejects (`ext4: Unknown parameter 'x-mount.mkdir'`). Instead this service `mkdir`s every `/cfg` and `/mnt/*` target from fstab just before `localmount`. You *can't* simply `mkdir` + `nas commit` empty dirs: `/mnt` is kept out of `lbu` on purpose (committing it would tar your entire data disk into the tiny overlay), so mountpoints must be recreated from fstab each boot.
+- **Small boot helpers.** `mountnas-net` brings up wired DHCP dynamically; `mountnas-sshkey` installs an `authorized_keys` file dropped on the BOOT partition (headless first login); `mountnas-issue` shows the live IP + hostname on the console *before* login; and the `nas-resize` profile snippet fixes terminal size on serial consoles (`qm terminal`, IPMI serial-over-LAN).
+- **One image, in-place upgrades.** A single `.img.gz` is both the installer and the upgrade payload: `nas upgrade` rewrites the OS partition in place and `nas backup` images the whole USB as the rollback net — no A/B slots to reason about.
+
 ## Disk health (smartd) and UPS (nut)
 
 smartd runs; add a notifier in /etc/smartd.conf then nas commit. nut is installed;
