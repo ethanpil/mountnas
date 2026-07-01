@@ -36,5 +36,6 @@ package() {
 	install -Dm644 "$startdir"/files/profile-nas-aliases.sh "$pkgdir"/etc/profile.d/nas-aliases.sh
 	install -Dm644 "$startdir"/files/profile-nas-prompt.sh  "$pkgdir"/etc/profile.d/nas-prompt.sh
 	install -Dm644 "$startdir"/files/profile-nas-resize.sh  "$pkgdir"/etc/profile.d/nas-resize.sh
+	install -Dm644 "$startdir"/files/logo           "$pkgdir"/usr/share/mountnas/logo
 	echo "$pkgver" | install -Dm644 /dev/stdin "$pkgdir"/usr/share/mountnas/version
 }

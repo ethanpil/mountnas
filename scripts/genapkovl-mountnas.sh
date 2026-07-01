@@ -45,6 +45,11 @@ LABEL=MNASCFG  /cfg  ext4  rw,noatime,nofail  0 0
 # System disk (Docker data-root, appdata, backups) — REQUIRED for Docker:
 # UUID=xxxxxxxx-xxxx  /mnt/nasdata  ext4  rw,noatime,nofail  0 2
 #
+# Or keep nasdata in a subdirectory of a mounted disk (bind mount; list the disk
+# first, then: mkdir -p /mnt/disk1/nasdata). Use a bind mount, NOT a symlink.
+# UUID=xxxxxxxx-xxxx  /mnt/disk1    ext4  rw,noatime,nofail  0 2
+# /mnt/disk1/nasdata  /mnt/nasdata  none  bind,nofail        0 0
+#
 # SnapRAID data + parity (optional). Keep /mnt/nasdata OUT of the array.
 # (The /mnt/disk1, /mnt/parity1 names are a convention — use any paths you like.)
 # UUID=...  /mnt/disk1    xfs  rw,noatime,nofail  0 2
@@ -124,6 +129,22 @@ EOF
 mk root:root 0644 "$tmp/etc/network/interfaces" <<'EOF'
 auto lo
 iface lo inet loopback
+EOF
+
+# ---- motd: drop Alpine's stock 'setup-alpine' recommendation ----
+# Post-login guidance comes from /etc/profile.d/nas-welcome.sh, so keep motd empty.
+mk root:root 0644 "$tmp/etc/motd" <<'EOF'
+EOF
+
+# ---- issue: MountNAS placeholder so the very first pre-login screen is not
+# Alpine's default. The mountnas-issue service runs gen-issue at boot, which
+# repaints this with the ASCII logo + live IP. (/etc/issue is lbu-excluded.)
+mk root:root 0644 "$tmp/etc/issue" <<'EOF'
+
+  MountNAS - starting up...
+
+  Log in as root, then run: nas setup
+
 EOF
 
 # ---- inittab: explicit gettys so BOTH consoles get a login prompt ----

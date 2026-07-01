@@ -17,11 +17,18 @@ _refresh_unsaved() { mkdir -p "$STATE"; lbu status 2>/dev/null | grep -c . > "$S
 
 cmd_version() { echo "MountNAS $VERSION"; }
 
+cmd_about() {
+	[ -f /usr/share/mountnas/logo ] && cat /usr/share/mountnas/logo
+	printf '\n                      v %s\n\n' "$VERSION"
+	printf 'Diskless Alpine based NAS that runs from RAM off a USB stick.\n\n'
+	printf 'http://mountnas.com\n'
+}
+
 cmd_help() {
 	cat <<EOF
 MountNAS $VERSION — control CLI
 
-  nas setup      Guided first-run setup (password, timezone, SSH key)
+  nas setup      Guided first-run setup (hostname, network, password, timezone)
   nas status     Health + storage config check (fast, no disk spin-up)
   nas status --deep   …plus SMART, SnapRAID status, time-sync (may wake disks)
   nas disks      Every disk: UUID, mount state, and a paste-ready fstab line
@@ -31,6 +38,7 @@ MountNAS $VERSION — control CLI
   nas shutdown   Power off (warns on unsaved changes)
   nas reboot     Reboot   (warns on unsaved changes)
   nas upgrade    Upgrade the OS — see UPGRADE.md
+  nas about      Logo, version, and project info
   nas help / version
   (nas validate = nas status ; nas checkup = nas status --deep)
 
@@ -168,13 +176,16 @@ cmd_disks() {
 
 	echo "Detected disks (* = MountNAS boot USB — do NOT add to fstab):"
 	printf "  %-8s %-7s %-8s %-20s %s\n" NAME SIZE FSTYPE MOUNTPOINT UUID
-	lsblk -rno NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT 2>/dev/null | while read -r name type size fstype label uuid mnt; do
-		case "$type" in disk|part) ;; *) continue ;; esac
+	# Pairs mode (-P): KEY="value" per line, so empty fields (e.g. an unlabelled
+	# data partition) don't shift columns the way raw mode + read collapses them.
+	lsblk -Pno NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT 2>/dev/null | while read -r line; do
+		eval "$line"
+		case "$TYPE" in disk|part) ;; *) continue ;; esac
 		tag=""
-		[ "$name" = "$usb" ] && tag=" *"
-		[ "$label" = BOOT ]  && tag=" * (BOOT)"
-		[ "$label" = MNASCFG ] && tag=" * (cfg)"
-		printf "  %-8s %-7s %-8s %-20s %s%s\n" "$name" "$size" "${fstype:--}" "${mnt:-(not mounted)}" "${uuid:--}" "$tag"
+		[ "$NAME" = "$usb" ] && tag=" *"
+		[ "$LABEL" = BOOT ]  && tag=" * (BOOT)"
+		[ "$LABEL" = MNASCFG ] && tag=" * (cfg)"
+		printf "  %-8s %-7s %-8s %-20s %s%s\n" "$NAME" "$SIZE" "${FSTYPE:--}" "${MOUNTPOINT:-(not mounted)}" "${UUID:--}" "$tag"
 	done
 
 	echo
@@ -185,14 +196,15 @@ cmd_disks() {
 	echo "Paste-ready fstab line(s) for unconfigured data partitions:"
 	# Build in a subshell-captured var: the while loop below runs in a pipe subshell,
 	# so a flag set inside it would not survive — check the captured output instead.
-	lines=$(lsblk -rno NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null | while read -r name type fstype label uuid; do
-		[ "$type" = part ] || continue
-		[ -n "$uuid" ] && [ -n "$fstype" ] || continue
-		case "$label" in BOOT|MNASCFG) continue ;; esac
-		[ "$name" = "$usb" ] && continue
+	lines=$(lsblk -Pno NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null | while read -r line; do
+		eval "$line"
+		[ "$TYPE" = part ] || continue
+		[ -n "$UUID" ] && [ -n "$FSTYPE" ] || continue
+		case "$LABEL" in BOOT|MNASCFG) continue ;; esac
+		[ "$NAME" = "$usb" ] && continue
 		# already referenced in fstab (by UUID or by device)?
-		grep -q "$uuid" /etc/fstab 2>/dev/null && continue
-		printf "  UUID=%s  /mnt/nasdata  %s  rw,noatime,nofail  0 2   # paste into /etc/fstab (edit mountpoint)\n" "$uuid" "$fstype"
+		grep -q "$UUID" /etc/fstab 2>/dev/null && continue
+		printf "  UUID=%s  /mnt/nasdata  %s  rw,noatime,nofail  0 2   # paste into /etc/fstab (edit mountpoint)\n" "$UUID" "$FSTYPE"
 	done)
 	[ -n "$lines" ] && printf '%s\n' "$lines" \
 		|| echo "  (none — every filesystem is already in fstab, or blank/unformatted)"
@@ -269,14 +281,33 @@ _power() { act="$1"; word="$2"
 cmd_shutdown() { _power "/sbin/poweroff" "shutdown"; }
 cmd_reboot()   { _power "/sbin/reboot"   "reboot"; }
 
+# First real wired NIC (skips virtual + wireless), mirroring mountnas-net's list.
+_pick_nic() {
+	for path in /sys/class/net/*; do
+		n=$(basename "$path")
+		case "$n" in lo|veth*|docker*|br-*|virbr*|tap*|tun*|zt*|tailscale*|wg*|bond*|dummy*) continue ;; esac
+		[ -e "$path/wireless" ] && continue
+		printf '%s\n' "$n"; return 0
+	done
+}
+
 cmd_setup() {
-	echo "=== MountNAS first-run setup (identity only) ==="
-	echo "[1/4] Root password"; passwd
+	echo "=== MountNAS first-run setup ==="
+
+	cur=$(hostname 2>/dev/null || echo mountnas)
+	printf '[1/5] Hostname [%s]: ' "$cur"; read -r hn
+	[ -n "$hn" ] || hn="$cur"
+	case "$hn" in
+		*[!A-Za-z0-9-]*) warn "invalid hostname '$hn' (letters, digits, hyphen only) — kept $cur"; hn="$cur" ;;
+	esac
+	printf '%s\n' "$hn" > /etc/hostname; hostname "$hn" 2>/dev/null; ok "hostname set to $hn"
+
+	echo "[2/5] Root password"; passwd
 	# Set the timezone directly from the baked-in tzdata. We deliberately do NOT use
 	# setup-timezone: it runs 'apk add tzdata', which fails offline (this appliance
 	# has no internet repo and the on-media repo is not always mounted). tzdata ships
 	# in the image, so /usr/share/zoneinfo/<tz> already exists.
-	printf '[2/4] Timezone (e.g. America/New_York), blank to skip: '; read -r tz
+	printf '[3/5] Timezone (e.g. America/New_York), blank to skip: '; read -r tz
 	if [ -n "$tz" ]; then
 		if [ -f "/usr/share/zoneinfo/$tz" ]; then
 			cp "/usr/share/zoneinfo/$tz" /etc/localtime && printf '%s\n' "$tz" > /etc/timezone
@@ -285,10 +316,38 @@ cmd_setup() {
 			warn "unknown timezone '$tz' — skipped (list them with: ls /usr/share/zoneinfo)"
 		fi
 	fi
-	echo "[3/4] SSH public key (paste one line, blank to skip):"; read -r key
-	[ -n "$key" ] && { mkdir -p /root/.ssh; printf '%s\n' "$key" >> /root/.ssh/authorized_keys
-		chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; }
-	echo "[4/4] Saving..."; cmd_commit
+	# Network: DHCP (default) leaves the mountnas-net first-boot handler to configure
+	# the wired NIC. Static rewrites /etc/network/interfaces (lo + a static stanza),
+	# which makes mountnas-net stand down (it only acts when no non-lo iface exists).
+	printf '[4/5] Network: [D]HCP (default) / [S]tatic: '; read -r net
+	case "$net" in
+		S|s)
+			nic=$(_pick_nic); [ -n "$nic" ] || nic=eth0
+			printf '  Interface [%s]: ' "$nic"; read -r i; [ -n "$i" ] && nic="$i"
+			printf '  IP address with prefix (e.g. 192.168.1.50/24): '; read -r addr
+			printf '  Gateway (e.g. 192.168.1.1): '; read -r gw
+			printf '  DNS server(s), space-separated (e.g. 1.1.1.1 8.8.8.8): '; read -r dns
+			if [ -n "$addr" ]; then
+				{
+					printf 'auto lo\niface lo inet loopback\n'
+					printf '\nauto %s\n' "$nic"
+					printf 'iface %s inet static\n' "$nic"
+					printf '    address %s\n' "$addr"
+					[ -n "$gw" ] && printf '    gateway %s\n' "$gw"
+				} > /etc/network/interfaces
+				if [ -n "$dns" ]; then
+					: > /etc/resolv.conf
+					for d in $dns; do printf 'nameserver %s\n' "$d" >> /etc/resolv.conf; done
+				fi
+				ok "static network set on $nic ($addr) — applies on reboot"
+			else
+				warn "no IP entered — left networking on DHCP"
+			fi
+			;;
+		*) ok "using DHCP (auto-configured at boot)" ;;
+	esac
+
+	echo "[5/5] Saving..."; cmd_commit
 	cat <<EOF
 
 Setup complete. NEXT: add your data disk(s).
@@ -432,6 +491,7 @@ case "${1:-help}" in
 	reboot) cmd_reboot ;;
 	upgrade) shift; cmd_upgrade "$@" ;;
 	version) cmd_version ;;
+	about) cmd_about ;;
 	help|--help|-h) cmd_help ;;
 	*) echo "unknown command: $1"; echo; cmd_help; exit 1 ;;
 esac
