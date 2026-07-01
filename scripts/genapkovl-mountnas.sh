@@ -121,10 +121,14 @@ iface lo inet loopback
 EOF
 
 # ---- inittab: explicit gettys so BOTH consoles get a login prompt ----
-# The kernel cmdline is `console=tty0 console=ttyS0`. We ship this so the Proxmox
+# The kernel cmdline is `console=tty1 console=ttyS0`. We ship this so the Proxmox
 # GRAPHICAL (noVNC / VGA) console gets a getty on tty1 AND the serial console
 # (qm terminal / ttyS0) gets one too — the packaged default is not guaranteed to
 # cover both. tty2-6 kept for bare-metal Alt-F2..F6.
+# IMPORTANT: the console= devices MUST match the getty ids here (tty1, ttyS0). The
+# diskless initramfs auto-appends a getty for any console= that has no inittab entry;
+# a mismatch (e.g. console=tty0) appends a SECOND getty on the same VGA screen as the
+# tty1 getty, and the two fight over input so login is impossible (see mkimg.nas.sh).
 mk root:root 0644 "$tmp/etc/inittab" <<'EOF'
 # /etc/inittab — MountNAS
 ::sysinit:/sbin/openrc sysinit

@@ -72,7 +72,14 @@ several CI steps exist.
   is handled at runtime by the `mountnas` service (ro placeholder + service gating).
 - **Explicit `/etc/inittab`** ships a getty on **tty1** (VGA / Proxmox noVNC) *and*
   **ttyS0** (serial / `qm terminal`) so both consoles get a login prompt regardless of
-  the packaged default.
+  the packaged default. **The `console=` cmdline devices MUST match those getty ids
+  (`console=tty1 console=ttyS0`).** The diskless initramfs auto-appends a getty (comment
+  `# enable login on alternative console`) for any `console=` with no inittab entry;
+  `console=tty0` (tty0 = the active VT = the VGA VT1) therefore appended a *second*
+  getty on the same noVNC screen as the tty1 getty — two prompts fighting over input,
+  login impossible. Using `console=tty1` makes the appender find tty1 already present
+  and add nothing. This is the real cause of "can't log in on the Proxmox graphical
+  console" (the earlier securetty/getty theories were wrong).
 - **Single-slot: one OS on the BOOT (FAT/ESP) partition; config on `MNASCFG` (ext4).**
   BOOT holds the native diskless layout (`/boot`, `/apks`); overlay is found by
   **label** (`ovl_dev=LABEL=MNASCFG`), not a UUID. `nas upgrade` rewrites BOOT in

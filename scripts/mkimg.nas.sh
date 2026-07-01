@@ -20,7 +20,11 @@ profile_nas() {
 	# Disk-bus drivers (ahci/nvme/virtio_*) included so the image also boots from a
 	# VM virtual disk (Proxmox defaults to VirtIO SCSI), not just a USB stick.
 	# Inapplicable modules are silently skipped on real hardware.
-	kernel_cmdline="modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG"
+	# console=tty1 (NOT tty0): the diskless initramfs auto-appends a getty for each
+	# console= that has no inittab entry. tty0 = the active VT (== VT1 on the VGA), so
+	# console=tty0 appended a SECOND getty on the same noVNC screen as our tty1 getty —
+	# two prompts fighting over input, login impossible. tty1 matches our inittab getty.
+	kernel_cmdline="modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk console=tty1 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG"
 	syslinux_serial="0 115200"
 	apks="$apks $(_nas_pkglist)"
 	local _f; for _f in $kernel_flavors; do apks="$apks linux-$_f"; done
