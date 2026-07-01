@@ -296,8 +296,7 @@ __Filesystems__
 * f2fs-tools
 * exfatprogs
 * dosfstools
-* ntfs-3g
-* ntfs-3g-progs
+* ntfs-3g-progs (NTFS: mount with the in-kernel `ntfs3` driver — fstype `ntfs3` in fstab — which is preloaded via `/etc/modules`; these are the userspace tools `mkfs.ntfs`/`ntfsfix`/`ntfsresize`. The slower FUSE `ntfs-3g` driver is not installed.)
 * hfsprogs
 * udftools
 * fuse

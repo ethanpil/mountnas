@@ -55,6 +55,7 @@ EOF
 
 mk root:root 0644 "$tmp/etc/modules" <<'EOF'
 fuse
+ntfs3
 EOF
 
 mk root:root 0400 "$tmp/etc/doas.conf" <<'EOF'

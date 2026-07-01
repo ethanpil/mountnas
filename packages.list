@@ -56,7 +56,10 @@ btrfs-progs
 f2fs-tools
 exfatprogs
 dosfstools
-ntfs-3g
+# NTFS: the in-kernel ntfs3 driver (loaded via /etc/modules) handles read/write and
+# is much faster than the old FUSE ntfs-3g, so the FUSE driver is intentionally NOT
+# installed. Mount NTFS disks with fstype 'ntfs3'. We keep ntfs-3g-progs for the
+# userspace tools the kernel driver lacks (mkfs.ntfs, ntfsfix, ntfsresize, ...).
 ntfs-3g-progs
 hfsprogs
 udftools

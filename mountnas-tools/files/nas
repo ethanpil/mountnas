@@ -34,14 +34,24 @@ MountNAS $VERSION — control CLI
   nas help / version
   (nas validate = nas status ; nas checkup = nas status --deep)
 
-Important paths:
-  /cfg                     Config partition (your saved overlay)
-  $DATA              System disk: Docker data-root, appdata, backups
-  /mnt/disk*, /mnt/parity* SnapRAID disks — CONVENTIONAL names only; SnapRAID
-                           cares about the paths in snapraid.conf, not these names
-  /etc/fstab               WHERE YOU CONFIGURE DISKS (not a tool, not storage.conf)
-  /etc/docker/daemon.json  Docker (data-root = $DATA/docker)
-  /etc/samba/smb.conf      Samba    /etc/exports  NFS    /etc/snapraid.conf SnapRAID
+Important files & paths (edit, then: nas commit):
+  /etc/fstab               WHERE YOU CONFIGURE DISKS (add data disks here)
+  /mnt/*                   Your data-disk mountpoints ($DATA = system disk)
+  /cfg                     Config partition — your saved overlay lives here
+  /etc/snapraid.conf       SnapRAID parity array
+  mergerfs pool            configured in /etc/fstab (mount options); no separate file
+  /etc/samba/smb.conf      Samba shares       (add users: smbpasswd -a <user>)
+  /etc/exports             NFS exports
+  /etc/docker/daemon.json  Docker             (data-root = $DATA/docker)
+  /etc/nut/                UPS: nut.conf, ups.conf, upsd.conf, upsmon.conf
+  /etc/smartd.conf         SMART disk-health monitoring + alerts
+  /etc/chrony/chrony.conf  Time sync (NTP)
+  /etc/ssh/sshd_config     SSH server;  /root/.ssh/authorized_keys = your keys
+  /var/lib/zerotier-one    ZeroTier identity + config
+  /var/lib/tailscale       Tailscale state
+  crontab -e               Scheduled jobs (e.g. SnapRAID sync/scrub)
+  Note: /mnt/disk*, /mnt/parity* are CONVENTIONAL names only — SnapRAID cares about
+        the paths in snapraid.conf, not these names.
 
 Add a disk:
   1) nas disks                     find the disk + its UUID (copy the fstab line)
