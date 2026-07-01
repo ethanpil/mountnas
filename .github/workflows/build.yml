@@ -129,6 +129,14 @@ jobs:
             [ -f "$M/A/boot/$f" ] || { echo "ERROR: slot A is missing boot/$f"; exit 1; }
           done
           [ -n "$(ls -A "$M/A/apks" 2>/dev/null)" ] || { echo "ERROR: slot A apks/ is empty"; exit 1; }
+          # The diskless init discovers the on-media apk repo by scanning /media/* for
+          # a .boot_repository marker (find_boot_repositories) and uses the REAL mount
+          # path it returns. `mv apks/*` doesn't move that dotfile, so create it inside
+          # the slot; drop the now-stray original dir so only the slot repo is found.
+          # Without a discoverable repo, 0 packages install -> "/sbin/init not found".
+          touch "$M/A/apks/.boot_repository"
+          rm -rf "$M/apks"
+          [ -f "$M/A/apks/x86_64/APKINDEX.tar.gz" ] || { echo "ERROR: slot A apks/ has no APKINDEX"; exit 1; }
           cp "$WB" "$M/A/world.base"
           echo "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG" > "$M/cmdline.base"
           echo A > "$M/mountnas-active"; touch "$M/.nas-boot"

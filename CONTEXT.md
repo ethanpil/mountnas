@@ -179,8 +179,19 @@ against the installed apk-tools. Bump both together on a new Alpine release.
 **Slot-A layout (hardened).** `setup-bootable` copies the ISO's `boot/` + `apks/`
 to the BOOT partition; we then `mv` kernel/initramfs/modloop into `A/boot/` and
 apks into `A/apks/`. This now has **no `|| true`** and asserts the three boot files
-landed — a layout change in `setup-bootable` fails the build instead of shipping an
-empty slot A.
+landed (and that `A/apks/x86_64/APKINDEX.tar.gz` exists) — a layout change in
+`setup-bootable` fails the build instead of shipping an empty/indexless slot A.
+
+**Boot-repository marker.** The diskless init installs the base userspace into the
+RAM root at boot by discovering the on-media apk repo — it scans `/media/*` for a
+**`.boot_repository`** marker file (`find_boot_repositories`) and uses the real path
+it finds. Two traps, both now handled: (1) `mv "$M"/apks/* …` does **not** move the
+`.boot_repository` dotfile (shell `*` skips hidden files), so we `touch
+"$M/A/apks/.boot_repository"` explicitly and `rm -rf "$M/apks"` to drop the stray
+original; (2) the cmdline must be `alpine_repo=auto` — a literal `alpine_repo=/A/apks`
+is used verbatim (fails, not under `/media`) and disables the marker scan. Symptom of
+getting this wrong: `opening /A/apks/x86_64/APKINDEX.tar.gz: No such file` →
+`0 packages` → `/sbin/init not found in new root` → initramfs emergency shell.
 
 **Dual-firmware boot (BIOS + UEFI).** The BOOT partition is a GPT ESP (`ef00`).
 **`setup-bootable` does NOT make this image bootable** — it installs syslinux only
@@ -257,9 +268,20 @@ layout complete; Release publishing wired.
    unverified thing. NB: on a VM this also surfaces the module-breadth risk in #4 —
    if the loader works but the kernel can't find root, that's #4, not the boot fix.
 2. **Verify the fixed `.iso` boots** (the `-boot_image any replay` change).
-3. **Validate the A/B upgrade flow** — the plan's highest-risk assumption: that the
-   initramfs honors per-slot `modloop=/<slot>/…` + `alpine_repo=/<slot>/apks` on the
-   cmdline. Test `nas upgrade <upgrade.img>` → reboot slot B → `--finish` / `--rollback`.
+3. **Validate the A/B upgrade flow.** The per-slot `modloop=/<slot>/…` cmdline works
+   (resolved relative to the boot media). The per-slot **`alpine_repo=/<slot>/apks`
+   did NOT** — the init uses that path literally (it's not under the init's `/media`
+   mount) and a non-`auto` value also disables the marker-based discovery that would
+   find the real path. **Now `alpine_repo=auto`**: the init's `find_boot_repositories`
+   scans `/media/*` for a `.boot_repository` marker and returns the real
+   `/media/<dev>/<slot>/apks` path (see §6). Remaining upgrade caveat — **repo
+   isolation is imperfect**: the marker scan is global, so once slot B is staged both
+   slots carry a marker (upgrade copies it via `cp -r apks/.`). Forward boots are fine
+   (newest pkgs live in the booted slot); an explicit **rollback** may pull the newer
+   slot's userspace even though kernel/modloop roll back per-slot. Acceptable for now;
+   a clean fix needs the init to pick the repo from the slot in `modloop=` (custom
+   initramfs hook) rather than a global marker scan. Test `nas upgrade <upgrade.img>`
+   → reboot slot B → `--finish` / `--rollback`.
 4. **Boot-module breadth (addressed, verify).** The cmdline now loads
    `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a
    VM disk (Proxmox defaults to VirtIO SCSI) can be found at boot. The list is kept
