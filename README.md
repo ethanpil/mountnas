@@ -57,6 +57,8 @@ An example:
 UUID=example-uuid-string  /mnt/nasdata  ext4  rw,noatime,nofail  0 2
 
 ```
+> **Getting the UUID:** a blank disk has no UUID until it's formatted. Partition and `mkfs` the disk first (e.g. `mkfs.ext4 -L nasdata /dev/sdX1`) — that creates the UUID — then read it with `blkid /dev/sdX1` (or `nas disks`) and paste it into the line above.
+
 **IMPORTANT:** You *must* include the `nofail` option on all data volume entries within `/etc/fstab`. If a storage volume fails to initialize or is physically disconnected, the system will continue booting safely to a command prompt rather than hanging indefinitely during initialization. The `mountnas` service creates each `/mnt/*` mountpoint for you before mounting, so you do **not** need to `mkdir` the target first. (Do **not** use `x-mount.mkdir` — it is a util-linux option that busybox `mount` rejects at early boot.)
 
 Additional notes:

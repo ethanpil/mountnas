@@ -262,8 +262,19 @@ cmd_reboot()   { _power "/sbin/reboot"   "reboot"; }
 cmd_setup() {
 	echo "=== MountNAS first-run setup (identity only) ==="
 	echo "[1/4] Root password"; passwd
+	# Set the timezone directly from the baked-in tzdata. We deliberately do NOT use
+	# setup-timezone: it runs 'apk add tzdata', which fails offline (this appliance
+	# has no internet repo and the on-media repo is not always mounted). tzdata ships
+	# in the image, so /usr/share/zoneinfo/<tz> already exists.
 	printf '[2/4] Timezone (e.g. America/New_York), blank to skip: '; read -r tz
-	[ -n "$tz" ] && setup-timezone -z "$tz"
+	if [ -n "$tz" ]; then
+		if [ -f "/usr/share/zoneinfo/$tz" ]; then
+			cp "/usr/share/zoneinfo/$tz" /etc/localtime && printf '%s\n' "$tz" > /etc/timezone
+			ok "timezone set to $tz"
+		else
+			warn "unknown timezone '$tz' — skipped (list them with: ls /usr/share/zoneinfo)"
+		fi
+	fi
 	echo "[3/4] SSH public key (paste one line, blank to skip):"; read -r key
 	[ -n "$key" ] && { mkdir -p /root/.ssh; printf '%s\n' "$key" >> /root/.ssh/authorized_keys
 		chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; }
