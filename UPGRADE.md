@@ -1,141 +1,124 @@
-# MountNAS — Upgrading the OS
+# Upgrading MountNAS
 
-MountNAS upgrades the operating system in place, from the running box, with a
-one-keystroke rollback that is always available. Your **configuration partition
-(`MNASCFG`) and your data disks are never touched** by an upgrade — only the OS
-on the `BOOT` partition changes.
+MountNAS runs from RAM off a USB stick. An upgrade **rewrites the operating system on
+that stick in place**, then you reboot into the new version. Your **configuration**
+(`/cfg` / the `MNASCFG` partition) and your **data disks** are never touched.
 
-> **The `.img.gz` is for first install only.** Re-flashing it over a running NAS
-> erases the config partition. Once a stick is in service, *always* upgrade with
-> `nas upgrade` — never re-write the image.
+There is **one image** for everything: `mountnas-<tag>.img.gz`. Write it to a blank stick
+for a fresh install, or hand it to `nas upgrade` to update an existing box.
 
 ---
 
-## The two-slot (A/B) model
+## ⚠️ Read this first
 
-The `BOOT` partition holds **two complete, independent, bootable systems**, slot
-**A** and slot **B**. Each slot has its own kernel, initramfs, modloop, local
-`apks` repo, and `world.base` package manifest. The bootloader cmdline pins each
-slot to its own files (`modloop=/<slot>/boot/modloop-lts`,
-`alpine_repo=/<slot>/apks`), so the two never interfere.
+Upgrading is the one operation that can leave a headless box unbootable. There is **no
+automatic rollback** — your safety net is a full-image backup you make *before* upgrading.
 
-**Both slots are always kept** — the current one and the previous one. An upgrade
-stages the new system into the *inactive* slot and points the bootloader at it.
-The slot you were running stays intact and becomes the rollback target, so a
-downgrade is available at any time, not just inside a finalize window.
+- **Always run `nas backup` first**, and **copy the resulting image off this box** (to your
+  PC, a NAS share, another USB). A backup that only lives on the box you're upgrading can't
+  save you if the box won't boot.
+- **Recovery = write that backup image to a *different* USB and boot it.**
+- **NEVER boot with two MountNAS USB drives attached at once.** Both use the disk labels
+  `BOOT` and `MNASCFG`; with two present the system can grab the wrong one. Remove the
+  failed stick before inserting the backup.
 
-Because staging always writes the **non-running** slot, an upgrade can never
-overwrite the system you are currently executing from, and the live modloop is
-never modified — so the FAT32 "busy file" failure can't happen.
-
-This is why the stick needs to be **8 GB or larger** (16 GB comfortable): the
-shipped image is roughly one-slot-sized (slot B is empty and compresses away),
-and the second slot fills on the first upgrade.
+`nas upgrade` refuses to proceed until you confirm you have a backup.
 
 ---
 
-## Upgrading, step by step
+## Step by step
 
-You need only the new release's **`-upgrade.img`**. `world.base` travels inside
-it, so nothing else is required.
-
-### 1. Stage the new system
+### 1. Back up the boot USB — REQUIRED
 
 ```
-nas upgrade <new-upgrade.img>
+nas backup
 ```
 
-This mounts the `BOOT` partition read-write, confirms no slot switch is already
-pending, then stages the new kernel, initramfs, modloop, `apks` repo, and
-`world.base` into the **other** slot and points the bootloader's default at it.
-Your current slot is left intact as the rollback target. It asks for confirmation
-before writing anything; config and data are untouched.
+This images the entire boot USB (OS + your saved config) to
+`/mnt/nasdata/backups/mountnas-backup-<host>-<timestamp>.img.gz`. Use `nas backup --to
+<dir-or-file>` to write it elsewhere (e.g. a mounted share). It does **not** back up your
+data disks or Docker data — those live on separate storage.
 
-### 2. Reboot into it
+**Copy the file off this box now.** From your PC, for example:
+
+```
+scp root@mountnas:/mnt/nasdata/backups/mountnas-backup-*.img.gz .
+```
+
+### 2. Get the new release image onto the box
+
+Download `mountnas-<tag>.img.gz` from the release and place it where the box can read it —
+e.g. copy it to the data disk:
+
+```
+scp mountnas-<tag>.img.gz root@mountnas:/mnt/nasdata/
+```
+
+You can hand `nas upgrade` either the compressed `.img.gz` (it decompresses to temp space
+on the data disk) or an already-decompressed `.img`.
+
+### 3. Run the upgrade
+
+```
+nas upgrade /mnt/nasdata/mountnas-<tag>.img.gz
+```
+
+It will:
+
+1. Show the upgrade warning and require you to type **`YES`** to confirm you have a backup.
+2. Check there is enough temp space to unpack the image (aborts cleanly if not).
+3. Unpack the image and mount its boot partition.
+4. Run **`copy-modloop`** — Alpine's tool that moves the running kernel modules into RAM and
+   detaches the live modloop, so the OS files on the USB can be rewritten safely.
+5. Overwrite the boot files (`vmlinuz`, `initramfs`, `modloop`, the on-USB `apks` repo,
+   `world.base`) in place, writing to temp names then renaming so an interruption can't
+   corrupt the running system.
+6. Reconcile `/etc/apk/world` so packages this release **added** are installed and packages
+   it **dropped** are removed — while keeping any packages **you** installed yourself.
+7. Regenerate the bootloader config and `nas commit` your configuration.
+
+Nothing you rely on is touched until step 5, and if `copy-modloop` or the unpack fails
+first, the box is left exactly as it was.
+
+### 4. Reboot
 
 ```
 nas reboot
 ```
 
-The box boots the newly staged slot: new kernel, new package versions, your
-unchanged configuration, disks mounted, services running.
-
-### 3. Verify
+The box boots the new version. Check it:
 
 ```
-nas status
-nas validate
+nas status      # shows the new version
+nas validate    # storage config still sane
 ```
-
-Confirm the data disk is mounted, services are up, and your fstab/shares still
-check out. If anything is wrong, see **Rolling back** below — you have not
-committed to the new slot yet.
-
-### 4. Finalize
-
-```
-nas upgrade --finish
-```
-
-This regenerates `/etc/apk/world`, installs only the genuinely new package names
-(offline, from the slot's own local repo), runs `nas commit`, and marks the
-current slot as active. **It does not delete the previous slot** — that stays as a
-downgrade target.
-
-How `world` is regenerated (so the upgrade applies what a release *added* **and**
-what it *dropped*, while preserving packages you installed yourself):
-
-```
-user_extras = current /etc/apk/world  −  the OLD release's world.base
-new world    = the NEW release's world.base  ∪  user_extras
-```
-
-Only names in the new world that aren't already installed are pulled, from the
-slot's local repo. Version updates flow automatically from each slot's own repo,
-so the base is never re-asserted by hand. If the previous release's `world.base`
-is ever missing, finalize falls back to a union (add-only) so one of your packages
-is never dropped by mistake — it just can't detect release removals that one time.
 
 ---
 
-## Rolling back
+## If the upgrade fails or the new version misbehaves
 
-A rollback is available at any time, by either route:
+There is no in-place rollback — recover from the backup you made in step 1:
 
-- **From the running system:**
+1. Power down the box and **remove the MountNAS USB stick.**
+2. On your PC, write your `nas backup` image to a **different** USB stick with
+   [balenaEtcher](https://etcher.balena.io/) or `dd`:
+   ```
+   gzip -dc mountnas-backup-*.img.gz | sudo dd of=/dev/sdX bs=4M status=progress
+   ```
+   (Replace `/dev/sdX` with the target stick — double-check it.)
+3. Insert **only** that stick and boot. You're back to exactly where you were when you made
+   the backup — OS, config, and all.
 
-  ```
-  nas upgrade --rollback
-  ```
-
-  Points the next boot at the previous slot and offers to reboot immediately
-  (closing the window where you're still living in the slot you're abandoning).
-
-- **From the boot menu:** at power-on, pick the other `MountNAS (slot X)` entry.
-
-Because both slots are kept, the previous version is always one reboot away.
-
----
-
-## Guard rails
-
-- `nas upgrade` and `nas upgrade --finish` **refuse to run while a slot switch is
-  pending** — i.e. when the bootloader default no longer matches the running slot.
-  They tell you to `nas reboot` first. This prevents staging from overwriting the
-  slot the bootloader is about to boot, and prevents finalizing a slot you haven't
-  actually booted.
-- Staging **always targets the non-running slot**, so it can never overwrite the
-  live system.
-- `nas upgrade` refuses if the `BOOT` partition is missing its `.nas-boot` marker.
-- `--rollback` offers an immediate reboot so you don't keep operating from the
-  slot you're leaving.
+Your data disks were never part of the upgrade or the backup, so they are unaffected.
 
 ---
 
-## Validate before you trust it (recommended for a first build)
+## Notes
 
-Per the build assumptions, the A/B slot pinning is the highest-risk piece. Before
-relying on `nas upgrade` on real hardware, validate it in QEMU: boot the `.img`,
-add a scratch data disk, confirm `mountnas` holds then releases services, then
-manually stage slot B and confirm `nas upgrade --finish` and `nas upgrade
---rollback` behave as described above.
+- **RAM.** `copy-modloop` holds the uncompressed kernel modules (~300–500 MB) in RAM until
+  you reboot — fine on typical NAS hardware.
+- **Temp space.** Unpacking a `.img.gz` needs room for the ~6 GB decompressed image on the
+  data disk (or wherever `TMPDIR` points). `nas upgrade` checks this before doing anything.
+- **Config safety.** Because `MNASCFG` is a separate partition, upgrading never risks your
+  settings. The full-image backup captures OS *and* config together, so restoring it rolls
+  both back consistently.

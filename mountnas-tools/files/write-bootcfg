@@ -1,28 +1,24 @@
 #!/bin/sh
-# write-bootcfg <bootmnt> <active-slot> [fallback-slot]
+# write-bootcfg <bootmnt>
+# Single-slot: one bootable system on the BOOT partition (/boot + /apks). Writes
+# both a BIOS (syslinux) and a UEFI (grub) config pointing at it.
 set -eu
-B="$1"; ACT="$2"; FB="${3:-}"
+B="$1"
 BASE=$(cat "$B/cmdline.base" 2>/dev/null || echo \
   "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk console=tty0 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG")
-# modloop is a per-slot path (resolved relative to the boot media by the init).
-# The apk repo, by contrast, is found via a .boot_repository marker, NOT a literal
-# path: a non-auto alpine_repo is used verbatim (/A/apks doesn't exist under the
-# init's /media mount) AND disables marker discovery. So use auto and rely on the
-# marker living only in the active slot's apks/ (see build .boot_repository step).
-append() { echo "$BASE modloop=/$1/boot/modloop-lts alpine_repo=auto"; }
+# modloop path is resolved relative to the boot media by the init. The apk repo is
+# found via the .boot_repository marker (alpine_repo=auto) — a literal path would be
+# used verbatim and disable that discovery.
+APPEND="$BASE modloop=/boot/modloop-lts alpine_repo=auto"
 
 # BIOS / syslinux
 {
-	echo "SERIAL 0 115200"; echo "PROMPT 1"; echo "TIMEOUT 30"; echo "DEFAULT $ACT"; echo
-	for s in "$ACT" $FB; do
-		[ -d "$B/$s/boot" ] || continue
-		echo "LABEL $s"
-		echo "  MENU LABEL MountNAS (slot $s)"
-		echo "  KERNEL /$s/boot/vmlinuz-lts"
-		echo "  INITRD /$s/boot/initramfs-lts"
-		echo "  APPEND $(append "$s")"
-		echo
-	done
+	echo "SERIAL 0 115200"; echo "PROMPT 1"; echo "TIMEOUT 30"; echo "DEFAULT mountnas"; echo
+	echo "LABEL mountnas"
+	echo "  MENU LABEL MountNAS"
+	echo "  KERNEL /boot/vmlinuz-lts"
+	echo "  INITRD /boot/initramfs-lts"
+	echo "  APPEND $APPEND"
 } > "$B/syslinux.cfg"
 mkdir -p "$B/boot/syslinux"; cp "$B/syslinux.cfg" "$B/boot/syslinux/syslinux.cfg" 2>/dev/null || true
 
@@ -30,12 +26,9 @@ mkdir -p "$B/boot/syslinux"; cp "$B/syslinux.cfg" "$B/boot/syslinux/syslinux.cfg
 mkdir -p "$B/boot/grub"
 {
 	echo "set timeout=30"; echo "set default=0"
-	for s in "$ACT" $FB; do
-		[ -d "$B/$s/boot" ] || continue
-		echo "menuentry \"MountNAS (slot $s)\" {"
-		echo "  linux /$s/boot/vmlinuz-lts $(append "$s")"
-		echo "  initrd /$s/boot/initramfs-lts"
-		echo "}"
-	done
+	echo "menuentry \"MountNAS\" {"
+	echo "  linux /boot/vmlinuz-lts $APPEND"
+	echo "  initrd /boot/initramfs-lts"
+	echo "}"
 } > "$B/boot/grub/grub.cfg"
 sync

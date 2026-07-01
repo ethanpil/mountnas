@@ -15,7 +15,7 @@ profile_nas() {
 	desc="MountNAS diskless NAS"
 	arch="${ARCH:-x86_64}"
 	kernel_flavors="lts"
-	# Base cmdline only. write-bootcfg appends per-slot modloop=/alpine_repo=.
+	# Base cmdline only. write-bootcfg appends modloop=/boot/modloop-lts alpine_repo=auto.
 	# Overlay is found by partition label (no magic UUID to keep in sync).
 	# Disk-bus drivers (ahci/nvme/virtio_*) included so the image also boots from a
 	# VM virtual disk (Proxmox defaults to VirtIO SCSI), not just a USB stick.

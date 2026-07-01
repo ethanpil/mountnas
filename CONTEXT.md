@@ -13,15 +13,15 @@ that will silently regress if "cleaned up" without understanding it.
 
 - **Build: GREEN.** The GitHub Actions workflow assembles everything end-to-end:
   builds the 4 local apks, runs `mkimage` to produce the ISO, and assembles the
-  two-slot `.img.gz`.
-- **Boot: NOT yet verified.** No successful QEMU/hardware boot has been confirmed.
-  Proxmox/SeaBIOS bring-up peeled back two layers — a hang at `Booting from Hard
-  Disk…` (no GPT legacy-boot setup), then `This is not a bootable disk` (no syslinux
-  VBR; `setup-bootable` never installed it). Both are addressed by installing the
-  BIOS + UEFI loaders ourselves (see §6, "Dual-firmware boot"), but the latest fix
-  is unverified pending a rebuild + boot test (§8).
-- **Primary deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd).
-  The `-upgrade.img` is only for `nas upgrade`. They are different things — see §4.
+  single-slot `.img.gz`.
+- **Boot: bootloader verified, full boot pending.** Proxmox/SeaBIOS bring-up peeled
+  back three layers — hang at `Booting from Hard Disk…` (no GPT legacy-boot), then
+  `This is not a bootable disk` (no syslinux VBR), then `/sbin/init not found`
+  (repo not discovered). All addressed (§6); the box now reaches the diskless init.
+  Full boot-to-login (and the new single-slot upgrade) is unverified pending a
+  rebuild + test (§8).
+- **Single deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd for a
+  fresh install; the same file is what `nas upgrade` consumes). See §4.
 
 ---
 
@@ -61,8 +61,12 @@ several CI steps exist.
   (`/usr/sbin`, `/etc/init.d`, `/usr/libexec`, lbu-excluded `/etc/profile.d`).
   All editable defaults (`fstab`, `sshd_config`, `smb.conf`, runlevels, …) live in
   `genapkovl-mountnas.sh` and are user-owned via lbu.
-- **Two slots A/B on the BOOT (FAT/ESP) partition; config on `MNASCFG` (ext4).**
-  Overlay is found by **label** (`ovl_dev=LABEL=MNASCFG`), not a UUID.
+- **Single-slot: one OS on the BOOT (FAT/ESP) partition; config on `MNASCFG` (ext4).**
+  BOOT holds the native diskless layout (`/boot`, `/apks`); overlay is found by
+  **label** (`ovl_dev=LABEL=MNASCFG`), not a UUID. `nas upgrade` rewrites BOOT in
+  place (via `copy-modloop`); rollback is a full-image `nas backup` (see §4a). The
+  old A/B two-slot scheme was removed — it only existed to dodge the busy-modloop
+  problem, which `copy-modloop` solves directly.
 - **Data services (docker/samba/nfs) are NOT in any runlevel.** The `mountnas`
   service starts them only once `/mnt/nasdata` is mounted. Do not `rc-update add`
   them — `nas validate` flags it.
@@ -77,14 +81,31 @@ The CI publishes a **GitHub Release** (not a zip — see §6) with:
 
 | File | Purpose |
 |---|---|
-| `mountnas-<tag>.img.gz` | **The product.** Two-slot image (BOOT + MNASCFG). Write to USB. Self-contained: the seed overlay is baked onto MNASCFG. |
-| `mountnas-<tag>-upgrade.img` | **Upgrades only** (`nas upgrade <upgrade.img>`). The plain mkimage iso9660 of the OS + embedded `world.base`, renamed from `.iso` so it isn't mistaken for a bootable install medium. `nas upgrade` loop-mounts it (fs detected by content). No MNASCFG, no slot structure — booting it alone gives plain diskless Alpine with no config. |
+| `mountnas-<tag>.img.gz` | **The product — ONE image for everything.** Single-slot image (BOOT + MNASCFG). Write to USB for a fresh install, OR pass to `nas upgrade` to update in place (it loop-mounts partition 1 for the new boot files). Self-contained: the seed overlay is baked onto MNASCFG. |
 | `mountnas-<tag>.rsa.pub` | The per-build package signing key (see §7 caveat). |
 | `SHA256SUMS` | Checksums of the above. |
 
+There is **no separate `-upgrade.img`** anymore — the full `.img.gz` is the upgrade
+payload too (removed the iso9660 + its xorriso `world.base` embed step).
+
 **The seed `.apkovl.tar.gz` is intentionally NOT published.** It's baked into the
-`.img` (MNASCFG) so the image is self-contained; it has no standalone consumer (the
-auxiliary `nas-make-usb` path that once used it was removed).
+`.img` (MNASCFG) so the image is self-contained; it has no standalone consumer.
+
+### 4a. Upgrade + backup model (single-slot)
+
+- **`nas upgrade <img.gz>`** rewrites BOOT **in place**: warn+`YES` gate → free-space
+  precheck → unpack + loop-mount the image's p1 → **`copy-modloop`** (moves modules to
+  RAM, detaches the live modloop so it's overwritable) → overwrite `/boot`+`/apks`+
+  `world.base` (temp-name then rename = crash-safe) → reconcile `/etc/apk/world`
+  (new base ∪ user extras) → `write-bootcfg` + `lbu commit` → reboot. Config/data
+  untouched. **No automatic rollback.**
+- **`nas backup`** images the WHOLE USB (`gzip < /dev/<usb>`) to a file (default
+  `/mnt/nasdata/backups`, or `--to`). It briefly remounts `/cfg` ro for a consistent
+  image. This is the rollback net: recovery = write the image to another USB and boot.
+  It does NOT cover data disks/Docker (separate storage). Records `$STATE/last-backup`,
+  which the upgrade gate surfaces.
+- `nas restore` and the per-commit config-snapshot subsystem were **removed** — the
+  full image covers them.
 
 ---
 
@@ -167,31 +188,21 @@ against the installed apk-tools. Bump both together on a new Alpine release.
   trusts our build key (local packages pass) but not arbitrary keys. This is why
   ZeroTier is **repackaged under our key** instead of trusting the foreign key (§7).
 
-**ISO post-processing (two interacting traps):**
-- `setup-bootable` streams the source ISO through **`uniso`** (can't seek). Any
-  post-mkimage modification re-lays-out the ISO → `uniso` errors "non-linear reads".
-  So **embed `world.base` AFTER `setup-bootable` has consumed the clean ISO.**
-- Embedding with plain `xorriso … -commit` **discards the El Torito boot image**
-  → the ISO no longer boots (`isolinux: could not read from cdrom (0004)`). Must use
-  **`xorriso -indev … -outdev … -boot_image any replay -map world.base …`** to
-  preserve the isohybrid/El-Torito boot.
+**Single-slot BOOT layout.** `setup-bootable` lays down the native diskless layout —
+kernel/initramfs/modloop under `/boot`, the apk repo under `/apks` (with its own
+`.boot_repository` marker). We keep it as-is and assert the three boot files +
+`apks/x86_64/APKINDEX.tar.gz` landed (**no `|| true`** — a `setup-bootable` layout
+change fails the build). We `touch "$M/apks/.boot_repository"` to guarantee the marker.
+(The old build moved everything into `A/…` and embedded `world.base` into a separate
+upgrade ISO via `xorriso`; both are gone with A/B and the single-image release.)
 
-**Slot-A layout (hardened).** `setup-bootable` copies the ISO's `boot/` + `apks/`
-to the BOOT partition; we then `mv` kernel/initramfs/modloop into `A/boot/` and
-apks into `A/apks/`. This now has **no `|| true`** and asserts the three boot files
-landed (and that `A/apks/x86_64/APKINDEX.tar.gz` exists) — a layout change in
-`setup-bootable` fails the build instead of shipping an empty/indexless slot A.
-
-**Boot-repository marker.** The diskless init installs the base userspace into the
+**Boot-repository discovery.** The diskless init installs the base userspace into the
 RAM root at boot by discovering the on-media apk repo — it scans `/media/*` for a
-**`.boot_repository`** marker file (`find_boot_repositories`) and uses the real path
-it finds. Two traps, both now handled: (1) `mv "$M"/apks/* …` does **not** move the
-`.boot_repository` dotfile (shell `*` skips hidden files), so we `touch
-"$M/A/apks/.boot_repository"` explicitly and `rm -rf "$M/apks"` to drop the stray
-original; (2) the cmdline must be `alpine_repo=auto` — a literal `alpine_repo=/A/apks`
-is used verbatim (fails, not under `/media`) and disables the marker scan. Symptom of
-getting this wrong: `opening /A/apks/x86_64/APKINDEX.tar.gz: No such file` →
-`0 packages` → `/sbin/init not found in new root` → initramfs emergency shell.
+**`.boot_repository`** marker (`find_boot_repositories`) and uses the real path it
+finds. The cmdline must be `alpine_repo=auto`: a literal path is used verbatim (fails,
+not under `/media`) and disables the marker scan. Getting it wrong →
+`opening /apks/x86_64/APKINDEX.tar.gz: No such file` → `0 packages` →
+`/sbin/init not found in new root` → initramfs emergency shell.
 
 **Dual-firmware boot (BIOS + UEFI).** The BOOT partition is a GPT ESP (`ef00`).
 **`setup-bootable` does NOT make this image bootable** — it installs syslinux only
@@ -257,39 +268,27 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 ## 8. What's verified vs. open
 
 **Verified:** full build assembles; all 4 local apks build & sign; mkimage produces
-a bootable-intended ISO + apks cache; `.img` partitions/mkfs/setup-bootable/slot
-layout complete; Release publishing wired.
+a bootable ISO + apks cache; `.img` partitions/mkfs/setup-bootable/single-slot layout
+complete; Release publishing wired. On Proxmox the dual-firmware bootloader works —
+SeaBIOS gets past the earlier hang / "not a bootable disk" into the Alpine diskless
+init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in place.
 
 **Open / next (in priority order):**
-1. **Boot-test the `.img.gz`** (QEMU/Proxmox or real USB hardware) under **both
-   SeaBIOS and OVMF** — verifies the dual-firmware boot fix (§6). Then confirms slot
-   A boots, the seed overlay applies (root-owned, doas works), and `mountnas` holds
-   then releases docker/samba/nfs around `/mnt/nasdata`. The single most important
-   unverified thing. NB: on a VM this also surfaces the module-breadth risk in #4 —
-   if the loader works but the kernel can't find root, that's #4, not the boot fix.
-2. **Verify the fixed `.iso` boots** (the `-boot_image any replay` change).
-3. **Validate the A/B upgrade flow.** The per-slot `modloop=/<slot>/…` cmdline works
-   (resolved relative to the boot media). The per-slot **`alpine_repo=/<slot>/apks`
-   did NOT** — the init uses that path literally (it's not under the init's `/media`
-   mount) and a non-`auto` value also disables the marker-based discovery that would
-   find the real path. **Now `alpine_repo=auto`**: the init's `find_boot_repositories`
-   scans `/media/*` for a `.boot_repository` marker and returns the real
-   `/media/<dev>/<slot>/apks` path (see §6). Remaining upgrade caveat — **repo
-   isolation is imperfect**: the marker scan is global, so once slot B is staged both
-   slots carry a marker (upgrade copies it via `cp -r apks/.`). Forward boots are fine
-   (newest pkgs live in the booted slot); an explicit **rollback** may pull the newer
-   slot's userspace even though kernel/modloop roll back per-slot. Acceptable for now;
-   a clean fix needs the init to pick the repo from the slot in `modloop=` (custom
-   initramfs hook) rather than a global marker scan. Test `nas upgrade <upgrade.img>`
-   → reboot slot B → `--finish` / `--rollback`.
-4. **Boot-module breadth (addressed, verify).** The cmdline now loads
-   `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a
-   VM disk (Proxmox defaults to VirtIO SCSI) can be found at boot. The list is kept
-   in sync across **three** places — `mkimg.nas.sh` (ISO), the `.img` `cmdline.base`
-   echo in `build.yml`, and the `write-bootcfg` fallback default; change all three
-   together. Still unverified that the running kernel actually binds the VM bus;
-   confirm during the boot test (#1).
-5. The rest of the plan's "assumptions to validate on first build" (its §11).
+1. **Boot-test the `.img.gz` to a login prompt** (Proxmox SeaBIOS *and* OVMF, and real
+   USB). Confirm the single OS boots, the seed overlay applies (root-owned, doas works),
+   and `mountnas` holds then releases docker/samba/nfs around `/mnt/nasdata`; and that
+   `command -v copy-modloop` is present. The single most important unverified thing.
+2. **Validate the single-slot upgrade + backup (§4a).** `nas backup` → a valid
+   `mountnas-backup-*.img.gz`; `nas upgrade <img.gz>` → warn+`YES` gate, free-space
+   precheck, `copy-modloop`, crash-safe in-place overwrite, world reconcile, reboot into
+   the new version with **config + a user-added package preserved**; then a restore drill
+   (write the backup image to a second USB and boot it).
+3. **Boot-module breadth (addressed, verify).** The cmdline loads
+   `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a VM
+   disk (Proxmox defaults to VirtIO SCSI) is found at boot. The list is kept in sync
+   across **three** places — `mkimg.nas.sh`, the `.img` `cmdline.base` echo in
+   `build.yml`, and the `write-bootcfg` fallback default; change all three together.
+4. The rest of the plan's "assumptions to validate on first build" (its §11).
 
 **Known caveats:**
 - **Per-build signing key is random** (`build-<hex>.rsa.pub`), published as
@@ -312,5 +311,5 @@ Output: a GitHub Release tagged `<release_tag>` with the files in §4.
 
 ## 10. References
 - `mountnas-dev-plan.md` — the design spec (commands, the `nas` CLI, UPGRADE model).
-- `README.md` — user-facing docs. `UPGRADE.md` — A/B upgrade docs.
+- `README.md` — user-facing docs. `UPGRADE.md` — single-slot in-place upgrade + backup docs.
 - Build host base: Alpine **latest-stable (v3.24)**, `jirutka/setup-alpine`, `abuild`.

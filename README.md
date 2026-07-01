@@ -108,18 +108,17 @@ The `nas` tool has been designed to help you manage the system.
 | Command | Description |
 | --- | --- |
 | `nas setup` | Guided first-run setup: sets the root password and timezone, installs an optional SSH public key, then saves. |
-| `nas status` | Quick health glance: running slot, IP, RAM, config/data mount state, key services, and the unsaved-change count. |
+| `nas status` | Quick health glance: IP, RAM, config/data mount state, key services, and the unsaved-change count. |
 | `nas disks` | Lists every detected disk and shows how `/etc/fstab` maps it. |
 | `nas validate` | Pre-flight check of your storage config: UUIDs resolve, `nofail`/`x-mount.mkdir` present, no data path tracked by `lbu`, share/export paths land on real mounts. |
 | `nas checkup` | Deep health: runs `validate` plus SMART, RAM, SnapRAID status, and time-sync. |
 | `nas restart` | Re-mounts data disks and (re)starts Docker/Samba/NFS without rebooting (runs `rc-service mountnas restart`). Run it after editing `/etc/fstab`. |
-| `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition and copies a backup to the data disk. Alias: `nas save`. |
-| `nas backup` | Copies the saved config to `/mnt/nasdata/backups`; add `--to <dest>` to also copy it off-box. |
-| `nas restore` | Scans attached disks for config backups and restores the one you pick (dead-USB recovery); your fstab returns with it. |
-| `nas upgrade` | Stages a new OS image into the inactive A/B slot, then `--finish` to finalize or `--rollback` to revert (see `UPGRADE.md`). |
+| `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition. Alias: `nas save`. |
+| `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
+| `nas upgrade` | Rewrites the OS on the USB **in place** from a release image (`mountnas-<tag>.img.gz`), then reboot. Requires a `nas backup` first (see `UPGRADE.md`). |
 | `nas shutdown` | Powers off, warning first if you have unsaved changes. |
 | `nas reboot` | Reboots, warning first if you have unsaved changes. |
-| `nas version` | Shows the MountNAS version and the running slot. |
+| `nas version` | Shows the MountNAS version. |
 | `nas help` | Command overview and important paths. |
 
 ## Included Services
@@ -148,22 +147,28 @@ None included as it is out of scope for this project. Secure at your router/LAN.
 
 ## Recovery from a dead USB
 
-The system duplicates your active settings file to the directory `/mnt/nasdata/backups` as part of the `nas commit` process.
+MountNAS runs from RAM, so the USB is only read at boot — but if the stick itself fails,
+you restore from a **full-image backup** made earlier with `nas backup`. Keep one off the
+box (you're required to make one before every upgrade anyway — see [Upgrading](#upgrading)).
 
-If your boot drive experiences a hardware failure:
+If your boot drive fails:
 
-* Write a fresh image to a new stick and boot it.
-* Make sure the disk holding your backups is attached.
-* Run `nas restore`. You don't need to mount anything first — it scans every attached block device (mounting each read-only), lists the config backups it finds newest-first, and restores the one you pick. Your fstab comes back with it.
-* `nas reboot` to apply.
+* Write your latest `nas backup` image (`mountnas-backup-*.img.gz`) to a new stick with
+  Etcher or `dd` — it restores the OS **and** your saved config exactly as they were.
+* Boot the new stick. **Do not** leave the failed stick attached — two MountNAS drives
+  share the same disk labels and will collide.
 
-Your data disks are untouched throughout.
+No backup image yet? Write a fresh release image (`mountnas-<tag>.img.gz`) to a new stick
+and reconfigure. Your data disks are untouched either way.
 
-## Upgrading 
+## Upgrading
 
-MountNAS updates utilize an isolated dual-slot layout to protect against boot failures. 
+MountNAS upgrades the OS **in place** on the boot USB (single-slot), using Alpine's
+`copy-modloop` to safely swap the running system's files, then a reboot. Because a bad
+upgrade on a headless box can leave it unbootable, `nas upgrade` **requires** a full-image
+`nas backup` first — copied off the box.
 
-For complete instructions regarding upgrade stages, validation steps, and system downgrades, please consult the  instructions inside `UPGRADE.md`.
+See `UPGRADE.md` for the full step-by-step process, warnings, and recovery.
 
 ## Lost Root Password Recovery
 

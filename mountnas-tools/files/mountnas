@@ -9,18 +9,13 @@ DATA_SERVICES="docker samba nfs"
 depend() { need localmount; after net; }
 
 log() { printf '%s mountnas: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
-_running_slot() {
-	s=$(sed -n 's#.*modloop=/\([AB]\)/.*#\1#p' /proc/cmdline 2>/dev/null)
-	[ -n "$s" ] && { echo "$s"; return; }
-	[ -f "$BOOTMNT/mountnas-active" ] && cat "$BOOTMNT/mountnas-active" || echo A
-}
 # fstab fstype for a mountpoint; "" if not declared
 _fstype() { awk '$1!~/^#/ && $2=="'"$1"'"{print $3; exit}' /etc/fstab; }
 _is_network_fs() { case "$1" in nfs|nfs4|cifs|smbfs|fuse.*|sshfs|glusterfs|ceph) return 0;; *) return 1;; esac; }
 
 start() {
 	mkdir -p "$STATE"; : > "$LOG" 2>/dev/null || true
-	log "storage check starting (slot $(_running_slot))"
+	log "storage check starting"
 
 	# Seed the prompt's unsaved-count cache. The PS1 indicator only READS this
 	# file (never runs lbu itself), so the interactive prompt stays instant.
@@ -34,14 +29,14 @@ start() {
 	if mountpoint -q /cfg; then echo ok > "$STATE/cfg"; else echo fail > "$STATE/cfg"
 		ewarn "Config partition /cfg NOT mounted — 'nas commit' will refuse to save."; log "/cfg NOT mounted"; fi
 
-	# Bind the running slot's local apk repo to a stable path for offline apk.
+	# Bind the on-media local apk repo to a stable path for offline apk.
 	# The '! mountpoint -q' guard makes this idempotent: on 'mountnas restart' a
 	# second bind would STACK another mount on the same target instead of
 	# replacing it, slowly leaking mounts. Bind only when nothing is there yet.
 	if mountpoint -q "$BOOTMNT" || mount -o ro LABEL=BOOT "$BOOTMNT" 2>>"$LOG"; then
-		slot=$(_running_slot); mkdir -p "$STATE/apks"
-		if [ -d "$BOOTMNT/$slot/apks" ] && ! mountpoint -q "$STATE/apks"; then
-			mount --bind "$BOOTMNT/$slot/apks" "$STATE/apks" 2>>"$LOG" || log "apks bind failed"
+		mkdir -p "$STATE/apks"
+		if [ -d "$BOOTMNT/apks" ] && ! mountpoint -q "$STATE/apks"; then
+			mount --bind "$BOOTMNT/apks" "$STATE/apks" 2>>"$LOG" || log "apks bind failed"
 		fi
 	fi
 
