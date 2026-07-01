@@ -89,8 +89,7 @@ nas reboot
 The box boots the new version. Check it:
 
 ```
-nas status      # shows the new version
-nas validate    # storage config still sane
+nas status      # shows the new version + storage config still sane
 ```
 
 ---

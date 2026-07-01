@@ -21,10 +21,10 @@ start() {
 	# file (never runs lbu itself), so the interactive prompt stays instant.
 	lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || echo 0 > "$STATE/unsaved"
 
-	# config partition (saves persist here). localmount already tried this entry;
-	# we retry here only to cover the case where busybox 'mount' ignored the
-	# fstab x-mount.mkdir option and so couldn't create /cfg the first time. /cfg
-	# is a LOCAL ext4 partition, so this retry cannot hang the way a remote can.
+	# config partition (saves persist here). mountnas-mkdirs created /cfg and
+	# localmount already tried this entry; we retry only as a safety net if the
+	# device was not ready that early. /cfg is a LOCAL ext4 partition, so this
+	# retry cannot hang the way a remote mount can.
 	mountpoint -q /cfg || { mkdir -p /cfg; mount /cfg 2>>"$LOG" || log "/cfg mount failed"; }
 	if mountpoint -q /cfg; then echo ok > "$STATE/cfg"; else echo fail > "$STATE/cfg"
 		ewarn "Config partition /cfg NOT mounted — 'nas commit' will refuse to save."; log "/cfg NOT mounted"; fi

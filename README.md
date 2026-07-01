@@ -16,7 +16,7 @@ Get your system running by following these steps:
 * Partition and format blank data disks using tools such as `cfdisk` or `mkfs` or other [baked in tools](#baked-in-packages).
 * Register your primary storage disk in `/etc/fstab` mapping to the explicit path `/mnt/nasdata` where application data, Docker structures, and configuration backups will live.
 * Register any other storage in `/etc/fstab` as well.
-* Test your configuration logic by running `nas validate` to ensure no errors exist in your file system definitions.
+* Test your configuration logic by running `nas status` to ensure no errors exist in your file system definitions.
 * Initialize your storage attachment and start dependent services without a system restart by executing `rc-service mountnas restart`.
 * Save your layout permanently back to the flash drive hardware by running `nas commit`.
 
@@ -54,33 +54,33 @@ Mounted disks are managed via the [fstab](https://en.wikipedia.org/wiki/Fstab) f
 An example:
 
 ```text
-UUID=example-uuid-string  /mnt/nasdata  ext4  rw,noatime,nofail,x-mount.mkdir  0 2
+UUID=example-uuid-string  /mnt/nasdata  ext4  rw,noatime,nofail  0 2
 
 ```
-**IMPORTANT:** You *must* include the `nofail` and `x-mount.mkdir` options on all data volume entries within `/etc/fstab`. If a storage volume fails to initialize or is physically disconnected, the system will continue booting safely to a command prompt rather than hanging indefinitely during initialization.
+**IMPORTANT:** You *must* include the `nofail` option on all data volume entries within `/etc/fstab`. If a storage volume fails to initialize or is physically disconnected, the system will continue booting safely to a command prompt rather than hanging indefinitely during initialization. The `mountnas` service creates each `/mnt/*` mountpoint for you before mounting, so you do **not** need to `mkdir` the target first. (Do **not** use `x-mount.mkdir` — it is a util-linux option that busybox `mount` rejects at early boot.)
 
 Additional notes:
 
-* Use the `nas disks` command to list attached disks + UUIDs.
+* Use the `nas disks` command to list attached disks + UUIDs — it also prints a paste-ready fstab line for each unconfigured disk.
 * Add your disks to `/etc/fstab`
   * Recommended: Mount each disk inside `/mnt`
 * A mountpoint called `/mnt/nasdata` must exist to hold application data, Docker config / containers, and backups.
   * Recommended: A dedicated SSD disk
-* Use the `nas validate` command  to verify your configuration 
+* Use the `nas status` command  to verify your configuration 
 * Use `nas restart` to mount the disks and starts services, no reboot
  * Verify everything work and run `nas commit` to save the changes.
 
-Always use nofail,x-mount.mkdir. Until /mnt/nasdata is mounted, Docker/Samba/NFS stay OFF on purpose, so a missing disk can never fill RAM. `nas status` shows the state; `nas validate` is your pre-flight check after editing fstab.
+Always include `nofail`. Until /mnt/nasdata is mounted, Docker/Samba/NFS stay OFF on purpose, so a missing disk can never fill RAM. `nas status` shows the state and doubles as your pre-flight check after editing fstab.
 
 ## Keeping nasdata in a subdirectory of a mounted disk instead of its own dedicated disk
 You can also have `/mnt/nasdata` live on a subdirectory of a mounted disk instead of a dedicated disk with a bind mount. In `/etc/fstab` with the real disk listed first:
 
 ```text
-UUID=<disk1-uuid>   /mnt/disk1    ext4  rw,noatime,nofail,x-mount.mkdir  0 2
-/mnt/disk1/nasdata  /mnt/nasdata  none  bind,nofail,x-mount.mkdir        0 0
+UUID=<disk1-uuid>   /mnt/disk1    ext4  rw,noatime,nofail  0 2
+/mnt/disk1/nasdata  /mnt/nasdata  none  bind,nofail        0 0
 ```
 
-Don't forget the one-time prep after `/mnt/disk1` is mounted:` mkdir -p /mnt/disk1/nasdata`
+Don't forget the one-time prep after `/mnt/disk1` is mounted:` mkdir -p /mnt/disk1/nasdata` (the `/mnt/nasdata` mountpoint itself is created for you).
 
 ## Parity
 
@@ -91,10 +91,10 @@ Don't forget the one-time prep after `/mnt/disk1` is mounted:` mkdir -p /mnt/dis
   * Keep `/mnt/nasdata` out of the array
 * Schedule sync/scrub with `crontab -e`, then `nas commit`
 
-**Unified pool (mergerfs):** [mergerfs](https://github.com/trapexit/mergerfs) IS included (as upstream's static binary). To pool several data disks into one mount, add a line like the following to `/etc/fstab` (after the member disks), then `nas validate` and `nas commit`:
+**Unified pool (mergerfs):** [mergerfs](https://github.com/trapexit/mergerfs) IS included (as upstream's static binary). To pool several data disks into one mount, add a line like the following to `/etc/fstab` (after the member disks), then `nas status` and `nas commit`:
 
 ```text
-/mnt/disk1:/mnt/disk2  /mnt/pool  fuse.mergerfs  nofail,allow_other,use_ino,category.create=mfs,x-mount.mkdir  0 0
+/mnt/disk1:/mnt/disk2  /mnt/pool  fuse.mergerfs  nofail,allow_other,use_ino,category.create=mfs  0 0
 ```
 
 SnapRAID and mergerfs complement each other: SnapRAID gives you parity, mergerfs gives you a single namespace. Keep `/mnt/nasdata` (the system disk) out of both.
@@ -108,10 +108,10 @@ The `nas` tool has been designed to help you manage the system.
 | Command | Description |
 | --- | --- |
 | `nas setup` | Guided first-run setup: sets the root password and timezone, installs an optional SSH public key, then saves. |
-| `nas status` | Quick health glance: IP, RAM, config/data mount state, key services, and the unsaved-change count. |
-| `nas disks` | Lists every detected disk and shows how `/etc/fstab` maps it. |
-| `nas validate` | Pre-flight check of your storage config: UUIDs resolve, `nofail`/`x-mount.mkdir` present, no data path tracked by `lbu`, share/export paths land on real mounts. |
-| `nas checkup` | Deep health: runs `validate` plus SMART, RAM, SnapRAID status, and time-sync. |
+| `nas status` | Health + storage-config check (fast, no disk spin-up): IP, RAM, config/data mount state, key services, unsaved-change count, plus fstab checks (UUIDs resolve, `nofail` present, no data path tracked by `lbu`, share/export paths land on real mounts). |
+| `nas status --deep` | Everything `nas status` does **plus** SMART, SnapRAID status, and time-sync. Kept opt-in because SMART can wake sleeping disks and SnapRAID status is slow. (Alias: `nas checkup`.) |
+| `nas disks` | Lists every detected disk with its UUID and mount state, marks the boot USB, shows how `/etc/fstab` maps it, and prints a paste-ready fstab line for each unconfigured data partition. |
+| `nas validate` | Alias for `nas status` (the storage-config check). |
 | `nas restart` | Re-mounts data disks and (re)starts Docker/Samba/NFS without rebooting (runs `rc-service mountnas restart`). Run it after editing `/etc/fstab`. |
 | `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition. Alias: `nas save`. |
 | `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
@@ -183,7 +183,7 @@ Recovering a forgotten root password:
 
 ## Troubleshooting
 
-- Docker/Samba/NFS won't start -> `nas status` (almost always the data disk isn't mounted). Fix `/etc/fstab`, `nas validate`, `nas restart`.
+- Docker/Samba/NFS won't start -> `nas status` (almost always the data disk isn't mounted). Fix `/etc/fstab`, re-check with `nas status`, then `nas restart`.
 - settings missing after reboot -> confirm `/cfg` is mounted (`nas status`) before `nas commit`.
 - can't find the box -> try `mountnas.local` (mDNS/Avahi), or attach a monitor — the console shows the IP address above the login prompt before you log in.
 - not reachable on the network -> on first boot MountNAS auto-writes a DHCP line for your wired NIC; check the cable/link. To customize (static IP, bond, bridge, VLAN) edit `/etc/network/interfaces` normally, `rc-service networking restart`, `nas commit` — MountNAS won't touch your config once you've set it.

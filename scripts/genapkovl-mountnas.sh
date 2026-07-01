@@ -29,21 +29,23 @@ mk root:root 0644 "$tmp/etc/fstab" <<'EOF'
 #
 # Config partition (your saved settings live here). DO NOT REMOVE.
 # Found by label, so it survives a reformat:  mkfs.ext4 -L MNASCFG ...
-LABEL=MNASCFG  /cfg  ext4  rw,noatime,nofail,x-mount.mkdir  0 0
+LABEL=MNASCFG  /cfg  ext4  rw,noatime,nofail  0 0
 #
 # ===================  YOUR DATA DISKS  ===================
 # Storage is configured HERE, in fstab. Add disks, then run:  nas commit
-# Always use  nofail,x-mount.mkdir  (missing disk never hangs boot; dir auto-made).
-# Find UUIDs:  nas disks   (or:  lsblk -o NAME,UUID,SIZE)
+# Always use  nofail  (a missing disk never hangs boot). MountNAS auto-creates
+# each /mnt/* mountpoint before mounting — no need to mkdir the target first.
+# Find UUIDs + a paste-ready line:  nas disks
 #
 # System disk (Docker data-root, appdata, backups) — REQUIRED for Docker:
-# UUID=xxxxxxxx-xxxx  /mnt/nasdata  ext4  rw,noatime,nofail,x-mount.mkdir  0 2
+# UUID=xxxxxxxx-xxxx  /mnt/nasdata  ext4  rw,noatime,nofail  0 2
 #
 # SnapRAID data + parity (optional). Keep /mnt/nasdata OUT of the array.
-# UUID=...  /mnt/disk1    xfs  rw,noatime,nofail,x-mount.mkdir  0 2
-# UUID=...  /mnt/parity1  xfs  rw,noatime,nofail,x-mount.mkdir  0 2
+# (The /mnt/disk1, /mnt/parity1 names are a convention — use any paths you like.)
+# UUID=...  /mnt/disk1    xfs  rw,noatime,nofail  0 2
+# UUID=...  /mnt/parity1  xfs  rw,noatime,nofail  0 2
 #
-# After editing, check it before rebooting:  nas validate
+# After editing, check it before rebooting:  nas status
 EOF
 
 mk root:root 0644 "$tmp/etc/modules" <<'EOF'
@@ -118,6 +120,32 @@ auto lo
 iface lo inet loopback
 EOF
 
+# ---- inittab: explicit gettys so BOTH consoles get a login prompt ----
+# The kernel cmdline is `console=tty0 console=ttyS0`. We ship this so the Proxmox
+# GRAPHICAL (noVNC / VGA) console gets a getty on tty1 AND the serial console
+# (qm terminal / ttyS0) gets one too — the packaged default is not guaranteed to
+# cover both. tty2-6 kept for bare-metal Alt-F2..F6.
+mk root:root 0644 "$tmp/etc/inittab" <<'EOF'
+# /etc/inittab — MountNAS
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+
+# Virtual consoles (VGA / Proxmox noVNC / physical monitor)
+tty1::respawn:/sbin/getty 38400 tty1
+tty2::respawn:/sbin/getty 38400 tty2
+tty3::respawn:/sbin/getty 38400 tty3
+tty4::respawn:/sbin/getty 38400 tty4
+tty5::respawn:/sbin/getty 38400 tty5
+tty6::respawn:/sbin/getty 38400 tty6
+
+# Serial console (qm terminal, IPMI SoL) — matches console=ttyS0,115200
+ttyS0::respawn:/sbin/getty -L 0 ttyS0 vt100
+
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown
+EOF
+
 mk root:root 0644 "$tmp/etc/lbu/lbu.conf" <<'EOF'
 LBU_BACKUPDIR=/cfg
 BACKUP_LIMIT=3
@@ -138,6 +166,7 @@ mk root:root 0644 "$tmp/etc/lbu/exclude" <<'EOF'
 etc/profile.d/nas-welcome.sh
 etc/profile.d/nas-aliases.sh
 etc/profile.d/nas-prompt.sh
+etc/profile.d/nas-resize.sh
 etc/issue
 etc/network/if-up.d/mountnas-issue
 EOF
@@ -156,6 +185,7 @@ rc_add sysctl boot
 rc_add hostname boot
 rc_add bootmisc boot
 rc_add syslog boot
+rc_add mountnas-mkdirs boot      # mkdir fstab mountpoints BEFORE localmount (no x-mount.mkdir)
 rc_add localmount boot
 rc_add networking boot
 rc_add mountnas-net boot         # dynamic wired DHCP (from mountnas-tools)

@@ -25,6 +25,7 @@ build() { :; }
 package() {
 	install -Dm755 "$startdir"/files/nas           "$pkgdir"/usr/sbin/nas
 	install -Dm755 "$startdir"/files/mountnas       "$pkgdir"/etc/init.d/mountnas
+	install -Dm755 "$startdir"/files/mountnas-mkdirs "$pkgdir"/etc/init.d/mountnas-mkdirs
 	install -Dm755 "$startdir"/files/mountnas-net   "$pkgdir"/etc/init.d/mountnas-net
 	install -Dm755 "$startdir"/files/mountnas-sshkey "$pkgdir"/etc/init.d/mountnas-sshkey
 	install -Dm755 "$startdir"/files/mountnas-issue  "$pkgdir"/etc/init.d/mountnas-issue
@@ -34,5 +35,6 @@ package() {
 	install -Dm644 "$startdir"/files/profile-nas-welcome.sh "$pkgdir"/etc/profile.d/nas-welcome.sh
 	install -Dm644 "$startdir"/files/profile-nas-aliases.sh "$pkgdir"/etc/profile.d/nas-aliases.sh
 	install -Dm644 "$startdir"/files/profile-nas-prompt.sh  "$pkgdir"/etc/profile.d/nas-prompt.sh
+	install -Dm644 "$startdir"/files/profile-nas-resize.sh  "$pkgdir"/etc/profile.d/nas-resize.sh
 	echo "$pkgver" | install -Dm644 /dev/stdin "$pkgdir"/usr/share/mountnas/version
 }

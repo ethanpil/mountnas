@@ -59,8 +59,20 @@ several CI steps exist.
   overlay *before* packages install, so anything an apk writes to `/etc` would
   clobber user config every boot. `mountnas-tools` ships only code
   (`/usr/sbin`, `/etc/init.d`, `/usr/libexec`, lbu-excluded `/etc/profile.d`).
-  All editable defaults (`fstab`, `sshd_config`, `smb.conf`, runlevels, …) live in
-  `genapkovl-mountnas.sh` and are user-owned via lbu.
+  All editable defaults (`fstab`, `sshd_config`, `smb.conf`, `inittab`, runlevels, …)
+  live in `genapkovl-mountnas.sh` and are user-owned via lbu.
+- **No `x-mount.mkdir` (or `X-mount.mkdir`) in fstab.** Both are util-linux (libmount)
+  *userspace* options that libmount strips before the syscall — but busybox `mount`
+  (which runs `localmount` at early boot) implements neither and forwards them to the
+  kernel, which rejects them → `ext4: Unknown parameter 'x-mount.mkdir'` at ~3s. The
+  capital-X spelling does NOT help (busybox fails on it identically). Do NOT re-add
+  either. Mountpoints are guaranteed a different way: the **`mountnas-mkdirs`** service
+  runs `before localmount` and `mkdir -p`s every `/cfg` and `/mnt/*` target from
+  `/etc/fstab`, so plain busybox `mount` can then mount them. A mount that still fails
+  is handled at runtime by the `mountnas` service (ro placeholder + service gating).
+- **Explicit `/etc/inittab`** ships a getty on **tty1** (VGA / Proxmox noVNC) *and*
+  **ttyS0** (serial / `qm terminal`) so both consoles get a login prompt regardless of
+  the packaged default.
 - **Single-slot: one OS on the BOOT (FAT/ESP) partition; config on `MNASCFG` (ext4).**
   BOOT holds the native diskless layout (`/boot`, `/apks`); overlay is found by
   **label** (`ovl_dev=LABEL=MNASCFG`), not a UUID. `nas upgrade` rewrites BOOT in
@@ -69,7 +81,7 @@ several CI steps exist.
   problem, which `copy-modloop` solves directly.
 - **Data services (docker/samba/nfs) are NOT in any runlevel.** The `mountnas`
   service starts them only once `/mnt/nasdata` is mounted. Do not `rc-update add`
-  them — `nas validate` flags it.
+  them — `nas status` flags it.
 - **`mountnas` service = `nas` CLI separation:** the service is `mountnas` so
   `rc-service mountnas …` never collides with the `nas` command.
 

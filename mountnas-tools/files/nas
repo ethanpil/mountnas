@@ -22,10 +22,9 @@ cmd_help() {
 MountNAS $VERSION — control CLI
 
   nas setup      Guided first-run setup (password, timezone, SSH key)
-  nas status     Fast health glance
-  nas disks      Every disk + how fstab maps it
-  nas validate   Pre-flight storage checker (run after editing fstab)
-  nas checkup    Deep health (validate + SMART, RAM, SnapRAID, time)
+  nas status     Health + storage config check (fast, no disk spin-up)
+  nas status --deep   …plus SMART, SnapRAID status, time-sync (may wake disks)
+  nas disks      Every disk: UUID, mount state, and a paste-ready fstab line
   nas restart    Re-mount disks + (re)start services (no reboot)
   nas commit     Save changes to the USB            (alias: nas save)
   nas backup     Full image of the boot USB to a file  (--to <dir>) — see UPGRADE.md
@@ -33,24 +32,42 @@ MountNAS $VERSION — control CLI
   nas reboot     Reboot   (warns on unsaved changes)
   nas upgrade    Upgrade the OS — see UPGRADE.md
   nas help / version
+  (nas validate = nas status ; nas checkup = nas status --deep)
 
 Important paths:
   /cfg                     Config partition (your saved overlay)
   $DATA              System disk: Docker data-root, appdata, backups
-  /mnt/disk* /mnt/parity*  SnapRAID disks (you define them in fstab)
+  /mnt/disk*, /mnt/parity* SnapRAID disks — CONVENTIONAL names only; SnapRAID
+                           cares about the paths in snapraid.conf, not these names
   /etc/fstab               WHERE YOU CONFIGURE DISKS (not a tool, not storage.conf)
   /etc/docker/daemon.json  Docker (data-root = $DATA/docker)
   /etc/samba/smb.conf      Samba    /etc/exports  NFS    /etc/snapraid.conf SnapRAID
+
+Add a disk:
+  1) nas disks                     find the disk + its UUID (copy the fstab line)
+  2) edit /etc/fstab, e.g. the system disk (Docker/appdata/backups):
+       UUID=<uuid>  $DATA  ext4  rw,noatime,nofail  0 2
+  3) nas status                    check the config
+  4) nas restart                   mount + start services (no reboot)
+  5) nas commit                    persist it
 
 To grant a new user admin rights:  adduser <user> wheel   (then: nas commit)
 Nothing persists across reboot until you run 'nas commit'.
 EOF
 }
 
+# nas status [--deep]
+# Fast glance + storage-config validation (all read-only, no disk spin-up).
+# --deep adds SMART, SnapRAID status and time-sync — those can wake sleeping disks
+# and be slow, so they are opt-in.
 cmd_status() {
+	deep=0; [ "${1:-}" = "--deep" ] && deep=1
+
 	echo "MountNAS $VERSION  —  $(hostname)  —  up $(cut -d. -f1 /proc/uptime)s"
 	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')
 	echo "  IP: ${ip:-none}    RAM: $(free -m | awk '/Mem:/{print $3"/"$2" MB"}')"
+
+	echo "== system =="
 	mountpoint -q "$CFG" && ok "config partition mounted ($CFG)" || bad "config partition NOT mounted — saves will be lost"
 	case "$(cat $STATE/data 2>/dev/null)" in
 		ok)           ok "data disk mounted ($DATA)" ;;
@@ -64,26 +81,14 @@ cmd_status() {
 	done
 	n=$(lbu status 2>/dev/null | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
-}
 
-cmd_disks() {
-	echo "Detected disks:"
-	lsblk -dno NAME,SIZE,TYPE,FSTYPE,UUID | awk '$3=="disk"||$3=="part"{printf "  %-10s %-7s %-7s %s\n",$1,$2,$4,$5}'
-	echo
-	echo "Configured in /etc/fstab:"
-	awk '$1!~/^#/ && $2 ~ /^(\/cfg|\/mnt\/)/ {printf "  %-14s %s\n",$2,$1}' /etc/fstab
-}
-
-cmd_validate() {
-	rc=0
-	mountpoint -q "$CFG" && ok "/cfg config partition mounted" || { bad "/cfg not mounted (saves would be lost)"; rc=1; }
+	echo "== storage config (fstab) =="
 	# per data mount
 	awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $1" "$2" "$4}' /etc/fstab | while read -r spec mp opts; do
 		case "$spec" in UUID=*) u=${spec#UUID=}
 			findfs "UUID=$u" >/dev/null 2>&1 && ok "$mp: UUID resolves" || bad "$mp: UUID $u NOT FOUND" ;;
 		esac
-		echo "$opts" | grep -q nofail        && ok "$mp: nofail present"        || warn "$mp: missing nofail"
-		echo "$opts" | grep -q x-mount.mkdir && ok "$mp: x-mount.mkdir present" || warn "$mp: missing x-mount.mkdir"
+		echo "$opts" | grep -q nofail && ok "$mp: nofail present" || warn "$mp: missing nofail (a missing disk could hang boot)"
 		mountpoint -q "$mp" && ok "$mp: mounted" || warn "$mp: declared but not mounted"
 	done
 	# duplicates
@@ -91,9 +96,15 @@ cmd_validate() {
 	[ -n "$dupu" ] && bad "duplicate UUID in fstab: $dupu"
 	dupm=$(awk '$1!~/^#/ && $2 ~ /^\/(cfg|mnt)/{print $2}' /etc/fstab | sort | uniq -d)
 	[ -n "$dupm" ] && bad "duplicate mountpoint in fstab: $dupm"
-	# docker data-root under /mnt/nasdata
+	# docker data-root: config points under $DATA, but only OK once the disk is mounted
 	dr=$(awk -F'"' '/data-root/{print $4}' /etc/docker/daemon.json 2>/dev/null)
-	[ -n "$dr" ] && { [ "${dr#"$DATA"}" != "$dr" ] && ok "Docker data-root under $DATA" || bad "Docker data-root ($dr) NOT under $DATA"; }
+	if [ -n "$dr" ]; then
+		if [ "${dr#"$DATA"}" != "$dr" ]; then
+			[ "$(cat $STATE/data 2>/dev/null)" = ok ] \
+				&& ok "Docker data-root under $DATA" \
+				|| warn "Docker data-root configured for $DATA (disk not mounted yet)"
+		else bad "Docker data-root ($dr) NOT under $DATA"; fi
+	fi
 	# no data path tracked
 	grep -qE "^(/?mnt/nasdata|/?mnt/disk|/?mnt/parity)" /etc/lbu/include 2>/dev/null \
 		&& bad "a data path is in /etc/lbu/include (commit would copy your disk!)" \
@@ -122,20 +133,61 @@ cmd_validate() {
 			bad "$s is in a runlevel — mountnas must own it. Remove: rc-update del $s default"
 		else ok "$s not in a runlevel (managed by mountnas)"; fi
 	done
+
+	if [ "$deep" = 1 ]; then
+		echo "== deep: hardware / runtime =="
+		df -h / 2>/dev/null | awk 'NR==2{print "  root (RAM) used: "$5}'
+		for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}'); do
+			h=$(smartctl -H "/dev/$d" 2>/dev/null | awk -F: '/overall-health/{gsub(/ /,"",$2);print $2}')
+			[ -n "$h" ] && { [ "$h" = PASSED ] && ok "/dev/$d SMART PASSED" || bad "/dev/$d SMART $h"; }
+		done
+		command -v snapraid >/dev/null 2>&1 && grep -q '^data ' /etc/snapraid.conf 2>/dev/null && \
+			snapraid status 2>/dev/null | grep -iE 'days|sync|scrub' | sed 's/^/  /'
+		chronyc tracking >/dev/null 2>&1 && ok "time sync active" || warn "time not synced"
+	else
+		printf "  Tip: 'nas status --deep' adds SMART / SnapRAID / time-sync (may wake sleeping disks).\n"
+	fi
 	return 0
 }
 
-cmd_checkup() {
-	echo "== storage validation =="; cmd_validate
-	echo "== hardware / runtime =="
-	df -h / 2>/dev/null | awk 'NR==2{print "  root (RAM) used: "$5}'
-	for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}'); do
-		h=$(smartctl -H "/dev/$d" 2>/dev/null | awk -F: '/overall-health/{gsub(/ /,"",$2);print $2}')
-		[ -n "$h" ] && { [ "$h" = PASSED ] && ok "/dev/$d SMART PASSED" || bad "/dev/$d SMART $h"; }
+# nas disks — every disk with UUID + mount state, marking the boot USB / cfg
+# partition, plus a paste-ready fstab line for each unconfigured data partition.
+cmd_disks() {
+	bp=$(findfs LABEL=BOOT 2>/dev/null)
+	usb=$(lsblk -no pkname "$bp" 2>/dev/null | head -n1)
+
+	echo "Detected disks (* = MountNAS boot USB — do NOT add to fstab):"
+	printf "  %-8s %-7s %-8s %-20s %s\n" NAME SIZE FSTYPE MOUNTPOINT UUID
+	lsblk -rno NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT 2>/dev/null | while read -r name type size fstype label uuid mnt; do
+		case "$type" in disk|part) ;; *) continue ;; esac
+		tag=""
+		[ "$name" = "$usb" ] && tag=" *"
+		[ "$label" = BOOT ]  && tag=" * (BOOT)"
+		[ "$label" = MNASCFG ] && tag=" * (cfg)"
+		printf "  %-8s %-7s %-8s %-20s %s%s\n" "$name" "$size" "${fstype:--}" "${mnt:-(not mounted)}" "${uuid:--}" "$tag"
 	done
-	command -v snapraid >/dev/null 2>&1 && grep -q '^data ' /etc/snapraid.conf 2>/dev/null && \
-		snapraid status 2>/dev/null | grep -iE 'days|sync|scrub' | sed 's/^/  /'
-	chronyc tracking >/dev/null 2>&1 && ok "time sync active" || warn "time not synced"
+
+	echo
+	echo "Configured in /etc/fstab:"
+	awk '$1!~/^#/ && $2 ~ /^(\/cfg|\/mnt\/)/ {printf "  %-14s %s\n",$2,$1}' /etc/fstab
+
+	echo
+	echo "Paste-ready fstab line(s) for unconfigured data partitions:"
+	# Build in a subshell-captured var: the while loop below runs in a pipe subshell,
+	# so a flag set inside it would not survive — check the captured output instead.
+	lines=$(lsblk -rno NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null | while read -r name type fstype label uuid; do
+		[ "$type" = part ] || continue
+		[ -n "$uuid" ] && [ -n "$fstype" ] || continue
+		case "$label" in BOOT|MNASCFG) continue ;; esac
+		[ "$name" = "$usb" ] && continue
+		# already referenced in fstab (by UUID or by device)?
+		grep -q "$uuid" /etc/fstab 2>/dev/null && continue
+		printf "  UUID=%s  /mnt/nasdata  %s  rw,noatime,nofail  0 2   # paste into /etc/fstab (edit mountpoint)\n" "$uuid" "$fstype"
+	done)
+	[ -n "$lines" ] && printf '%s\n' "$lines" \
+		|| echo "  (none — every filesystem is already in fstab, or blank/unformatted)"
+	echo "  Tip: the system disk uses /mnt/nasdata; extra data/parity disks use any path"
+	echo "       you like (the /mnt/disk1, /mnt/parity1 names are just a convention)."
 }
 
 cmd_restart() {
@@ -222,8 +274,8 @@ Setup complete. NEXT: add your data disk(s).
   1) nas disks                              (find your disk + its UUID)
   2) (blank disk?) mkfs.ext4 -L nasdata /dev/sdX
   3) edit /etc/fstab, add the system disk:
-       UUID=<uuid>  /mnt/nasdata  ext4  rw,noatime,nofail,x-mount.mkdir  0 2
-  4) nas validate        (check it)
+       UUID=<uuid>  /mnt/nasdata  ext4  rw,noatime,nofail  0 2
+  4) nas status          (check it)
   5) rc-service mountnas restart    (mounts + starts services, no reboot)
   6) nas commit
 EOF
@@ -348,10 +400,10 @@ EOF
 
 case "${1:-help}" in
 	setup) cmd_setup ;;
-	status) cmd_status ;;
+	status) shift; cmd_status "$@" ;;
 	disks) cmd_disks ;;
-	validate) cmd_validate ;;
-	checkup) cmd_checkup ;;
+	validate) cmd_status ;;
+	checkup) cmd_status --deep ;;
 	restart) cmd_restart ;;
 	commit|save) cmd_commit ;;
 	backup) shift; cmd_backup "$@" ;;

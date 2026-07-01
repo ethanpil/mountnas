@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+description="Create fstab mountpoints before localmount mounts them"
+# We do NOT use fstab's x-mount.mkdir: that is a util-linux (libmount) userspace
+# option, and busybox 'mount' — which runs localmount at early boot — forwards it
+# to the kernel, which rejects it (ext4: Unknown parameter 'x-mount.mkdir'). So the
+# mountpoint directories have to exist BEFORE localmount. This runs first and
+# mkdir -p's every /cfg and /mnt/* target declared in /etc/fstab, so busybox mount
+# can then mount each one (config partition, system disk, SnapRAID/mergerfs disks).
+# Purely local, RAM-root dirs — cannot hang; a mount that still fails is handled by
+# the 'mountnas' service (read-only placeholder + service gating).
+depend() {
+	before localmount
+	keyword -docker -lxc -vserver
+}
+
+start() {
+	ebegin "Creating MountNAS mountpoints from /etc/fstab"
+	awk '$1!~/^#/ && $2 ~ /^(\/cfg|\/mnt\/)/{print $2}' /etc/fstab 2>/dev/null | while read -r mp; do
+		[ -n "$mp" ] && mkdir -p "$mp" 2>/dev/null
+	done
+	eend 0
+}
