@@ -11,6 +11,10 @@ ok()  { printf '  [ OK ] %s\n' "$*"; }
 warn(){ printf '  [WARN] %s\n' "$*"; }
 bad() { printf '  [FAIL] %s\n' "$*"; }
 confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
+# True if $1 is covered by the read-only 'mountnas-blocked' placeholder that the
+# mountnas service mounts over failed data mounts — mountpoint -q alone reports
+# that placeholder as a healthy mount.
+_blocked() { awk -v m="$1" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts; }
 # Refresh the prompt's unsaved-count cache. Called after every command so the
 # PS1 indicator stays current without ever running lbu from the prompt itself.
 _refresh_unsaved() { mkdir -p "$STATE"; lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || true; }
@@ -37,7 +41,7 @@ MountNAS $VERSION — control CLI
   nas backup     Full image of the boot USB to a file  (--to <dir>) — see UPGRADE.md
   nas shutdown   Power off (warns on unsaved changes)
   nas reboot     Reboot   (warns on unsaved changes)
-  nas upgrade    Upgrade the OS — see UPGRADE.md
+  nas upgrade    Upgrade the OS from a release file or URL — see UPGRADE.md
   nas about      Logo, version, and project info
   nas help / version
   (nas validate = nas status ; nas checkup = nas status --deep)
@@ -99,15 +103,24 @@ cmd_status() {
 	done
 	n=$(lbu status 2>/dev/null | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
+	# last-backup recency (persisted by nas backup: "<epoch> <YYYY-mm-dd HH:MM>")
+	lbk=$(cat /etc/mountnas/last-backup 2>/dev/null || true)
+	case "${lbk%% *}" in
+		'') warn "no 'nas backup' recorded yet — see UPGRADE.md" ;;
+		*[!0-9]*) ok "last backup: $lbk" ;;
+		*) ok "last backup: ${lbk#* } ($(( ( $(date +%s) - ${lbk%% *} ) / 86400 )) day(s) ago)" ;;
+	esac
 
 	echo "== storage config (fstab) =="
 	# per data mount
 	awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $1" "$2" "$4}' /etc/fstab | while read -r spec mp opts; do
-		case "$spec" in UUID=*) u=${spec#UUID=}
-			findfs "UUID=$u" >/dev/null 2>&1 && ok "$mp: UUID resolves" || bad "$mp: UUID $u NOT FOUND" ;;
+		case "$spec" in UUID=*|LABEL=*)
+			findfs "$spec" >/dev/null 2>&1 && ok "$mp: $spec resolves" || bad "$mp: $spec NOT FOUND" ;;
 		esac
 		echo "$opts" | grep -q nofail && ok "$mp: nofail present" || warn "$mp: missing nofail (a missing disk could hang boot)"
-		mountpoint -q "$mp" && ok "$mp: mounted" || warn "$mp: declared but not mounted"
+		if _blocked "$mp"; then bad "$mp: BLOCKED (disk missing/failed — ro placeholder mounted)"
+		elif mountpoint -q "$mp"; then ok "$mp: mounted"
+		else warn "$mp: declared but not mounted"; fi
 	done
 	# duplicates
 	dupu=$(awk '$1~/^UUID=/ && $2!~/^#/{print $1}' /etc/fstab | sort | uniq -d)
@@ -128,14 +141,21 @@ cmd_status() {
 		&& bad "a data path is in /etc/lbu/include (commit would copy your disk!)" \
 		|| ok "lbu include has no data paths"
 	# share paths must be live mountpoints
+	# NB: the walk always ends at a mountpoint — "/" itself is one (the RAM root),
+	# and the ro placeholder is one too. Only a non-root, non-placeholder mount
+	# means the path really lands on a disk.
 	awk -F= '/^[[:space:]]*path[[:space:]]*=/{gsub(/[[:space:]]/,"",$2);print $2}' /etc/samba/smb.conf 2>/dev/null | while read -r p; do
 		[ -z "$p" ] && continue
 		td=$p; while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
-		mountpoint -q "$td" && ok "samba path $p on a mounted fs" || bad "samba path $p is on RAM (no disk mounted)"
+		if _blocked "$td"; then bad "samba path $p is BLOCKED (disk missing/failed)"
+		elif [ "$td" != "/" ] && mountpoint -q "$td"; then ok "samba path $p on a mounted fs"
+		else bad "samba path $p is on RAM (no disk mounted)"; fi
 	done
 	[ -f /etc/exports ] && awk '/^\//{print $1}' /etc/exports | while read -r p; do
 		td=$p; while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
-		mountpoint -q "$td" && ok "nfs export $p on a mounted fs" || bad "nfs export $p is on RAM (no disk mounted)"
+		if _blocked "$td"; then bad "nfs export $p is BLOCKED (disk missing/failed)"
+		elif [ "$td" != "/" ] && mountpoint -q "$td"; then ok "nfs export $p on a mounted fs"
+		else bad "nfs export $p is on RAM (no disk mounted)"; fi
 	done
 	# snapraid parity sizing (best-effort)
 	if grep -q '^data ' /etc/snapraid.conf 2>/dev/null; then
@@ -196,7 +216,10 @@ cmd_disks() {
 	echo "Paste-ready fstab line(s) for unconfigured data partitions:"
 	# Build in a subshell-captured var: the while loop below runs in a pipe subshell,
 	# so a flag set inside it would not survive — check the captured output instead.
-	lines=$(lsblk -Pno NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null | while read -r line; do
+	# Suggested mountpoints: /mnt/nasdata first (only if not already in fstab),
+	# then /mnt/disk1, /mnt/disk2, … — never the same mountpoint twice.
+	have_nd=$(awk '$1!~/^#/ && $2=="/mnt/nasdata"{f=1} END{print f+0}' /etc/fstab)
+	lines=$(lsblk -Pno NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null | { n=1; while read -r line; do
 		eval "$line"
 		[ "$TYPE" = part ] || continue
 		[ -n "$UUID" ] && [ -n "$FSTYPE" ] || continue
@@ -204,8 +227,13 @@ cmd_disks() {
 		[ "$NAME" = "$usb" ] && continue
 		# already referenced in fstab (by UUID or by device)?
 		grep -q "$UUID" /etc/fstab 2>/dev/null && continue
-		printf "  UUID=%s  /mnt/nasdata  %s  rw,noatime,nofail  0 2   # paste into /etc/fstab (edit mountpoint)\n" "$UUID" "$FSTYPE"
-	done)
+		if [ "$have_nd" = 0 ]; then mp=/mnt/nasdata; have_nd=1
+		else
+			while awk -v m="/mnt/disk$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
+			mp="/mnt/disk$n"; n=$((n+1))
+		fi
+		printf "  UUID=%s  %-13s %s  rw,noatime,nofail  0 2   # paste into /etc/fstab (edit mountpoint)\n" "$UUID" "$mp" "$FSTYPE"
+	done; })
 	[ -n "$lines" ] && printf '%s\n' "$lines" \
 		|| echo "  (none — every filesystem is already in fstab, or blank/unformatted)"
 	echo "  Tip: the system disk uses /mnt/nasdata; extra data/parity disks use any path"
@@ -253,11 +281,26 @@ EOF
 	sz=$(lsblk -bdno SIZE "$dev" 2>/dev/null)
 	echo "Imaging $dev (~$(( ${sz:-0} /1048576)) MB) -> $out"
 	echo "This can take several minutes; the image compresses (mostly-empty space shrinks away)."
+	mkdir -p "$STATE" 2>/dev/null || true
 	sync; mount -o remount,ro "$CFG" 2>/dev/null || true
-	if gzip -c < "$dev" > "$out"; then
+	# pv gives a progress bar + ETA when available. Both stages must be checked:
+	# if pv hits a read error mid-device, gzip still exits 0 on the truncated
+	# stream — so pv drops a marker file on failure.
+	if command -v pv >/dev/null 2>&1; then
+		rm -f "$STATE/pv.err"
+		{ pv "$dev" || : > "$STATE/pv.err"; } | gzip -c > "$out" && [ ! -f "$STATE/pv.err" ] && rc=0 || rc=1
+		rm -f "$STATE/pv.err"
+	else
+		gzip -c < "$dev" > "$out" && rc=0 || rc=1
+	fi
+	if [ "$rc" = 0 ]; then
 		mount -o remount,rw "$CFG" 2>/dev/null || true; sync
 		ok "backup written: $out"
 		date '+%Y-%m-%d %H:%M' > "$STATE/last-backup" 2>/dev/null || true
+		# persistent copy ("<epoch> <date>") so 'nas status' and the upgrade gate
+		# can report backup age across reboots (saved with the next commit)
+		mkdir -p /etc/mountnas 2>/dev/null || true
+		printf '%s %s\n' "$(date +%s)" "$(date '+%Y-%m-%d %H:%M')" > /etc/mountnas/last-backup 2>/dev/null || true
 		warn "COPY THIS FILE TO ANOTHER COMPUTER — a backup stored only on this box can't save a dead box."
 	else
 		mount -o remount,rw "$CFG" 2>/dev/null || true
@@ -339,13 +382,25 @@ cmd_setup() {
 					: > /etc/resolv.conf
 					for d in $dns; do printf 'nameserver %s\n' "$d" >> /etc/resolv.conf; done
 				fi
-				ok "static network set on $nic ($addr) — applies on reboot"
+				ok "static network set on $nic ($addr)"
+				if confirm "  Apply it now? (restarts networking — an SSH session may drop)"; then
+					rc-service networking restart >/dev/null 2>&1 \
+						&& ok "networking restarted with the new address" \
+						|| warn "networking restart failed — settings apply on next reboot"
+				else
+					echo "  It will apply on the next reboot."
+				fi
 			else
 				warn "no IP entered — left networking on DHCP"
 			fi
 			;;
 		*) ok "using DHCP (auto-configured at boot)" ;;
 	esac
+
+	# Mark setup as completed so the first-login auto-run (profile.d/nas-welcome.sh)
+	# stops offering the wizard. Written before the commit so it persists with it.
+	mkdir -p /etc/mountnas
+	date '+%Y-%m-%d %H:%M' > /etc/mountnas/setup-done
 
 	echo "[5/5] Saving..."; cmd_commit
 	cat <<EOF
@@ -375,9 +430,12 @@ _mount_boot_rw() {
 # copies modules to RAM, unmounts the loopback) — after that the modloop file can be
 # rewritten safely. Config (/cfg) and data disks are never touched.
 cmd_upgrade() {
-	img="${1:-}"
-	[ -n "$img" ] || { echo "usage: nas upgrade <mountnas-*.img.gz>   (see UPGRADE.md)"; return 1; }
-	[ -f "$img" ] || { bad "not found: $img"; return 1; }
+	img="${1:-}"; url=""; dlf=""
+	[ -n "$img" ] || { echo "usage: nas upgrade <mountnas-*.img.gz | https://.../mountnas-*.img.gz>   (see UPGRADE.md)"; return 1; }
+	case "$img" in
+		http://*|https://*) url="$img" ;;
+		*) [ -f "$img" ] || { bad "not found: $img"; return 1; } ;;
+	esac
 	command -v copy-modloop >/dev/null 2>&1 || { bad "copy-modloop not found (alpine-conf) — cannot upgrade safely"; return 1; }
 
 	# ---- warning + backup gate ----
@@ -396,6 +454,8 @@ cmd_upgrade() {
 EOF
 	lb=$(cat "$STATE/last-backup" 2>/dev/null || true)
 	[ -n "$lb" ] && echo "  Last 'nas backup' this session: $lb" || echo "  No 'nas backup' recorded this session."
+	plb=$(cat /etc/mountnas/last-backup 2>/dev/null || true)
+	[ -n "$plb" ] && [ -z "$lb" ] && echo "  Last recorded 'nas backup' (earlier session): ${plb#* }"
 	printf '  Type YES (uppercase) to confirm you have a backup and continue: '
 	read -r a; [ "$a" = YES ] || { echo "Aborted — no changes made."; return 1; }
 
@@ -409,6 +469,7 @@ EOF
 		*.gz) need_kb=7340032 ;;   # ~7 GiB: image is 6 GiB; gzip -l is unreliable >4 GiB
 		*)    need_kb=$(( ( $(stat -c %s "$img" 2>/dev/null || echo 6442450944) / 1024 ) + 262144 )) ;;
 	esac
+	[ -n "$url" ] && need_kb=$((need_kb + 2097152))   # + ~2 GiB for the downloaded .img.gz
 	avail_kb=$(df -Pk "$tmp" 2>/dev/null | awk 'NR==2{print $4}')
 	if [ -z "$avail_kb" ] || [ "$avail_kb" -lt "$need_kb" ]; then
 		bad "not enough free space in $tmp to unpack the image."
@@ -416,14 +477,42 @@ EOF
 		return 1
 	fi
 
+	# ---- URL: download into temp space, verify against SHA256SUMS if published ----
+	if [ -n "$url" ]; then
+		dlf="$tmp/.nas-upgrade.$$.${url##*/}"
+		echo "Downloading $url ..."
+		if command -v curl >/dev/null 2>&1; then curl -fL -o "$dlf" "$url"
+		else wget -O "$dlf" "$url"; fi \
+			|| { bad "download failed"; rm -f "$dlf"; return 1; }
+		# a GitHub release publishes SHA256SUMS next to the image — verify when found
+		sums=$( { command -v curl >/dev/null 2>&1 && curl -fsL "${url%/*}/SHA256SUMS" \
+			|| wget -qO- "${url%/*}/SHA256SUMS"; } 2>/dev/null || true)
+		want=$(printf '%s\n' "$sums" | awk -v f="${url##*/}" '$2==f{print $1}')
+		if [ -n "$want" ]; then
+			got=$(sha256sum "$dlf" | awk '{print $1}')
+			[ "$got" = "$want" ] && ok "checksum verified against SHA256SUMS" \
+				|| { bad "checksum MISMATCH — refusing this download"; rm -f "$dlf"; return 1; }
+		else
+			warn "no SHA256SUMS found next to the URL — skipping checksum verification"
+		fi
+		img="$dlf"
+	fi
+
 	# ---- unpack + loop-mount the image's BOOT partition (p1) ----
 	raw="$tmp/.nas-upgrade.$$.img"; m=$(mktemp -d); loop=""
-	_cleanup() { [ -n "$loop" ] && losetup -d "$loop" 2>/dev/null; rm -f "$raw"; rmdir "$m" 2>/dev/null; }
+	_cleanup() { [ -n "$loop" ] && losetup -d "$loop" 2>/dev/null; rm -f "$raw"; [ -n "$dlf" ] && rm -f "$dlf"; rmdir "$m" 2>/dev/null; }
 	echo "Unpacking image into $tmp ..."
 	case "$img" in
-		*.gz) gzip -dc "$img" > "$raw" || { bad "decompress failed"; _cleanup; return 1; } ;;
+		*.gz)
+			# pv shows unpack progress when available; gzip -dc itself still
+			# detects a truncated/corrupt stream, so no extra status capture.
+			if command -v pv >/dev/null 2>&1; then pv "$img" | gzip -dc > "$raw"
+			else gzip -dc "$img" > "$raw"; fi \
+				|| { bad "decompress failed"; _cleanup; return 1; } ;;
 		*)    cp "$img" "$raw" || { bad "copy failed"; _cleanup; return 1; } ;;
 	esac
+	# the downloaded .gz is no longer needed once unpacked — free the space now
+	[ -n "$dlf" ] && { rm -f "$dlf"; dlf=""; }
 	loop=$(losetup -fP --show "$raw") || { bad "losetup failed"; _cleanup; return 1; }
 	mount -o ro "${loop}p1" "$m" 2>/dev/null || { bad "cannot mount the image's BOOT partition"; _cleanup; return 1; }
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
@@ -442,8 +531,16 @@ EOF
 	for f in vmlinuz-lts initramfs-lts modloop-lts; do
 		{ cp "$m/boot/$f" "$BOOTMNT/boot/.$f.new" && mv "$BOOTMNT/boot/.$f.new" "$BOOTMNT/boot/$f"; } || ec=1
 	done
-	mkdir -p "$BOOTMNT/apks.new"; cp -r "$m"/apks/. "$BOOTMNT/apks.new/" || ec=1
-	rm -rf "$BOOTMNT/apks.old"; mv "$BOOTMNT/apks" "$BOOTMNT/apks.old" 2>/dev/null; mv "$BOOTMNT/apks.new" "$BOOTMNT/apks" || ec=1; rm -rf "$BOOTMNT/apks.old"
+	# Swap in the new apks repo ONLY if the copy fully succeeded — a failed/partial
+	# copy must leave the known-good repo untouched, never replace it.
+	rm -rf "$BOOTMNT/apks.new"; mkdir -p "$BOOTMNT/apks.new"
+	if cp -r "$m"/apks/. "$BOOTMNT/apks.new/"; then
+		rm -rf "$BOOTMNT/apks.old"; mv "$BOOTMNT/apks" "$BOOTMNT/apks.old" 2>/dev/null
+		mv "$BOOTMNT/apks.new" "$BOOTMNT/apks" || ec=1
+		rm -rf "$BOOTMNT/apks.old"
+	else
+		rm -rf "$BOOTMNT/apks.new"; ec=1
+	fi
 	if [ -f "$m/world.base" ]; then { cp "$m/world.base" "$BOOTMNT/.world.base.new" && mv "$BOOTMNT/.world.base.new" "$BOOTMNT/world.base"; } || ec=1; fi
 	umount "$m"; _cleanup
 	[ "$ec" = 0 ] || { bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."; return 1; }
@@ -482,7 +579,7 @@ case "${1:-help}" in
 	setup) cmd_setup ;;
 	status) shift; cmd_status "$@" ;;
 	disks) cmd_disks ;;
-	validate) cmd_status ;;
+	validate) shift; cmd_status "$@" ;;
 	checkup) cmd_status --deep ;;
 	restart) cmd_restart ;;
 	commit|save) cmd_commit ;;

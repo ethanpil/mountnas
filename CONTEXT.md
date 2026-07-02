@@ -263,6 +263,28 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 (`softprops/action-gh-release@v2`, `files: out/*`) — which requires
 `permissions: contents: write` on the job.
 
+**Lint + boot gate.**
+- A host-side `shellcheck -s sh -S warning -e SC2034,SC3043,SC3045` step lints every
+  shipped script before the Alpine build — it catches the busybox-ash strictness
+  class of bugs above at CI time. The excludes are deliberate: SC2034 (openrc-run
+  vars like `description=` look unused), SC3043/SC3045 (`local` and `read -s` are
+  fine in busybox ash even though POSIX sh leaves them undefined).
+- **QEMU boot smoke test** (after assembly, before publish): the image is booted
+  under BOTH firmwares (SeaBIOS and OVMF) and must print a `login:` prompt on the
+  serial console within ~7 min, else the job fails and nothing is published. The
+  disk is attached **`if=virtio`** on purpose — the cmdline module list carries
+  virtio_blk but NOT ide/ata_piix, so QEMU's default IDE bus would never be found
+  by the initramfs and the test would false-fail.
+
+**Version + signing key.**
+- `nas version`/`nas status` report mountnas-tools' `pkgver`; the workflow seds the
+  release tag (leading `v` stripped) into the APKBUILD before building, falling back
+  to `1.0.0_git<date>` when the tag is not a valid apk version (e.g. `dev`).
+- The signing key comes from the **`ABUILD_PRIVKEY` repo secret** when set — a
+  stable trust anchor, so the published `.rsa.pub` no longer changes every build.
+  Generate once (`abuild-keygen -an` anywhere, paste the private key into the
+  secret). Without the secret (forks, PRs) the old random per-build keygen runs.
+
 ---
 
 ## 7. ZeroTier specifics
@@ -293,10 +315,11 @@ SeaBIOS gets past the earlier hang / "not a bootable disk" into the Alpine diskl
 init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in place.
 
 **Open / next (in priority order):**
-1. **Boot-test the `.img.gz` to a login prompt** (Proxmox SeaBIOS *and* OVMF, and real
-   USB). Confirm the single OS boots, the seed overlay applies (root-owned, doas works),
-   and `mountnas` holds then releases docker/samba/nfs around `/mnt/nasdata`; and that
-   `command -v copy-modloop` is present. The single most important unverified thing.
+1. **Boot-test to a login prompt — now automated in CI** (QEMU SeaBIOS *and* OVMF; a
+   failing boot blocks the release, see §6 "Lint + boot gate"). Still to do manually:
+   boot from a **real USB stick on real hardware**, confirm the seed overlay applies
+   (root-owned, doas works), and that `mountnas` holds then releases docker/samba/nfs
+   around `/mnt/nasdata`; and that `command -v copy-modloop` is present.
 2. **Validate the single-slot upgrade + backup (§4a).** `nas backup` → a valid
    `mountnas-backup-*.img.gz`; `nas upgrade <img.gz>` → warn+`YES` gate, free-space
    precheck, `copy-modloop`, crash-safe in-place overwrite, world reconcile, reboot into
@@ -310,9 +333,9 @@ init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in 
 4. The rest of the plan's "assumptions to validate on first build" (its §11).
 
 **Known caveats:**
-- **Per-build signing key is random** (`build-<hex>.rsa.pub`), published as
-  `mountnas-<tag>.rsa.pub`. It changes every build. If reproducible verification or
-  a stable trust anchor matters, switch to a committed/secret fixed signing key.
+- **Signing key:** set the `ABUILD_PRIVKEY` repo secret for a fixed key (stable trust
+  anchor). Without it the key is random per build (`build-<hex>.rsa.pub`, published as
+  `mountnas-<tag>.rsa.pub`) and changes every build. See §6 "Version + signing key".
 - `depmod: ERROR: fstatat(3, vmlinuz)` during the kernel step is **benign** (modloop
   builds/signs fine right after).
 - The `apk index` "No provider for the dependencies" warning during local-repo

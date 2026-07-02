@@ -57,6 +57,14 @@ scp mountnas-<tag>.img.gz root@mountnas:/mnt/nasdata/
 You can hand `nas upgrade` either the compressed `.img.gz` (it decompresses to temp space
 on the data disk) or an already-decompressed `.img`.
 
+**Or skip this step entirely** and give `nas upgrade` the release URL directly — it
+downloads to temp space on the data disk and, when the release's `SHA256SUMS` file sits
+next to the image (GitHub releases publish it), verifies the checksum before proceeding:
+
+```
+nas upgrade https://github.com/<user>/mountnas/releases/download/<tag>/mountnas-<tag>.img.gz
+```
+
 ### 3. Run the upgrade
 
 ```

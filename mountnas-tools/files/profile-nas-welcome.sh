@@ -10,3 +10,12 @@ if command -v lbu >/dev/null 2>&1; then
 	n=$(lbu status 2>/dev/null | grep -c .); [ "${n:-0}" -gt 0 ] && printf '  >> %s unsaved change(s): nas commit\n' "$n"
 fi
 printf '  Type `nas help` for commands and paths.\n\n'
+# First boot: start the setup wizard automatically until it has completed once
+# (root, interactive terminal, no root password set yet, no setup-done marker).
+# Aborting (Ctrl-C) just returns to the shell; it offers again at the next login,
+# and 'nas setup' stays manually re-runnable at any time.
+if [ "$(id -u 2>/dev/null)" = 0 ] && [ ! -e /etc/mountnas/setup-done ] && [ -t 0 ] \
+	&& awk -F: '$1=="root"{exit ($2!="")}' /etc/shadow 2>/dev/null; then
+	printf '  First boot detected — starting the setup wizard (Ctrl-C to skip).\n\n'
+	nas setup
+fi

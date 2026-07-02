@@ -11,7 +11,7 @@ Get your system running by following these steps:
 * Download a MountNAS release from GitHub:`mountnas-<tag>.img.gz`
 * Write the image to a flash drive (min. 8 GB) using `gunzip -c mountnas-<tag>.img.gz | sudo dd of=/dev/sdX bs=4M status=progress` or a graphical utility like [Etcher](https://etcher.balena.io/).
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
-* Complete the automatic `nas setup` wizard to setup the root password, configure system timezone, and install your SSH public key.
+* Complete the automatic `nas setup` wizard (it starts by itself at your first login) to set the hostname, root password, timezone, and network.
 * Identify your attached storage volumes and their respective identifiers by running `nas disks`.
 * Partition and format blank data disks using tools such as `cfdisk` or `mkfs` or other [baked in tools](#baked-in-packages).
 * Register your primary storage disk in `/etc/fstab` mapping to the explicit path `/mnt/nasdata` where application data, Docker structures, and configuration backups will live.
@@ -38,7 +38,7 @@ If a drive is disconnected or fails to initialize, the supervisor mounts a read-
 
 ## First boot
 
-Log in as root (no password yet) — at the console or over SSH. `nas setup` runs automatically: root password, timezone, SSH key, then it saves. When it finishes you can start configuring your disks.
+Log in as root (no password yet) — at the console or over SSH. `nas setup` starts automatically at your first login (and keeps offering until completed once): hostname, root password, timezone, network, then it saves. When it finishes you can start configuring your disks. SSH keys are installed separately — drop an `authorized_keys` file on the BOOT partition (below) or manage `/root/.ssh/authorized_keys` yourself.
 
 **Finding the box.** The console login screen shows the machine's current IP address and its `mountnas.local` name *before* you log in, so a monitor is all you need to find it. On networks with mDNS (most home/LAN setups) you can also just reach it at `mountnas.local` without knowing the IP — Avahi is on by default.
 
@@ -109,7 +109,7 @@ The `nas` tool has been designed to help you manage the system.
 
 | Command | Description |
 | --- | --- |
-| `nas setup` | Guided first-run setup: sets the root password and timezone, installs an optional SSH public key, then saves. |
+| `nas setup` | Guided first-run setup (starts automatically at first login until completed once): hostname, root password, timezone, network, then saves. |
 | `nas status` | Health + storage-config check (fast, no disk spin-up): IP, RAM, config/data mount state, key services, unsaved-change count, plus fstab checks (UUIDs resolve, `nofail` present, no data path tracked by `lbu`, share/export paths land on real mounts). |
 | `nas status --deep` | Everything `nas status` does **plus** SMART, SnapRAID status, and time-sync. Kept opt-in because SMART can wake sleeping disks and SnapRAID status is slow. (Alias: `nas checkup`.) |
 | `nas disks` | Lists every detected disk with its UUID and mount state, marks the boot USB, shows how `/etc/fstab` maps it, and prints a paste-ready fstab line for each unconfigured data partition. |
@@ -117,7 +117,7 @@ The `nas` tool has been designed to help you manage the system.
 | `nas restart` | Re-mounts data disks and (re)starts Docker/Samba/NFS without rebooting (runs `rc-service mountnas restart`). Run it after editing `/etc/fstab`. |
 | `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition. Alias: `nas save`. |
 | `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
-| `nas upgrade` | Rewrites the OS on the USB **in place** from a release image (`mountnas-<tag>.img.gz`), then reboot. Requires a `nas backup` first (see `UPGRADE.md`). |
+| `nas upgrade` | Rewrites the OS on the USB **in place** from a release image — a local `mountnas-<tag>.img.gz` or an `https://` release URL (verified against the release's `SHA256SUMS` when present) — then reboot. Requires a `nas backup` first (see `UPGRADE.md`). |
 | `nas shutdown` | Powers off, warning first if you have unsaved changes. |
 | `nas reboot` | Reboots, warning first if you have unsaved changes. |
 | `nas version` | Shows the MountNAS version. |

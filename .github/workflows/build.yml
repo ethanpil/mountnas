@@ -13,6 +13,30 @@ jobs:
       contents: write   # publish the build outputs as a GitHub Release
     steps:
       - uses: actions/checkout@v4
+      # Lint before anything expensive. -s sh: every script must parse as POSIX sh
+      # (busybox ash on the device; CONTEXT.md §6 documents recurring ash-strictness
+      # bugs). -S warning: SC2015-style style notes are accepted idiom here.
+      # Excludes: SC2034 (openrc-run vars like description= look unused),
+      # SC3043 ('local' — supported by busybox ash and mkimage's ash),
+      # SC3045 ('read -s' — supported by busybox ash).
+      - name: Lint shell scripts (shellcheck)
+        shell: bash
+        run: |
+          shellcheck -s sh -S warning -e SC2034,SC3043,SC3045 \
+            mountnas-tools/files/nas \
+            mountnas-tools/files/gen-issue \
+            mountnas-tools/files/write-bootcfg \
+            mountnas-tools/files/mountnas \
+            mountnas-tools/files/mountnas-mkdirs \
+            mountnas-tools/files/mountnas-net \
+            mountnas-tools/files/mountnas-sshkey \
+            mountnas-tools/files/mountnas-issue \
+            mountnas-tools/files/issue-ifupdown \
+            mountnas-tools/files/profile-nas-welcome.sh \
+            mountnas-tools/files/profile-nas-aliases.sh \
+            mountnas-tools/files/profile-nas-prompt.sh \
+            mountnas-tools/files/profile-nas-resize.sh \
+            scripts/genapkovl-mountnas.sh scripts/mkimg.nas.sh
       - uses: jirutka/setup-alpine@v1
         with:
           branch: ${{ inputs.alpine_branch }}
@@ -31,6 +55,11 @@ jobs:
           sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null || true
       - name: Build
         shell: alpine.sh --root {0}
+        env:
+          # Optional fixed package-signing key (repo secret). When set, every
+          # release is signed by the same key (stable trust anchor); when absent
+          # (forks/PRs) the build falls back to a random per-build key.
+          ABUILD_PRIVKEY: ${{ secrets.ABUILD_PRIVKEY }}
         run: |
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
@@ -43,12 +72,25 @@ jobs:
           echo "permit nopass keepenv build" > /etc/doas.conf
           chmod 0400 /etc/doas.conf
           cp -r "$GITHUB_WORKSPACE" /home/build/repo; chown -R build:build /home/build
-          # Generate the package signing key as the build user (this sets
+          # Package signing key. Preferred: the fixed key from the ABUILD_PRIVKEY
+          # secret (stable trust anchor — the published .rsa.pub stops changing
+          # every build). Fallback: generate a random per-build key (this sets
           # PACKAGER_PRIVKEY in ~build/.abuild/abuild.conf). We omit -i so keygen
           # never needs root/doas; instead we install the public key into
           # /etc/apk/keys ourselves (as root) so apk trusts the locally-built
           # mountnas-tools repo when mkimage pulls from it.
-          su build -s /bin/sh -c 'export HOME=/home/build; abuild-keygen -an'
+          if [ -n "${ABUILD_PRIVKEY:-}" ]; then
+            apk add openssl
+            mkdir -p /home/build/.abuild
+            printf '%s\n' "$ABUILD_PRIVKEY" > /home/build/.abuild/mountnas.rsa
+            chmod 600 /home/build/.abuild/mountnas.rsa
+            openssl rsa -in /home/build/.abuild/mountnas.rsa -pubout \
+              -out /home/build/.abuild/mountnas.rsa.pub
+            echo "PACKAGER_PRIVKEY=/home/build/.abuild/mountnas.rsa" >> /home/build/.abuild/abuild.conf
+            chown -R build:build /home/build/.abuild
+          else
+            su build -s /bin/sh -c 'export HOME=/home/build; abuild-keygen -an'
+          fi
           cp /home/build/.abuild/*.rsa.pub /etc/apk/keys/
           su build -s /bin/sh -c '
             set -eu; export HOME=/home/build
@@ -70,6 +112,15 @@ jobs:
               [ -f "$HOME/checkroot/etc/init.d/$s" ] || miss="$miss $s"
             done
             [ -z "$miss" ] || { echo "MISSING init scripts for:$miss — add the right -openrc package(s)"; exit 1; }
+            echo "== wire the release tag into mountnas-tools pkgver =="
+            # nas version / nas status report /usr/share/mountnas/version, which is
+            # pkgver — without this it would say 1.0.0 forever regardless of release.
+            # Tags that are not a valid apk version (e.g. "dev") fall back to a dated one.
+            V="'"$TAG"'"; V="${V#v}"
+            echo "$V" | grep -Eq "^[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p|git)[0-9]*)*$" \
+              || V="1.0.0_git$(date +%Y%m%d)"
+            sed -i "s/^pkgver=.*/pkgver=$V/" "$HOME"/repo/mountnas-tools/APKBUILD
+            echo "mountnas-tools pkgver = $V"
             echo "== build mountnas-tools =="
             ( cd "$HOME"/repo/mountnas-tools && abuild -r )
             echo "== build snapraid (compiled from source) =="
@@ -170,6 +221,51 @@ jobs:
           cp "$IMG.gz" "out/mountnas-$TAG.img.gz"
           cp /home/build/.abuild/*.rsa.pub "out/mountnas-$TAG.rsa.pub"
           ( cd out && sha256sum mountnas-* > SHA256SUMS )
+      # Boot the freshly built image in QEMU under BOTH firmwares and require a
+      # login prompt on the serial console. Reaching login transitively proves the
+      # bootloader chain, .boot_repository discovery, package install into RAM, the
+      # seed overlay, and the inittab gettys. Runs BEFORE the release publish, so a
+      # non-booting image never ships. Notes:
+      #  - if=virtio for the disk: the cmdline module list includes virtio_pci/
+      #    virtio_blk (IDE/ata_piix is NOT in the list, so the default bus would
+      #    never be found by the initramfs).
+      #  - grep "login:" on the serial log: busybox getty prints the issue banner
+      #    and prompt together, so the match means a getty is up on ttyS0.
+      - name: Boot smoke test (SeaBIOS + OVMF)
+        shell: bash
+        run: |
+          set -eu
+          sudo apt-get update -q
+          sudo apt-get install -qy qemu-system-x86 ovmf
+          # GitHub-hosted Linux runners expose KVM; make it usable for our user.
+          KVM=""
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; KVM="-enable-kvm -cpu host"; fi
+          gzip -dc "out/mountnas-${{ inputs.release_tag }}.img.gz" > /tmp/nas.img
+          run_boot() {
+            name=$1; shift
+            log=/tmp/serial-$name.log
+            echo "== boot test: $name =="
+            qemu-system-x86_64 $KVM -m 4096 -display none \
+              -drive file=/tmp/nas.img,format=raw,if=virtio \
+              -serial "file:$log" "$@" &
+            pid=$!
+            reached=0
+            for _ in $(seq 1 420); do
+              if grep -q "login:" "$log" 2>/dev/null; then reached=1; break; fi
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 1
+            done
+            kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+            if [ "$reached" = 1 ]; then
+              echo "[$name] reached the login prompt"; tail -n 3 "$log"
+            else
+              echo "[$name] FAILED to reach a login prompt"; echo "--- serial log ---"
+              cat "$log" 2>/dev/null || echo "(no serial output at all)"
+              exit 1
+            fi
+          }
+          run_boot bios
+          run_boot uefi -bios /usr/share/ovmf/OVMF.fd
       # Publish each artifact (img.gz, rsa.pub, SHA256SUMS) as a SEPARATE,
       # individually-downloadable release asset — not a single zip.
       - name: Publish release
