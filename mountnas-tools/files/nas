@@ -186,6 +186,17 @@ cmd_status() {
 	if [ "$deep" = 1 ]; then
 		echo "== deep: hardware / runtime =="
 		df -h / 2>/dev/null | awk 'NR==2{print "  root (RAM) used: "$5}'
+		# fstab syntax/option validation from util-linux — catches classes the
+		# hand-rolled checks above don't (typo'd options, unknown fs types).
+		# Deep-only on purpose: findmnt probes device superblocks to verify
+		# fstypes, which can wake sleeping disks; the fast section never may.
+		if command -v findmnt >/dev/null 2>&1; then
+			fv=$(findmnt --verify --fstab 2>&1 | grep -E '\[[WE]\]' || true)
+			if [ -n "$fv" ]; then
+				warn "findmnt --verify flagged /etc/fstab:"
+				printf '%s\n' "$fv" | sed 's/^[[:space:]]*/     /'
+			else ok "fstab passes findmnt --verify"; fi
+		fi
 		for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}'); do
 			h=$(smartctl -H "/dev/$d" 2>/dev/null | awk -F: '/overall-health/{gsub(/ /,"",$2);print $2}')
 			[ -n "$h" ] && { [ "$h" = PASSED ] && ok "/dev/$d SMART PASSED" || bad "/dev/$d SMART $h"; }
