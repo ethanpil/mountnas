@@ -12,6 +12,19 @@ log() { printf '%s mountnas: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null
 # fstab fstype for a mountpoint; "" if not declared
 _fstype() { awk '$1!~/^#/ && $2=="'"$1"'"{print $3; exit}' /etc/fstab; }
 _is_network_fs() { case "$1" in nfs|nfs4|cifs|smbfs|fuse.*|sshfs|glusterfs|ceph) return 0;; *) return 1;; esac; }
+# fstab spec (col 1) for a mountpoint; "" if not declared
+_fstab_spec() { awk '$1!~/^#/ && $2=="'"$1"'"{print $1; exit}' /etc/fstab; }
+# Is the device behind a spec present yet? UUID=/LABEL=/PARTUUID= via findfs,
+# /dev/* via -b, bind-mount source paths via -e; unknown shapes count as
+# present so they can never stall the wait loop below.
+_spec_present() {
+	case "$1" in
+		UUID=*|LABEL=*|PARTUUID=*) findfs "$1" >/dev/null 2>&1 ;;
+		/dev/*) [ -b "$1" ] ;;
+		/*) [ -e "$1" ] ;;
+		*) return 0 ;;
+	esac
+}
 
 start() {
 	mkdir -p "$STATE"; : > "$LOG" 2>/dev/null || true
@@ -57,6 +70,25 @@ start() {
 			|| log "world sync (apk add) reported errors — a package may be missing until network/cache provides it"
 	fi
 
+	# Give slow disks a moment to appear before judging them missing: drives in
+	# USB docks/enclosures can enumerate seconds after udev-settle (staggered
+	# spin-up is common on multi-bay docks). Wait ONLY while a declared local
+	# fstab device is still absent AND its mountpoint unmounted, up to ~15 s —
+	# on a healthy boot every device is already there and this costs nothing.
+	# A disk that stays missing is placeholdered below exactly as before.
+	waited=0
+	while [ "$waited" -lt 15 ]; do
+		missing=0
+		for mp in $(awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $2}' /etc/fstab); do
+			ft=$(_fstype "$mp"); _is_network_fs "$ft" && continue
+			mountpoint -q "$mp" && continue
+			_spec_present "$(_fstab_spec "$mp")" || { missing=1; break; }
+		done
+		[ "$missing" = 0 ] && break
+		[ "$waited" = 0 ] && log "declared disk(s) not present yet — waiting up to 15s (slow spin-up?)"
+		sleep 3; waited=$((waited+3))
+	done
+
 	# Protect declared LOCAL data mounts that failed to mount, with a read-only
 	# tmpfs placeholder (browsable but unwritable). Skip /mnt/nasdata (handled
 	# specially below). Skip network filesystems entirely: we must never try to
@@ -67,6 +99,10 @@ start() {
 		ft=$(_fstype "$mp"); _is_network_fs "$ft" && continue
 		if mountpoint -q "$mp"; then continue; fi
 		mkdir -p "$mp"
+		# localmount ran before this service, so a disk that only appeared in
+		# the wait window above is still unmounted — try its fstab entry once
+		# (local devices only; a missing device fails fast, no hang)
+		mount "$mp" 2>>"$LOG" && { log "late-mounted $mp"; continue; }
 		if mount -t tmpfs -o ro,size=4k,mode=0555 mountnas-blocked "$mp" 2>>"$LOG"; then
 			log "placeholder (ro tmpfs) over unmounted $mp"
 		fi
