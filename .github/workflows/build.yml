@@ -322,7 +322,15 @@ jobs:
           echo "expecting post-upgrade version: $NEWVER"
           gh release download --repo "$GITHUB_REPOSITORY" \
             --pattern "$old_asset" --output "$WORK/old.img.gz"
-          gzip -dc "$WORK/old.img.gz" > "$WORK/old.img"; rm -f "$WORK/old.img.gz"
+          # Sparse-decompress: the 6 GB image is mostly zeros, and /mnt on a
+          # hosted runner is only ~14 GB (shared with the swap file). A full
+          # host disk PAUSES QEMU (werror=enospc default) — seen as the guest
+          # freezing at 99% of the unpack. conv=sparse writes zeros as holes;
+          # the image ends in the (non-zero) backup GPT header, so the final
+          # block is real and the file keeps its full apparent size.
+          gzip -dc "$WORK/old.img.gz" | dd of="$WORK/old.img" conv=sparse bs=1M status=none
+          rm -f "$WORK/old.img.gz"
+          du -h --apparent-size "$WORK/old.img"; du -h "$WORK/old.img"
           # Payload disk: carries the new .img.gz into the guest AND provides the
           # upgrade's temp space (needs ~7 GiB free -> 12G, no reserved blocks).
           truncate -s 12G "$WORK/updisk.img"
@@ -332,12 +340,16 @@ jobs:
           sudo umount "$UD"; rmdir "$UD"
           KVM=""
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; KVM="-enable-kvm -cpu host"; fi
+          # detect-zeroes=unmap: the guest unpacks ~6 GB that is mostly zeros
+          # onto the payload disk; punching holes for zero writes keeps the
+          # host file small so /mnt can never fill (see the ENOSPC note above).
           {
             echo '#!/bin/sh'
             echo "exec qemu-system-x86_64 $KVM -m 4096 -nographic \\"
-            echo "  -drive file=$WORK/old.img,format=raw,if=virtio \\"
-            echo "  -drive file=$WORK/updisk.img,format=raw,if=virtio"
+            echo "  -drive file=$WORK/old.img,format=raw,if=virtio,discard=unmap,detect-zeroes=unmap \\"
+            echo "  -drive file=$WORK/updisk.img,format=raw,if=virtio,discard=unmap,detect-zeroes=unmap"
           } > "$WORK/run-qemu.sh"
+          df -h /mnt
           expect scripts/ci-upgrade-test.exp "$WORK/run-qemu.sh" "$NEWVER"
       # Publish each artifact (img.gz, rsa.pub, SHA256SUMS) as a SEPARATE,
       # individually-downloadable release asset — not a single zip.
