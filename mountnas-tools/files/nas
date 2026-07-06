@@ -50,6 +50,7 @@ MountNAS $VERSION — control CLI
   nas reboot     Reboot   (warns on unsaved changes)
   nas upgrade    Upgrade the OS from a release file or URL — see UPGRADE.md
   nas upgrade --check   Ask GitHub whether a newer release is published
+  nas report     Diagnostics bundle (status+logs, no secrets) for bug reports
   nas about      Logo, version, and project info
   nas help / version
   (nas validate = nas status ; nas checkup = nas status --deep)
@@ -263,6 +264,40 @@ cmd_restart() {
 	# Re-run the storage supervisor: re-mount data disks and (re)start
 	# docker/samba/nfs, without rebooting. Handy after editing /etc/fstab.
 	rc-service mountnas restart
+}
+
+# nas report — diagnostics bundle for bug reports. Collects status, logs, and
+# storage/service config into one tarball in /tmp (RAM). Deliberately EXCLUDES
+# secrets: no /etc/shadow, no ssh keys, no samba password db. /var/log/messages
+# is included because most bugs need it — the closing note tells the user to
+# review before sharing.
+cmd_report() {
+	out="/tmp/mountnas-report-$(hostname)-$(date +%Y%m%d-%H%M%S).tar.gz"
+	d=$(mktemp -d) || { bad "mktemp failed"; return 1; }
+	echo "Collecting diagnostics (runs 'nas status --deep' — may wake sleeping disks) ..."
+	cmd_status --deep > "$d/nas-status.txt" 2>&1 || true
+	{ echo "MountNAS $VERSION"; uname -a; uptime; } > "$d/system.txt" 2>&1 || true
+	dmesg > "$d/dmesg.txt" 2>/dev/null || true
+	cp /var/log/mountnas.log "$d/mountnas.log" 2>/dev/null || true
+	cp /var/log/messages "$d/messages" 2>/dev/null || true
+	cp /etc/fstab "$d/fstab" 2>/dev/null || true
+	cat /proc/mounts > "$d/mounts.txt" 2>/dev/null || true
+	lsblk -o NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT > "$d/lsblk.txt" 2>/dev/null || true
+	df -h > "$d/df.txt" 2>/dev/null || true
+	cp /etc/apk/world "$d/world" 2>/dev/null || true
+	rc-status -a > "$d/rc-status.txt" 2>/dev/null || true
+	for f in /etc/snapraid.conf /etc/exports /etc/docker/daemon.json /etc/samba/smb.conf; do
+		[ -f "$f" ] && cp "$f" "$d/$(basename "$f")" 2>/dev/null
+	done
+	if tar -czf "$out" -C "$d" .; then
+		rm -rf "$d"
+		ok "diagnostics bundle written: $out"
+		echo "  Attach it to your bug report: https://github.com/$REPO/issues"
+		echo "  No secrets are included (no shadow/ssh keys/samba passwords), but the"
+		echo "  system log is — review the contents before sharing."
+	else
+		rm -rf "$d"; bad "could not write $out"; return 1
+	fi
 }
 
 # nas changes (alias: changed) — list WHAT 'nas commit' would save, not just a
@@ -680,6 +715,7 @@ case "${1:-help}" in
 	checkup) cmd_status --deep ;;
 	restart) cmd_restart ;;
 	changes|changed) cmd_changes ;;
+	report) cmd_report ;;
 	commit|save) cmd_commit ;;
 	backup) shift; cmd_backup "$@" ;;
 	shutdown) cmd_shutdown ;;
