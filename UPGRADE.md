@@ -26,6 +26,24 @@ automatic rollback** — your safety net is a full-image backup you make *before
 
 ---
 
+## ⚠️ One-time migration from alpha-1 / alpha-2 / alpha-3
+
+The upgrade code **shipped in those releases** fails at the modloop step (fixed in
+alpha-4 — but an upgrade always runs the *installed* release's code), so `nas upgrade`
+does not work **from** them. Migrate once by reflashing, carrying your config over:
+
+1. On the old box: `nas backup` (safety net), copy the file off the box, power down.
+2. Write the new release image to a **different** USB stick.
+3. To keep your configuration: mount both sticks on a PC and copy
+   `mountnas.apkovl.tar.gz` from the old stick's `MNASCFG` partition onto the new
+   stick's `MNASCFG` (replacing the seed file there). Skip this to start fresh.
+4. Boot **only** the new stick (never both — the disk labels collide). Your data disks
+   are untouched either way.
+
+From alpha-4 onward, normal in-place `nas upgrade` applies.
+
+---
+
 ## Step by step
 
 ### 1. Back up the boot USB — REQUIRED

@@ -1,5 +1,36 @@
 # Changelog
 
+## [alpha-4] — 2026-07-06
+
+### Fixed
+- **In-place upgrade works (from this release onward).** The modloop-free step now
+  copies only the **kernel modules** to RAM instead of the whole modloop (modules +
+  firmware, which overflowed the RAM root on 4 GB machines and could wedge `lbu`
+  until a reboot). Exact headroom is measured up front; a transient-busy unmount is
+  handled. Because an upgrade runs the *installed* release's code, boxes on
+  alpha-1/2/3 still need a one-time reflash — see UPGRADE.md "One-time migration".
+- **Offline package installs.** The `mountnas` service never created the BOOT
+  mountpoint, so the on-USB package repo was never exposed at runtime and `apk`
+  silently depended on the network. Fixed; offline `apk add` (USB snapshot +
+  `/cfg` cache) now works as designed.
+
+### Changed
+- **Firmware: curated consumer-x86 set** (~365 MB vs 756 MB full) matched to
+  repurposed laptops/desktops/NUCs/mini-PCs: GPU (Intel i915/xe, AMD amdgpu/radeon,
+  Nvidia), wifi (Intel incl. Bluetooth, MediaTek, Atheros ath6k–ath12k, Broadcom,
+  Cypress, Realtek rtw88/rtw89/rtlwifi), Bluetooth (qca, rtl_bt, ar3k), wired NICs
+  (rtl_nic, tigon, bnx2, e100), laptop platform (cirrus, amd, amdnpu, dell, hp,
+  lenovo, synaptics). The previous list missed common consumer firmware (Realtek
+  NIC/wifi, Intel GPU, Bluetooth) and shipped an empty `realtek` stub. Anything
+  else can be added on a running box — README "Adding firmware for other hardware"
+  (verified to install early in boot, before device probing).
+
+### Docs
+- UPGRADE.md: one-time migration path from alpha-1/2/3 with config carry-over.
+- README: firmware-addition guide; troubleshooting entries for custom
+  `/etc/init.d` scripts (lbu does not track them — `lbu include` once) and for
+  `tar: empty archive` commits (full RAM root).
+
 ## [alpha-3] — 2026-07-06
 
 - **New baked-in packages:** `zsh` (alternate login shell) and `mosh` (roaming,
