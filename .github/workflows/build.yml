@@ -179,6 +179,10 @@ jobs:
             [ -f "$M/boot/$f" ] || { echo "ERROR: missing boot/$f"; exit 1; }
           done
           [ -f "$M/apks/x86_64/APKINDEX.tar.gz" ] || { echo "ERROR: apks/ has no APKINDEX"; exit 1; }
+          # alpine.base: the base's Alpine version (e.g. 3.24). 'nas upgrade' uses
+          # it to re-pin the CDN repo lines in /etc/apk/repositories, since that
+          # file is user-owned config the upgrade must not blindly overwrite.
+          cut -d. -f1,2 /etc/alpine-release > "$M/alpine.base"
           # The diskless init finds the on-media apk repo via a .boot_repository marker
           # (find_boot_repositories) + alpine_repo=auto. Guarantee the marker exists
           # (setup-bootable ships it); without it 0 packages install -> no /sbin/init.
@@ -216,7 +220,10 @@ jobs:
           #    setup-bootable's plain mbr.bin, which can't boot GPT). SeaBIOS -> this
           #    MBR -> the legacy-bootable partition's VBR -> syslinux just installed.
           dd bs=440 count=1 conv=notrunc if=/usr/share/syslinux/gptmbr.bin of="$LOOP"
-          mount "${LOOP}p2" "$M"; cp "$OVL" "$M/$(basename "$OVL")"; sync; umount "$M"
+          # MNASCFG carries the seed overlay AND the apk cache dir (next to the
+          # apkovl — the standard Alpine diskless cache spot; /etc/apk/cache in
+          # the overlay points at /cfg/cache, which is this directory at runtime).
+          mount "${LOOP}p2" "$M"; cp "$OVL" "$M/$(basename "$OVL")"; mkdir -p "$M/cache"; sync; umount "$M"
           losetup -d "$LOOP"; gzip -9 "$IMG"
           # Stage the release files under branded names (published individually,
           # un-zipped). ONE image now serves BOTH fresh install (write to USB) and

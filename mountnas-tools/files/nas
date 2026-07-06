@@ -82,6 +82,9 @@ Add a disk:
   4) nas restart                   mount + start services (no reboot)
   5) nas commit                    persist it
 
+Install extra packages:  apk add <pkg>   then: nas commit
+  (Alpine main+community repos are enabled; downloads are cached on the config
+   partition and reinstall automatically at every boot, even offline.)
 To grant a new user admin rights:  adduser <user> wheel   (then: nas commit)
 Nothing persists across reboot until you run 'nas commit'.
 EOF
@@ -676,6 +679,7 @@ EOF
 	done
 	_swap_dir "$m/apks" "$BOOTMNT/apks" || ec=1
 	if [ -f "$m/world.base" ]; then _swap_file "$m/world.base" "$BOOTMNT/world.base" || ec=1; fi
+	if [ -f "$m/alpine.base" ]; then _swap_file "$m/alpine.base" "$BOOTMNT/alpine.base" || ec=1; fi
 	# Bootloader payload files (plain files on the FAT — safe to replace from a
 	# running box, unlike the VBR/MBR boot code, which stays untouched). grub's
 	# core (EFI/BOOT/BOOTX64.EFI) and its modules (/boot/grub) ship as a matched
@@ -703,6 +707,16 @@ EOF
 		fi
 		cp "$STATE/desired.$$" /etc/apk/world
 		rm -f "$STATE/extras.$$" "$STATE/desired.$$"
+	fi
+
+	# ---- re-pin the CDN repos to the new base's Alpine version ----
+	# /etc/apk/repositories is user-owned config, so only the dl-cdn version
+	# component is rewritten (from the alpine.base marker the image ships);
+	# user-added repo lines are untouched. Without this a box upgraded across
+	# an Alpine release would keep pulling packages for the OLD version.
+	if [ -f "$BOOTMNT/alpine.base" ]; then
+		av=$(cat "$BOOTMNT/alpine.base" 2>/dev/null)
+		[ -n "$av" ] && sed -i -E "s#(dl-cdn\.alpinelinux\.org/alpine/)v[0-9]+\.[0-9]+/#\1v$av/#" /etc/apk/repositories 2>/dev/null || true
 	fi
 
 	# ---- regenerate the (single-slot) bootloader config + persist config ----

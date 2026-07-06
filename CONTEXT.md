@@ -89,6 +89,17 @@ several CI steps exist.
 - **Data services (docker/samba/nfs) are NOT in any runlevel.** The `mountnas`
   service starts them only once `/mnt/nasdata` is mounted. Do not `rc-update add`
   them — `nas status` flags it.
+- **apk repos are enabled and PINNED to the image's Alpine version; the cache
+  lives at `/cfg/cache`.** Never switch the CDN lines to `latest-stable` (the
+  symlink moves on a new Alpine release → version skew against the installed
+  base). The pinned version travels as the `alpine.base` marker on BOOT and
+  `nas upgrade` re-pins the dl-cdn lines from it (repositories is user-owned
+  config, so only the version component is rewritten). User-added packages
+  persist because (a) the cache sits on MNASCFG next to the apkovl and (b) the
+  `mountnas` service re-syncs the installed set to `/etc/apk/world` once `/cfg`
+  is mounted — the diskless init may have skipped a package that is only in the
+  cache/CDN (it installs world with `--force-broken-world` semantics, so a
+  missing extra is boot noise, not a boot failure).
 - **`mountnas` service = `nas` CLI separation:** the service is `mountnas` so
   `rc-service mountnas …` never collides with the `nas` command.
 

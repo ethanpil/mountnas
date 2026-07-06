@@ -40,6 +40,19 @@ start() {
 		fi
 	fi
 
+	# apk cache lives on the config partition (/cfg/cache, next to the apkovl;
+	# /etc/apk/cache symlinks there). Ensure it exists, then sync the installed
+	# set to /etc/apk/world: a user-added package is not in the on-media repo, so
+	# the diskless init may have skipped it — it installs now from the cache (or
+	# the network repos when up). This is what makes 'apk add X && nas commit'
+	# stick across reboots. A no-op solver run when nothing is missing.
+	if mountpoint -q /cfg; then
+		mkdir -p /cfg/cache 2>>"$LOG" || true
+		# shellcheck disable=SC2046  # world entries are single tokens by format
+		apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
+			|| log "world sync (apk add) reported errors — a package may be missing until network/cache provides it"
+	fi
+
 	# Protect declared LOCAL data mounts that failed to mount, with a read-only
 	# tmpfs placeholder (browsable but unwritable). Skip /mnt/nasdata (handled
 	# specially below). Skip network filesystems entirely: we must never try to

@@ -84,6 +84,16 @@ UUID=<disk1-uuid>   /mnt/disk1    ext4  rw,noatime,nofail  0 2
 
 Don't forget the one-time prep after `/mnt/disk1` is mounted:` mkdir -p /mnt/disk1/nasdata` (the `/mnt/nasdata` mountpoint itself is created for you).
 
+## Installing extra packages
+
+`apk add <pkg>` works out of the box: the image ships with the Alpine **main** and
+**community** repositories enabled (pinned to this release's Alpine version, so a
+future Alpine release can't silently mix in newer packages) alongside the on-USB
+package snapshot. After installing, run `nas commit` — the downloaded packages are
+cached on the config partition and reinstall automatically at every boot, even with
+no network. `nas upgrade` preserves your added packages and re-pins the repository
+version to match the new release.
+
 ## Parity
 
 [SnapRAID](https://www.snapraid.it/) is baked into the image and simply needs to be configured.

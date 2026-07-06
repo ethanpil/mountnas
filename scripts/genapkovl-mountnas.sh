@@ -19,12 +19,35 @@ sh "$(dirname "$0")/mkworld.sh" | mk root:root 0644 "$tmp/etc/apk/world"
 
 echo "$HOSTNAME" | mk root:root 0644 "$tmp/etc/hostname"
 
-# ---- apk repositories: local on-media repo (bound by the mountnas service) ----
-mk root:root 0644 "$tmp/etc/apk/repositories" <<'EOF'
+# ---- apk repositories: local on-media repo + pinned CDN repos ----
+# The CDN repos are pinned to this build's CONCRETE Alpine version (e.g. v3.24),
+# NOT latest-stable: that symlink moves on a new Alpine release and would
+# silently mix next-release packages into this base. 'nas upgrade' re-pins the
+# version from the new image's alpine.base marker. The local media repo stays
+# first so the curated set resolves offline. With no detectable version
+# (non-Alpine build host), ship the CDN lines commented out as before.
+ALPINE_VER="${ALPINE_VER:-$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || true)}"
+if [ -n "$ALPINE_VER" ]; then
+	mk root:root 0644 "$tmp/etc/apk/repositories" <<EOF
+/run/mountnas/apks
+https://dl-cdn.alpinelinux.org/alpine/v$ALPINE_VER/main
+https://dl-cdn.alpinelinux.org/alpine/v$ALPINE_VER/community
+EOF
+else
+	mk root:root 0644 "$tmp/etc/apk/repositories" <<'EOF'
 /run/mountnas/apks
 #https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
 #https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
 EOF
+fi
+
+# ---- apk cache on the config partition: user-added packages persist ----
+# /cfg/cache sits next to the apkovl on MNASCFG (the standard Alpine diskless
+# cache spot), so every .apk a user installs is kept across reboots. The
+# mountnas service creates the directory once /cfg is mounted and re-syncs the
+# installed set to /etc/apk/world from this cache at each boot.
+mkdir -p "$tmp/etc/apk"
+ln -sfn /cfg/cache "$tmp/etc/apk/cache"
 
 # ---- fstab: config partition + commented data-disk guidance ----
 mk root:root 0644 "$tmp/etc/fstab" <<'EOF'
