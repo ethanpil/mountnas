@@ -13,30 +13,12 @@ jobs:
       contents: write   # publish the build outputs as a GitHub Release
     steps:
       - uses: actions/checkout@v4
-      # Lint before anything expensive. -s sh: every script must parse as POSIX sh
-      # (busybox ash on the device; CONTEXT.md §6 documents recurring ash-strictness
-      # bugs). -S warning: SC2015-style style notes are accepted idiom here.
-      # Excludes: SC2034 (openrc-run vars like description= look unused),
-      # SC3043 ('local' — supported by busybox ash and mkimage's ash),
-      # SC3045 ('read -s' — supported by busybox ash).
+      # Lint before anything expensive. The file list is discovered inside
+      # ci-lint.sh (shebang grep + globs) so a newly added script can never be
+      # silently unlinted; rationale for the flags/excludes lives there too.
       - name: Lint shell scripts (shellcheck)
         shell: bash
-        run: |
-          shellcheck -s sh -S warning -e SC2034,SC3043,SC3045 \
-            mountnas-tools/files/nas \
-            mountnas-tools/files/gen-issue \
-            mountnas-tools/files/write-bootcfg \
-            mountnas-tools/files/mountnas \
-            mountnas-tools/files/mountnas-mkdirs \
-            mountnas-tools/files/mountnas-net \
-            mountnas-tools/files/mountnas-sshkey \
-            mountnas-tools/files/mountnas-issue \
-            mountnas-tools/files/issue-ifupdown \
-            mountnas-tools/files/profile-nas-welcome.sh \
-            mountnas-tools/files/profile-nas-aliases.sh \
-            mountnas-tools/files/profile-nas-prompt.sh \
-            mountnas-tools/files/profile-nas-resize.sh \
-            scripts/genapkovl-mountnas.sh scripts/mkimg.nas.sh
+        run: sh scripts/ci-lint.sh
       - uses: jirutka/setup-alpine@v1
         with:
           branch: ${{ inputs.alpine_branch }}
