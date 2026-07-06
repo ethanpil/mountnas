@@ -3,7 +3,7 @@ pkgname=mountnas-tools
 pkgver=1.0.0
 pkgrel=0
 pkgdesc="MountNAS CLI, storage supervisor, and helpers"
-url="https://github.com/youruser/mountnas"
+url="https://github.com/ethanpil/mountnas"
 # Logically noarch (pure scripts), but built as x86_64 so the file lands in the
 # local repo's x86_64/ dir where apk/mkimage look — a local abuild repo has no
 # noarch/ subdir, and apk resolves a noarch package's file from <repo>/noarch/.

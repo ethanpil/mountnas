@@ -47,6 +47,13 @@ scp root@mountnas:/mnt/nasdata/backups/mountnas-backup-*.img.gz .
 
 ### 2. Get the new release image onto the box
 
+Not sure whether a newer release exists? Ask from the box itself — it queries the
+GitHub releases API and prints the exact upgrade command when one is published:
+
+```
+nas upgrade --check
+```
+
 Download `mountnas-<tag>.img.gz` from the release and place it where the box can read it —
 e.g. copy it to the data disk:
 

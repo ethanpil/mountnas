@@ -6,6 +6,7 @@ CFG=/cfg
 STATE=/run/mountnas
 BOOTMNT=/media/mnasboot
 WBCFG=/usr/libexec/mountnas/write-bootcfg
+REPO=ethanpil/mountnas   # canonical GitHub repo ('nas upgrade --check' + docs)
 VERSION=$(cat /usr/share/mountnas/version 2>/dev/null || echo "?")
 ok()  { printf '  [ OK ] %s\n' "$*"; }
 warn(){ printf '  [WARN] %s\n' "$*"; }
@@ -48,6 +49,7 @@ MountNAS $VERSION — control CLI
   nas shutdown   Power off (warns on unsaved changes)
   nas reboot     Reboot   (warns on unsaved changes)
   nas upgrade    Upgrade the OS from a release file or URL — see UPGRADE.md
+  nas upgrade --check   Ask GitHub whether a newer release is published
   nas about      Logo, version, and project info
   nas help / version
   (nas validate = nas status ; nas checkup = nas status --deep)
@@ -481,6 +483,27 @@ _swap_dir() {
 	rm -rf "$2.old"
 }
 
+# nas upgrade --check — one GitHub API call: is a different release published?
+# No auto-update, no scheduling; prints the exact command to run when one is.
+_upgrade_check() {
+	echo "Checking the latest release of $REPO ..."
+	api="https://api.github.com/repos/$REPO/releases/latest"
+	json=$( { command -v curl >/dev/null 2>&1 && curl -fsL "$api" \
+		|| wget -qO- "$api"; } 2>/dev/null) \
+		|| { bad "cannot reach the GitHub API (no network?)"; return 1; }
+	tag=$(printf '%s\n' "$json" | jq -r '.tag_name // empty' 2>/dev/null)
+	[ -n "$tag" ] || { bad "no release found for $REPO"; return 1; }
+	latest="${tag#v}"
+	if [ "$latest" = "$VERSION" ]; then
+		ok "up to date: MountNAS $VERSION is the latest release"; return 0
+	fi
+	warn "a different release is published: $latest (running: $VERSION)"
+	rel_url=$(printf '%s\n' "$json" | jq -r '.assets[]?.browser_download_url // empty' 2>/dev/null | grep -m1 '\.img\.gz$')
+	echo "  Upgrade with (see UPGRADE.md — run 'nas backup' FIRST):"
+	if [ -n "$rel_url" ]; then echo "    nas upgrade $rel_url"
+	else echo "    nas upgrade <mountnas-$latest.img.gz>   (release has no .img.gz asset?)"; fi
+}
+
 # nas upgrade <mountnas-*.img.gz>
 # Overwrites the OS on the boot USB in place, then you reboot. The live modloop is
 # busy (loop-mounted), so we free it first with copy-modloop (official Alpine tool:
@@ -488,7 +511,8 @@ _swap_dir() {
 # rewritten safely. Config (/cfg) and data disks are never touched.
 cmd_upgrade() {
 	img="${1:-}"; url=""; dlf=""
-	[ -n "$img" ] || { echo "usage: nas upgrade <mountnas-*.img.gz | https://.../mountnas-*.img.gz>   (see UPGRADE.md)"; return 1; }
+	[ "$img" = "--check" ] && { _upgrade_check; return $?; }
+	[ -n "$img" ] || { echo "usage: nas upgrade <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1; }
 	case "$img" in
 		http://*|https://*) url="$img" ;;
 		*) [ -f "$img" ] || { bad "not found: $img"; return 1; } ;;
