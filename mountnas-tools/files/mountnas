@@ -79,6 +79,17 @@ start() {
 		ewarn "Docker/Samba/NFS stay off until $DATA is mounted."
 		return 0
 	fi
+	# A network filesystem as the system disk is unsupported: a dead remote
+	# would stall this mount — and with it the whole default runlevel, which
+	# busybox init finishes BEFORE it starts the inittab gettys, so a hung mount
+	# here means no console login at all. Same guard the placeholder loop above
+	# applies to the other /mnt entries.
+	ft=$(_fstype "$DATA")
+	if _is_network_fs "$ft"; then
+		echo netfs > "$STATE/data"; log "$DATA declared as network fs ($ft) — unsupported, services held"
+		eerror "$DATA is a network filesystem ($ft) — unsupported for the system disk; use a local disk. Services held."
+		return 0
+	fi
 	# retry /mnt/nasdata once (local disk; safe, no hang). No placeholder exists
 	# here — the loop above skipped it and stop() clears placeholders on restart.
 	if ! mountpoint -q "$DATA"; then

@@ -108,6 +108,7 @@ cmd_status() {
 		fresh)        warn "no data disk configured — add to /etc/fstab, then nas commit" ;;
 		disconnected) bad "data disk NOT FOUND — check power/cabling" ;;
 		mountfail)    bad "data disk failed to mount — check filesystem" ;;
+		netfs)        bad "data disk is a network filesystem — unsupported for $DATA, use a local disk" ;;
 		*)            warn "data disk state unknown" ;;
 	esac
 	for s in docker samba nfs sshd avahi-daemon; do
