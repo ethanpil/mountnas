@@ -377,9 +377,9 @@ blobs live — verified on a live box that apk-added firmware installs EARLY at
 boot, before device probing), then stops the modloop service with a
 direct/lazy-umount fallback for the transient-busy case.
 Because the upgrade runs the **source** release's code, alpha-1/2/3 boxes still
-hit the old path and must reflash to alpha-4; the CI upgrade test stays
-**non-blocking** until the first green run (alpha-4 → alpha-5 is the first pair
-that can pass), then re-tighten it to blocking.
+hit the old path and must reflash to alpha-4. The one-time bootstrap completed:
+the alpha-4 → alpha-5 run was the **first green** upgrade test
+(`UPGRADE-TEST PASS`, run 28829367172), and the test is **blocking** since.
 
 **alpha-5 notes (this pass):** the upgrade write phase now stages ALL payloads
 first and only then renames back-to-back (power cut mid-copy can no longer mix
@@ -389,8 +389,8 @@ the build log's BOOT size report); linux-lts is no longer cached in the media
 repo (nothing could install it); early microcode ships via boot_addons and the
 write-bootcfg initrd lines; and the blocking supervisor smoke test (§6) now
 covers the wizard + storage/service gating that used to be manual-only. The
-upgrade smoke test is expected GREEN for the first time on the alpha-4 →
-alpha-5 pair — flip it to blocking right after that run is observed.
+upgrade smoke test went GREEN for the first time on the alpha-4 → alpha-5 pair
+(run 28829367172) and was flipped to blocking immediately after.
 
 **Known caveats:**
 - **Signing key:** set the `ABUILD_PRIVKEY` repo secret for a fixed key (stable trust

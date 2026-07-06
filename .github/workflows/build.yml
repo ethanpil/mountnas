@@ -342,20 +342,19 @@ jobs:
       # (~6 GB) + payload disk (~8 GB real). Skipped with a notice when the repo
       # has no previous release carrying an .img.gz (first release, forks).
       #
-      # NON-BLOCKING (continue-on-error): this test runs the PREVIOUS release's
-      # upgrade code, so it cannot pass until we upgrade FROM a release whose
-      # in-place upgrade is already known-good — a one-time bootstrap. It is
-      # currently RED because alpha-1's copy-modloop fails ("/.modloop busy",
-      # CONTEXT.md §8 "Known bug"). Kept visible (not deleted) so the result is
-      # on every build; re-tighten to blocking once a green upgrade is observed.
-      - name: Upgrade smoke test (non-blocking; previous release -> this build)
-        continue-on-error: true
+      # BLOCKING since the alpha-4 -> alpha-5 run went green (the one-time
+      # bootstrap CONTEXT.md §8 describes: the test runs the PREVIOUS release's
+      # upgrade code, so it could not pass until upgrading FROM a release whose
+      # in-place upgrade was already fixed — alpha-4 was the first). A failure
+      # here now means a real upgrade-path regression and must block publish.
+      # It still exits 0 with a notice when the repo has no previous release
+      # carrying an .img.gz (first release, forks).
+      - name: Upgrade smoke test (previous release -> this build)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          echo "::notice::Upgrade smoke test is NON-BLOCKING: it exercises the PREVIOUS release's upgrade code and is expected to stay red until we can upgrade from a release with a verified in-place upgrade (see CONTEXT.md section 8)."
           # gh (not raw curl): browser_download_url 404s on private repos; the
           # gh CLI authenticates asset downloads with GH_TOKEN either way.
           old_asset=$(gh release view --repo "$GITHUB_REPOSITORY" --json assets \
