@@ -157,9 +157,17 @@ jobs:
           apk add sgdisk parted   # sgdisk (own package, not in gptfdisk) + partprobe
           ISO=$(ls /home/build/iso/*.iso); OVL=$(ls /home/build/iso/*.apkovl.tar.gz); WB=/home/build/iso/world.base
           IMG="/home/build/iso/mountnas-$TAG.img"
-          truncate -s 6G "$IMG"; LOOP=$(losetup -fP --show "$IMG")
+          # 3.5 GiB total so the image fits real-world "4 GB" sticks (~3.7 GiB
+          # usable). BOOT 2.5 GiB = ~2x the current ~1.2 GiB payload; the rest
+          # (~1 GiB) is MNASCFG, which holds the tiny overlay PLUS /cfg/cache
+          # (user-installed apks). Empty space gzips to ~nothing, but the RAW
+          # size sets the minimum stick, 'nas backup' read time, and the
+          # 'nas upgrade' temp-space precheck (need_kb in nas) — keep in sync.
+          # Partition sizes are frozen per deployed stick (upgrades replace
+          # files, never partitions), so grow-only decisions happen here.
+          truncate -s 3584M "$IMG"; LOOP=$(losetup -fP --show "$IMG")
           sgdisk --zap-all "$LOOP"
-          sgdisk -n1:0:+4GiB -t1:ef00 -c1:BOOT "$LOOP"
+          sgdisk -n1:0:+2560M -t1:ef00 -c1:BOOT "$LOOP"
           sgdisk -n2:0:0 -t2:8300 -c2:MNASCFG "$LOOP"
           # Legacy BIOS bootable attribute (GPT bit 2) on BOOT. SeaBIOS (Proxmox's
           # default firmware) chainloads via gptmbr.bin, which only boots a GPT
@@ -207,6 +215,13 @@ jobs:
           #    the FAT root next to ldlinux.sys or the boot aborts ("Failed to load
           #    ldlinux.c32"). syslinux --install (below, unmounted) writes ldlinux.sys.
           cp /usr/share/syslinux/ldlinux.c32 "$M"/ldlinux.c32
+          # Size report: BOOT usage + the biggest payloads, so size regressions
+          # are visible in every build log (the partition sizes above are frozen
+          # per deployed stick — headroom must be watched, not discovered).
+          echo "== BOOT size report =="
+          df -h "$M"
+          du -sh "$M"/apks "$M"/boot 2>/dev/null || true
+          find "$M" -type f -exec du -k {} + | sort -rn | head -15 | awk '{printf "  %6.1f MB  %s\n", $1/1024, $2}'
           #  - UEFI (OVMF): grub at the ESP removable fallback path
           #    (/EFI/BOOT/BOOTX64.EFI) so the firmware boots with no NVRAM entry.
           #    grub-install only lays down the core image + modules; it loads the

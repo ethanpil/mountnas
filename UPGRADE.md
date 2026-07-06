@@ -158,8 +158,9 @@ Your data disks were never part of the upgrade or the backup, so they are unaffe
   until you reboot — the firmware tree is deliberately not copied, so in-place upgrades
   work fine on **4 GB boxes**. `nas upgrade` still measures the exact space needed first
   and aborts cleanly, before anything on the USB is touched, if even that can't fit.
-- **Temp space.** Unpacking a `.img.gz` needs room for the ~6 GB decompressed image on the
-  data disk (or wherever `TMPDIR` points). `nas upgrade` checks this before doing anything.
+- **Temp space.** Unpacking a `.img.gz` needs room for the decompressed image (~3.5 GB for
+  alpha-5+ images, ~6 GB for older ones) on the data disk (or wherever `TMPDIR` points).
+  `nas upgrade` checks this before doing anything.
 - **Config safety.** Because `MNASCFG` is a separate partition, upgrading never risks your
   settings. The full-image backup captures OS *and* config together, so restoring it rolls
   both back consistently.

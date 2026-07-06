@@ -754,8 +754,8 @@ EOF
 	tmp="${TMPDIR:-}"
 	[ -n "$tmp" ] || { mountpoint -q "$DATA" && tmp="$DATA" || { bad "no temp space: data disk not mounted. Mount it or set TMPDIR=<disk dir>."; return 1; }; }
 	case "$img" in
-		*.gz) need_kb=7340032 ;;   # ~7 GiB: image is 6 GiB; gzip -l is unreliable >4 GiB
-		*)    need_kb=$(( ( $(stat -c %s "$img" 2>/dev/null || echo 6442450944) / 1024 ) + 262144 )) ;;
+		*.gz) need_kb=3932160 ;;   # ~3.75 GiB: image is 3.5 GiB raw (gzip -l is unreliable >4 GiB)
+		*)    need_kb=$(( ( $(stat -c %s "$img" 2>/dev/null || echo 3758096384) / 1024 ) + 262144 )) ;;
 	esac
 	[ -n "$url" ] && need_kb=$((need_kb + 2097152))   # + ~2 GiB for the downloaded .img.gz
 	avail_kb=$(df -Pk "$tmp" 2>/dev/null | awk 'NR==2{print $4}')

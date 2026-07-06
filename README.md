@@ -9,7 +9,7 @@ MountNAS is intended for power users, comfortable around a Linux system and comm
 Get your system running by following these steps:
 
 * Download a MountNAS release from GitHub:`mountnas-<tag>.img.gz`
-* Write the image to a flash drive (min. 8 GB) using `gunzip -c mountnas-<tag>.img.gz | sudo dd of=/dev/sdX bs=4M status=progress` or a graphical utility like [Etcher](https://etcher.balena.io/).
+* Write the image to a flash drive (min. 4 GB) using `gunzip -c mountnas-<tag>.img.gz | sudo dd of=/dev/sdX bs=4M status=progress` or a graphical utility like [Etcher](https://etcher.balena.io/).
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
 * Complete the automatic `nas setup` wizard (it starts by itself at your first login) to set the hostname, root password, timezone, and network.
 * Identify your attached storage volumes and their respective identifiers by running `nas disks`.
