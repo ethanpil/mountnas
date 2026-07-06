@@ -4,15 +4,27 @@
 # of this logic — used by both the mountnas-net first-boot service and
 # 'nas setup'; extend the exclusion list here, nowhere else.
 # Exits 0 with the name on stdout, 1 if no candidate exists.
-pick=""
+cands=""
 for path in /sys/class/net/*; do
 	n=$(basename "$path")
 	case "$n" in lo|veth*|docker*|br-*|virbr*|tap*|tun*|zt*|tailscale*|wg*|bond*|dummy*) continue ;; esac
 	[ -e "$path/wireless" ] && continue
-	# links must be up to report carrier; harmless for the caller either way
+	# links must be admin-up to report carrier; harmless for the caller either way
 	ip link set "$n" up 2>/dev/null
-	[ -z "$pick" ] && pick="$n"
-	[ "$(cat "$path/carrier" 2>/dev/null)" = 1 ] && { pick="$n"; break; }
+	cands="$cands $n"
 done
-[ -n "$pick" ] || exit 1
-printf '%s\n' "$pick"
+cands="${cands# }"
+[ -n "$cands" ] || exit 1
+# PHYs need a beat after 'link set up' to autonegotiate and assert carrier
+# (typically 1-3 s), so reading carrier immediately made a multi-NIC box pick
+# whichever interface /sys lists first, cabled or not. Poll briefly instead: a
+# NIC whose link is already up wins on the first pass, and only a box with no
+# cable anywhere pays the full ~4 s (once, at first boot).
+i=0
+while [ "$i" -lt 4 ]; do
+	for n in $cands; do
+		[ "$(cat "/sys/class/net/$n/carrier" 2>/dev/null)" = 1 ] && { printf '%s\n' "$n"; exit 0; }
+	done
+	i=$((i+1)); [ "$i" -lt 4 ] && sleep 1
+done
+printf '%s\n' "${cands%% *}"
