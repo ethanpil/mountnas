@@ -149,8 +149,12 @@ jobs:
               # (it runs as the non-root build user); otherwise the overlay records
               # the build uid and /etc/doas.conf gets rejected by doas at runtime.
               fakeroot sh "$HOME"/repo/scripts/genapkovl-mountnas.sh mountnas
-              { echo alpine-base; sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$PACKAGES_LIST"; echo linux-firmware mkinitfs; } \
-                | tr " " "\n" | sort -u > world.base )
+              # world.base MUST equal the seed overlay world (both come from
+              # mkworld.sh): nas upgrade unions world.base into the live world,
+              # so a stray package here breaks apk on every upgraded box.
+              sh "$HOME"/repo/scripts/mkworld.sh > world.base
+              tar -xzOf mountnas.apkovl.tar.gz etc/apk/world | diff - world.base \
+                || { echo "ERROR: seed world != world.base (mkworld.sh drift)"; exit 1; } )
           '
           echo "== assemble single-slot .img (BOOT + MNASCFG) =="
           apk add sgdisk parted   # sgdisk (own package, not in gptfdisk) + partprobe

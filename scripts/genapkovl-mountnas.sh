@@ -11,13 +11,11 @@ rc_add() { mkdir -p "$tmp/etc/runlevels/$2"; ln -sf "/etc/init.d/$1" "$tmp/etc/r
 tmp="$(mktemp -d)"; trap cleanup EXIT
 
 # ---- world (incl. our local apk) ----
-# NOTE: do NOT add bare 'linux-firmware' here. It is not in packages.list (which
-# carries the curated linux-firmware-<vendor> subpackages) and is therefore NOT
-# cached on the boot media, so world[linux-firmware] fails to resolve at boot and
-# on every later 'apk' run (e.g. 'ERROR: linux-firmware (no such package)'). The
-# vendor subpackages already provide the firmware; mkinitfs is in packages.list.
-{ echo alpine-base; sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PACKAGES_LIST"; echo mkinitfs; } \
-	| tr ' ' '\n' | sort -u | mk root:root 0644 "$tmp/etc/apk/world"
+# The list comes from scripts/mkworld.sh — the single source shared with the
+# world.base step in build.yml. Do not inline a package list here: world and
+# world.base must stay identical or 'nas upgrade' injects unresolvable packages
+# (see the NOTE in mkworld.sh about bare 'linux-firmware').
+sh "$(dirname "$0")/mkworld.sh" | mk root:root 0644 "$tmp/etc/apk/world"
 
 echo "$HOSTNAME" | mk root:root 0644 "$tmp/etc/hostname"
 
