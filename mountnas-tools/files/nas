@@ -340,16 +340,6 @@ _power() { act="$1"; word="$2"
 cmd_shutdown() { _power "/sbin/poweroff" "shutdown"; }
 cmd_reboot()   { _power "/sbin/reboot"   "reboot"; }
 
-# First real wired NIC (skips virtual + wireless), mirroring mountnas-net's list.
-_pick_nic() {
-	for path in /sys/class/net/*; do
-		n=$(basename "$path")
-		case "$n" in lo|veth*|docker*|br-*|virbr*|tap*|tun*|zt*|tailscale*|wg*|bond*|dummy*) continue ;; esac
-		[ -e "$path/wireless" ] && continue
-		printf '%s\n' "$n"; return 0
-	done
-}
-
 cmd_setup() {
 	echo "=== MountNAS first-run setup ==="
 
@@ -382,7 +372,9 @@ cmd_setup() {
 	printf '[4/5] Network: [D]HCP (default) / [S]tatic: '; read -r net
 	case "$net" in
 		S|s)
-			nic=$(_pick_nic); [ -n "$nic" ] || nic=eth0
+			# shared wired-NIC picker (same selection mountnas-net uses at boot)
+			nic=$(/usr/libexec/mountnas/pick-nic 2>/dev/null) || nic=""
+			[ -n "$nic" ] || nic=eth0
 			printf '  Interface [%s]: ' "$nic"; read -r i; [ -n "$i" ] && nic="$i"
 			printf '  IP address with prefix (e.g. 192.168.1.50/24): '; read -r addr
 			printf '  Gateway (e.g. 192.168.1.1): '; read -r gw

@@ -1,0 +1,18 @@
+#!/bin/sh
+# pick-nic — print the first real wired NIC, preferring one with link (carrier).
+# Skips loopback, virtual, overlay-VPN, and wireless interfaces. THE single copy
+# of this logic — used by both the mountnas-net first-boot service and
+# 'nas setup'; extend the exclusion list here, nowhere else.
+# Exits 0 with the name on stdout, 1 if no candidate exists.
+pick=""
+for path in /sys/class/net/*; do
+	n=$(basename "$path")
+	case "$n" in lo|veth*|docker*|br-*|virbr*|tap*|tun*|zt*|tailscale*|wg*|bond*|dummy*) continue ;; esac
+	[ -e "$path/wireless" ] && continue
+	# links must be up to report carrier; harmless for the caller either way
+	ip link set "$n" up 2>/dev/null
+	[ -z "$pick" ] && pick="$n"
+	[ "$(cat "$path/carrier" 2>/dev/null)" = 1 ] && { pick="$n"; break; }
+done
+[ -n "$pick" ] || exit 1
+printf '%s\n' "$pick"
