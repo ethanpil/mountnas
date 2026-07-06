@@ -492,9 +492,13 @@ cmd_setup() {
 	printf '[1/5] Hostname [%s]: ' "$cur"; read -r hn
 	[ -n "$hn" ] || hn="$cur"
 	case "$hn" in
-		*[!A-Za-z0-9-]*) warn "invalid hostname '$hn' (letters, digits, hyphen only) — kept $cur"; hn="$cur" ;;
+		*[!A-Za-z0-9-]*|-*|*-) warn "invalid hostname '$hn' (letters/digits/hyphens, no leading or trailing hyphen) — kept $cur"; hn="$cur" ;;
 	esac
 	printf '%s\n' "$hn" > /etc/hostname; hostname "$hn" 2>/dev/null; ok "hostname set to $hn"
+	# make mDNS (<name>.local) and the console banner track the new name now,
+	# not only after the next reboot
+	rc-service --ifexists avahi-daemon restart >/dev/null 2>&1 || true
+	/usr/libexec/mountnas/gen-issue 2>/dev/null || true
 
 	echo "[2/5] Root password"
 	pw_ok=0; passwd && pw_ok=1
@@ -884,8 +888,12 @@ case "${1:-help}" in
 	help|--help|-h) cmd_help ;;
 	*) echo "unknown command: $1"; echo; cmd_help; exit 1 ;;
 esac
+rc=$?
 
 # Keep the prompt's [unsaved:N] indicator current after any command that may have
 # changed state (e.g. commit zeroes it). Commands that exec (shutdown/reboot) never
 # reach here, which is fine — the box is on its way down.
+# Exit with the command's status, not _refresh_unsaved's (always 0): scripted
+# callers — including the CI expect tests — must see failures.
 _refresh_unsaved
+exit "$rc"
