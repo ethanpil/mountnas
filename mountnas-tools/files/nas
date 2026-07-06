@@ -193,19 +193,25 @@ cmd_status() {
 cmd_disks() {
 	bp=$(findfs LABEL=BOOT 2>/dev/null)
 	usb=$(lsblk -no pkname "$bp" 2>/dev/null | head -n1)
+	TAB=$(printf '\t')
 
 	echo "Detected disks (* = MountNAS boot USB — do NOT add to fstab):"
 	printf "  %-8s %-7s %-8s %-20s %s\n" NAME SIZE FSTYPE MOUNTPOINT UUID
-	# Pairs mode (-P): KEY="value" per line, so empty fields (e.g. an unlabelled
-	# data partition) don't shift columns the way raw mode + read collapses them.
-	lsblk -Pno NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT 2>/dev/null | while read -r line; do
-		eval "$line"
-		case "$TYPE" in disk|part) ;; *) continue ;; esac
+	# JSON + jq (not 'eval' of lsblk pairs): a filesystem label is arbitrary user
+	# data — under eval a label like '$(...)' would run as root, and quotes or
+	# spaces would garble parsing. jq emits TSV with '-' placeholders for empty
+	# fields so the tab-separated read can't collapse columns either.
+	lsblk -Jo NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT 2>/dev/null \
+	| jq -r '.blockdevices[] | recurse(.children[]?)
+		| select(.type=="disk" or .type=="part")
+		| [.name, .type, .size, (.fstype // "-"), (.label // "-"),
+		   (.uuid // "-"), (.mountpoint // "(not mounted)")] | @tsv' \
+	| while IFS="$TAB" read -r NAME TYPE SIZE FSTYPE LABEL UUID MOUNTPOINT; do
 		tag=""
 		[ "$NAME" = "$usb" ] && tag=" *"
 		[ "$LABEL" = BOOT ]  && tag=" * (BOOT)"
 		[ "$LABEL" = MNASCFG ] && tag=" * (cfg)"
-		printf "  %-8s %-7s %-8s %-20s %s%s\n" "$NAME" "$SIZE" "${FSTYPE:--}" "${MOUNTPOINT:-(not mounted)}" "${UUID:--}" "$tag"
+		printf "  %-8s %-7s %-8s %-20s %s%s\n" "$NAME" "$SIZE" "$FSTYPE" "$MOUNTPOINT" "$UUID" "$tag"
 	done
 
 	echo
@@ -218,15 +224,18 @@ cmd_disks() {
 	# so a flag set inside it would not survive — check the captured output instead.
 	# Suggested mountpoints: /mnt/nasdata first (only if not already in fstab),
 	# then /mnt/disk1, /mnt/disk2, … — never the same mountpoint twice.
+	# jq carries the parent disk name so partitions of the boot USB are skipped
+	# reliably (the old NAME==usb test compared a partition to a disk name).
 	have_nd=$(awk '$1!~/^#/ && $2=="/mnt/nasdata"{f=1} END{print f+0}' /etc/fstab)
-	lines=$(lsblk -Pno NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null | { n=1; while read -r line; do
-		eval "$line"
-		[ "$TYPE" = part ] || continue
-		[ -n "$UUID" ] && [ -n "$FSTYPE" ] || continue
+	lines=$(lsblk -Jo NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null \
+	| jq -r '.blockdevices[] | . as $d | .children[]?
+		| select(.type=="part") | select(.uuid and .fstype)
+		| [$d.name, .name, .fstype, (.label // "-"), .uuid] | @tsv' \
+	| { n=1; while IFS="$TAB" read -r PK NAME FSTYPE LABEL UUID; do
 		case "$LABEL" in BOOT|MNASCFG) continue ;; esac
-		[ "$NAME" = "$usb" ] && continue
-		# already referenced in fstab (by UUID or by device)?
-		grep -q "$UUID" /etc/fstab 2>/dev/null && continue
+		[ "$PK" = "$usb" ] && continue
+		# already referenced in fstab (by UUID)?
+		grep -qF "$UUID" /etc/fstab 2>/dev/null && continue
 		if [ "$have_nd" = 0 ]; then mp=/mnt/nasdata; have_nd=1
 		else
 			while awk -v m="/mnt/disk$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
