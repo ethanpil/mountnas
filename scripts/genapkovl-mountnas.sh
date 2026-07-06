@@ -126,6 +126,20 @@ mk root:root 0644 "$tmp/etc/snapraid.conf" <<'EOF'
 # exclude /tmp/
 EOF
 
+# ---- smartd: monitor all disks WITHOUT waking spun-down drives ----
+# The stock smartmontools DEVICESCAN polls every 30 min with no power-state
+# check, which keeps NAS data disks spinning 24/7. '-n standby,q' skips the
+# poll while a disk is spun down ('q' silences the skip messages) — matching
+# the care 'nas status' takes to never wake disks.
+mk root:root 0644 "$tmp/etc/smartd.conf" <<'EOF'
+# MountNAS smartd defaults — you own this file (edit, then: nas commit).
+# -n standby,q : never wake a spun-down disk just to poll SMART.
+# For failure ALERTS, append a notifier, e.g.:
+#   DEVICESCAN -n standby,q -m root -M exec /usr/local/bin/smart-alert
+# (see 'man smartd.conf'), then: nas commit
+DEVICESCAN -n standby,q
+EOF
+
 # ---- sshd: reachable on a fresh, headless box (you own this file) ----
 # The default image PERMITS PASSWORDLESS ROOT LOGIN so a just-flashed box is
 # reachable over SSH before 'nas setup' sets a password. This is INSECURE on an
