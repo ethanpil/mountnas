@@ -87,10 +87,15 @@ It will:
    detaches the live modloop, so the OS files on the USB can be rewritten safely.
 5. Overwrite the boot files (`vmlinuz`, `initramfs`, `modloop`, the on-USB `apks` repo,
    `world.base`) in place, writing to temp names then renaming so an interruption can't
-   corrupt the running system.
+   corrupt the running system. The bootloader payload (grub's EFI core + modules,
+   syslinux's `ldlinux.c32`) is refreshed the same way, so the loader never drifts
+   behind the system it boots.
 6. Reconcile `/etc/apk/world` so packages this release **added** are installed and packages
    it **dropped** are removed — while keeping any packages **you** installed yourself.
-7. Regenerate the bootloader config and `nas commit` your configuration.
+7. Re-pin the Alpine package repositories in `/etc/apk/repositories` to the new release's
+   Alpine version (only the version part of the `dl-cdn` lines is touched — repositories
+   you added yourself are left alone).
+8. Regenerate the bootloader config and `nas commit` your configuration.
 
 Nothing you rely on is touched until step 5, and if `copy-modloop` or the unpack fails
 first, the box is left exactly as it was.
