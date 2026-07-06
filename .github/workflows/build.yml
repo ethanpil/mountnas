@@ -302,6 +302,34 @@ jobs:
           }
           run_boot bios
           run_boot uefi -bios /usr/share/ovmf/OVMF.fd
+      # Supervisor smoke test (BLOCKING — runs only THIS build's code): boot the
+      # fresh image with a blank second disk and drive the serial console
+      # (scripts/ci-supervisor-test.exp) through the whole first-install story:
+      # the first-boot wizard, mkfs + fstab + 'rc-service mountnas restart',
+      # docker + samba actually starting, a [FAIL]-free 'nas status',
+      # 'nas commit', and a reboot that brings everything back on its own.
+      # The boot smoke test above only proves a login prompt; this is the first
+      # gate that exercises the supervisor and the wizard before publishing.
+      - name: Supervisor smoke test (fresh image + data disk)
+        shell: bash
+        run: |
+          set -eu
+          sudo apt-get install -qy expect
+          WORK=/mnt/supervisor-test; sudo mkdir -p "$WORK"; sudo chmod 777 "$WORK"
+          # sparse-decompress like the upgrade test: /mnt is small and shared
+          gzip -dc "out/mountnas-${{ inputs.release_tag }}.img.gz" | dd of="$WORK/nas.img" conv=sparse bs=1M status=none
+          truncate -s 4G "$WORK/data.img"
+          KVM=""
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; KVM="-enable-kvm -cpu host"; fi
+          {
+            echo '#!/bin/sh'
+            echo "exec qemu-system-x86_64 $KVM -m 4096 -nographic \\"
+            echo "  -drive file=$WORK/nas.img,format=raw,if=virtio,discard=unmap,detect-zeroes=unmap \\"
+            echo "  -drive file=$WORK/data.img,format=raw,if=virtio,discard=unmap,detect-zeroes=unmap"
+          } > "$WORK/run-qemu.sh"
+          expect scripts/ci-supervisor-test.exp "$WORK/run-qemu.sh"
+          # return the /mnt space before the upgrade test stages its disks there
+          sudo rm -rf "$WORK"
       # Upgrade-path smoke test: boot the PREVIOUS published release in QEMU and
       # drive its serial console (expect) through a real 'nas upgrade' to the
       # image THIS run just built, then reboot and require (a) a login shell,

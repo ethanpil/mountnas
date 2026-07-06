@@ -1,0 +1,166 @@
+#!/usr/bin/expect -f
+# ci-supervisor-test.exp <qemu-launch-script>
+#
+# End-to-end test of the parts a fresh install actually exercises, none of
+# which the boot smoke test reaches past the login prompt:
+#   1. the first-boot wizard (hostname/password/timezone/network prompts, the
+#      PermitEmptyPasswords flip, the closing commit),
+#   2. the storage path: mkfs a blank second disk, add it to fstab,
+#      'rc-service mountnas restart', and require the supervisor to mount it
+#      and actually start docker + samba,
+#   3. 'nas status' free of [FAIL] lines,
+#   4. persistence: 'nas commit', reboot, log in with the new password, and
+#      require the data disk + services to come back on their own.
+# Blocking (unlike the upgrade smoke test): it runs only THIS build's code.
+#
+# Conventions copied from ci-upgrade-test.exp: markers are split in the sent
+# command (X"-OK") and matched unsplit (X-OK) so the terminal echo of the
+# command itself can never satisfy the expect; the root prompt ends in ":~# ".
+
+set qemu [lindex $argv 0]
+set pw   "alpha5test"
+set timeout 480
+
+proc die {msg} { puts "\nSUPERVISOR-TEST FAIL: $msg"; exit 1 }
+
+spawn sh $qemu
+
+# --- first boot: login as root (no password), let the wizard auto-start ---
+expect {
+    -re "login:" {}
+    timeout { die "no login prompt on first boot" }
+}
+send "root\r"
+expect {
+    -re {Hostname \[} {}
+    timeout { die "first-boot wizard did not auto-start (Hostname prompt)" }
+}
+send "\r"
+expect {
+    -re {New [Pp]assword} {}
+    timeout { die "wizard never asked for a root password" }
+}
+send "$pw\r"
+expect {
+    -re {[Rr]etype} {}
+    timeout { die "passwd never asked to retype" }
+}
+send "$pw\r"
+expect {
+    -re {Timezone} {}
+    timeout { die "wizard never reached the timezone step" }
+}
+send "\r"
+expect {
+    -re {HCP} {}
+    timeout { die "wizard never reached the network step" }
+}
+send "\r"
+expect {
+    "Setup complete" {}
+    timeout { die "wizard did not complete (no closing commit?)" }
+}
+expect {
+    -re {:~# } {}
+    timeout { die "no shell prompt after the wizard" }
+}
+
+# --- storage: format the blank second disk, register it, restart mountnas ---
+send "mkfs.ext4 -Fq -L nasdata /dev/vdb && echo MKFS\"-OK\"\r"
+expect {
+    "MKFS-OK" {}
+    timeout { die "mkfs of the data disk failed" }
+}
+expect -re {:~# }
+send {echo "LABEL=nasdata /mnt/nasdata ext4 rw,noatime,nofail 0 2" >> /etc/fstab && echo FSTAB"-OK"}
+send "\r"
+expect {
+    "FSTAB-OK" {}
+    timeout { die "could not append the fstab entry" }
+}
+expect -re {:~# }
+send "rc-service mountnas restart && echo RESTART\"-OK\"\r"
+expect {
+    "RESTART-OK" {}
+    timeout { die "rc-service mountnas restart failed" }
+}
+expect -re {:~# }
+
+# --- the supervisor must have mounted the disk and started the services ---
+# docker's first start initializes its data-root, so poll in-guest (up to 3 min)
+set timeout 240
+send {i=0; while [ "$i" -lt 36 ] && ! rc-service docker status >/dev/null 2>&1; do sleep 5; i=$((i+1)); done; rc-service docker status >/dev/null 2>&1 && echo DOCKER"-UP" || echo DOCKER"-DOWN"}
+send "\r"
+expect {
+    "DOCKER-UP" {}
+    "DOCKER-DOWN" { die "docker did not start after the data disk was mounted" }
+    timeout { die "docker status poll produced no output" }
+}
+expect -re {:~# }
+set timeout 480
+send "rc-service samba status >/dev/null 2>&1 && echo SAMBA\"-UP\" || echo SAMBA\"-DOWN\"\r"
+expect {
+    "SAMBA-UP" {}
+    "SAMBA-DOWN" { die "samba did not start after the data disk was mounted" }
+    timeout { die "samba status check produced no output" }
+}
+expect -re {:~# }
+send "mountpoint -q /mnt/nasdata && echo MOUNT\"-OK\" || echo MOUNT\"-BAD\"\r"
+expect {
+    "MOUNT-OK" {}
+    "MOUNT-BAD" { die "/mnt/nasdata is not a mountpoint after mountnas restart" }
+    timeout { die "mountpoint check produced no output" }
+}
+expect -re {:~# }
+
+# --- nas status must be [FAIL]-free (warnings are fine on a fresh box) ---
+send {nas status > /tmp/ns.out 2>&1; grep -q "FAIL" /tmp/ns.out && echo STATUS"-BAD" || echo STATUS"-OK"; cat /tmp/ns.out}
+send "\r"
+expect {
+    "STATUS-BAD" { die "nas status reported a FAIL line (dumped above)" }
+    "STATUS-OK" {}
+    timeout { die "nas status check produced no output" }
+}
+expect -re {:~# }
+
+# --- persist and reboot: everything must come back without hand-holding ---
+send "nas commit && echo COMMIT\"-OK\"\r"
+expect {
+    "COMMIT-OK" {}
+    timeout { die "nas commit failed (or exit-code propagation broke)" }
+}
+expect -re {:~# }
+send "/sbin/reboot\r"
+expect {
+    -re "login:" {}
+    timeout { die "no login prompt after reboot" }
+}
+send "root\r"
+expect {
+    -re {Hostname \[} { die "the wizard re-ran after reboot (setup-done not persisted)" }
+    -re {[Pp]assword:} {}
+    timeout { die "no password prompt after reboot (password not persisted?)" }
+}
+send "$pw\r"
+expect {
+    -re {:~# } {}
+    timeout { die "login with the committed password failed" }
+}
+set timeout 240
+send {i=0; while [ "$i" -lt 36 ] && ! rc-service docker status >/dev/null 2>&1; do sleep 5; i=$((i+1)); done; rc-service docker status >/dev/null 2>&1 && mountpoint -q /mnt/nasdata && echo PERSIST"-OK" || echo PERSIST"-BAD"}
+send "\r"
+expect {
+    "PERSIST-OK" {}
+    "PERSIST-BAD" { die "data disk/docker did not come back after reboot" }
+    timeout { die "post-reboot persistence check produced no output" }
+}
+expect -re {:~# }
+set timeout 480
+
+send "/sbin/poweroff\r"
+expect {
+    eof {}
+    timeout { die "guest did not power off" }
+}
+puts "\nSUPERVISOR-TEST PASS: wizard, data disk, docker+samba, status, commit, reboot persistence"
+exit 0
