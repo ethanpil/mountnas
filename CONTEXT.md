@@ -290,6 +290,13 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
   disk is attached **`if=virtio`** on purpose — the cmdline module list carries
   virtio_blk but NOT ide/ata_piix, so QEMU's default IDE bus would never be found
   by the initramfs and the test would false-fail.
+- **Supervisor smoke test** (blocking; `scripts/ci-supervisor-test.exp`): boots
+  the fresh image with a blank second virtio disk and drives the serial console
+  through the first-boot wizard, `mkfs`+fstab+`rc-service mountnas restart`,
+  requires docker AND samba to start, `nas status` to be `[FAIL]`-free, then
+  `nas commit` + reboot + login with the new password and the storage/services
+  returning by themselves. This is the only pre-publish gate that executes THIS
+  build's supervisor/wizard code (the upgrade test runs the previous release's).
 
 **Version + signing key.**
 - `nas version`/`nas status` report mountnas-tools' `pkgver`; the workflow seds the
@@ -373,6 +380,17 @@ Because the upgrade runs the **source** release's code, alpha-1/2/3 boxes still
 hit the old path and must reflash to alpha-4; the CI upgrade test stays
 **non-blocking** until the first green run (alpha-4 → alpha-5 is the first pair
 that can pass), then re-tighten it to blocking.
+
+**alpha-5 notes (this pass):** the upgrade write phase now stages ALL payloads
+first and only then renames back-to-back (power cut mid-copy can no longer mix
+kernel/modloop generations); the image is 3.5 GiB raw (BOOT 2.5 GiB + MNASCFG
+~1 GiB — partition sizes are frozen per deployed stick, so headroom lives in
+the build log's BOOT size report); linux-lts is no longer cached in the media
+repo (nothing could install it); early microcode ships via boot_addons and the
+write-bootcfg initrd lines; and the blocking supervisor smoke test (§6) now
+covers the wizard + storage/service gating that used to be manual-only. The
+upgrade smoke test is expected GREEN for the first time on the alpha-4 →
+alpha-5 pair — flip it to blocking right after that run is observed.
 
 **Known caveats:**
 - **Signing key:** set the `ABUILD_PRIVKEY` repo secret for a fixed key (stable trust

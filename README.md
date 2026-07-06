@@ -8,6 +8,7 @@ MountNAS is intended for power users, comfortable around a Linux system and comm
 
 Get your system running by following these steps:
 
+* Hardware: any x86_64 box with **4 GB+ RAM recommended** — the OS and every package unpack into RAM at each boot (2 GB may boot, but leaves little headroom for Docker workloads). The console warns at boot when RAM is below 4 GB.
 * Download a MountNAS release from GitHub:`mountnas-<tag>.img.gz`
 * Write the image to a flash drive (min. 4 GB) using `gunzip -c mountnas-<tag>.img.gz | sudo dd of=/dev/sdX bs=4M status=progress` or a graphical utility like [Etcher](https://etcher.balena.io/).
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
@@ -35,6 +36,7 @@ If a drive is disconnected or fails to initialize, the supervisor mounts a read-
 - The `nas` is an easy and intuitive helper tool, built to help you manage MountNAS. Try `nas help` from the shell.
 - The .img is for FIRST INSTALL ONLY. To update later use `nas upgrade` (see UPGRADE.md).
   - **Never re-write the image over a running NAS or you erase its config.**
+- A power cut discards everything you have not committed (changes live in RAM). Commit early and often; if unplanned power loss is a real risk for you, add a UPS — NUT is baked in (see below).
 
 ## First boot
 
@@ -73,6 +75,8 @@ Additional notes:
  * Verify everything work and run `nas commit` to save the changes.
 
 Always include `nofail`. Until /mnt/nasdata is mounted, Docker/Samba/NFS stay OFF on purpose, so a missing disk can never fill RAM. `nas status` shows the state and doubles as your pre-flight check after editing fstab.
+
+**Network filesystems (NFS/CIFS) in fstab are not mounted at boot.** MountNAS ships no `netmount` service, and the storage supervisor deliberately never mounts network filesystems (and refuses one as `/mnt/nasdata`) — a dead remote must never be able to hang the boot. If you need to consume remote storage, mount it manually (or from cron `@reboot`) once the box is up, or run the consumer inside Docker. Local disks are the supported storage path.
 
 ## Keeping nasdata in a subdirectory of a mounted disk instead of its own dedicated disk
 You can also have `/mnt/nasdata` live on a subdirectory of a mounted disk instead of a dedicated disk with a bind mount. In `/etc/fstab` with the real disk listed first:
