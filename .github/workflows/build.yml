@@ -12,14 +12,17 @@ jobs:
     permissions:
       contents: write   # publish the build outputs as a GitHub Release
     steps:
-      - uses: actions/checkout@v4
+      # Third-party actions are pinned by commit SHA (not tag): this workflow
+      # holds the package-signing key and publishes releases, and a tag can be
+      # re-pointed by a compromised action repo. Bump the SHA + comment together.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       # Lint before anything expensive. The file list is discovered inside
       # ci-lint.sh (shebang grep + globs) so a newly added script can never be
       # silently unlinted; rationale for the flags/excludes lives there too.
       - name: Lint shell scripts (shellcheck)
         shell: bash
         run: sh scripts/ci-lint.sh
-      - uses: jirutka/setup-alpine@v1
+      - uses: jirutka/setup-alpine@ae3b3ddba35054804fc4a3507b519fa7e8152050 # v1.4.1
         with:
           branch: ${{ inputs.alpine_branch }}
           arch: ${{ inputs.arch }}
@@ -270,7 +273,7 @@ jobs:
       # Publish each artifact (img.gz, rsa.pub, SHA256SUMS) as a SEPARATE,
       # individually-downloadable release asset — not a single zip.
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ inputs.release_tag }}
           name: MountNAS ${{ inputs.release_tag }}
