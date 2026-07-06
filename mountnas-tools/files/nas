@@ -817,8 +817,12 @@ EOF
 	# The next boot installs this world from the new on-USB apks repo. awk (not comm)
 	# so we need no sorted input and no extra binary.
 	new_wb="$BOOTMNT/world.base"; old_wb="$STATE/old.world.base"
-	if [ -f "$new_wb" ]; then
-		if [ -f "$old_wb" ]; then
+	# -s (not -f): with an EMPTY first file the awk NR==FNR idiom matches the
+	# second file too, so every user-installed package would be silently dropped
+	# from world. A zero-byte world.base is a real state — FAT truncates files
+	# to zero on power loss.
+	if [ -s "$new_wb" ]; then
+		if [ -s "$old_wb" ]; then
 			awk 'NR==FNR{a[$1];next} !($1 in a)' "$old_wb" /etc/apk/world > "$STATE/extras.$$"
 			cat "$new_wb" "$STATE/extras.$$" | sort -u > "$STATE/desired.$$"
 		else
