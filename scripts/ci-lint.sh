@@ -18,3 +18,22 @@ files=$(grep -rlE '^#!/(bin/sh|sbin/openrc-run)' mountnas-tools/files)
 shellcheck -s sh -S warning -e SC2034,SC3043,SC3045 \
 	$files mountnas-tools/files/profile-*.sh scripts/*.sh
 echo "shellcheck: all shipped scripts pass ($(printf '%s\n' $files | wc -l | tr -d ' ') shebang scripts + profile.d + scripts/)"
+
+# Guard the CONTEXT.md §6 landmine (which shellcheck cannot see — it lives
+# inside workflow YAML): the big build step runs inside a single-quoted
+# `su … -c '…'` block, where ANY stray apostrophe — even a paired one in a
+# comment like «'abuild checksum'» — terminates the quote early and the rest
+# of the block runs as root with mangled quoting. The ONLY legitimate
+# apostrophes in the block are the intentional '"$VAR"' injections; strip
+# those, then flag any apostrophe that remains.
+awk -v q="'" '
+	index($0, "su build -s /bin/sh -c " q) { inblk=1; next }
+	inblk && $0 ~ "^[[:space:]]*" q "$" { inblk=0; next }
+	inblk {
+		line=$0
+		gsub(q "\"\\$[A-Za-z_][A-Za-z0-9_]*\"" q, "", line)
+		if (index(line, q)) { printf "build.yml:%d: apostrophe inside the su -c block:\n  %s\n", FNR, $0; bad=1 }
+	}
+	END { exit bad+0 }
+' .github/workflows/build.yml || { echo "FAIL: apostrophe inside the su -c block truncates it (see CONTEXT.md §6)"; exit 1; }
+echo "build.yml su -c block: no stray apostrophes"
