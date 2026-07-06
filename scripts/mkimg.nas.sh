@@ -38,5 +38,10 @@ profile_nas() {
 	kernel_cmdline="$(cat "${CMDLINE_FILE:?}")"
 	syslinux_serial="0 115200"
 	apks="$apks $(_nas_pkglist)"
-	local _f; for _f in $kernel_flavors; do apks="$apks linux-$_f"; done
+	# NOTE: linux-lts is deliberately NOT added to $apks. The kernel/modloop on
+	# /boot come from mkimage's own kernel section (independent of $apks), the
+	# world never contains linux-lts (kernel updates arrive via 'nas upgrade'
+	# replacing /boot files, never via apk), so the ~140 MB linux-lts apk in the
+	# media repo was dead weight nothing could ever install. The CI world check
+	# still proves every world.base entry resolves from the media repo.
 }
