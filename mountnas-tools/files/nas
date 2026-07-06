@@ -594,20 +594,31 @@ _mount_boot_rw() {
 	[ -f "$BOOTMNT/.nas-boot" ] || { bad "BOOT partition missing .nas-boot marker — refusing"; return 1; }
 }
 
-# Crash-safe in-place replace: write under a temp name, then rename. A crash
-# mid-copy leaves the known-good original untouched.
-_swap_file() { cp "$1" "$2.new" && mv "$2.new" "$2"; }
-# Replace directory $2 with the contents of directory $1, committing ONLY when
-# the copy fully succeeded — a failed/partial copy must never replace a
-# known-good tree (and never 'mv' into a still-existing target, which would
-# nest the new tree inside the old one instead of replacing it).
-_swap_dir() {
+# Staged, crash-safe in-place replace — two phases:
+#   _stage_*  : copy the payload to <target>.new (slow; the system on the USB
+#               stays fully intact and bootable while this runs)
+#   _commit_* : rename <target>.new into place (fast)
+# cmd_upgrade stages EVERYTHING first and only then commits back-to-back, so
+# the window in which the USB holds a MIXED system (e.g. new kernel beside an
+# old modloop = unbootable module mismatch) shrinks from the minutes a modloop
+# copy takes on USB 2.0 to a handful of renames.
+_stage_file() { cp "$1" "$2.new"; }
+_commit_file() { mv "$1.new" "$1"; }
+_stage_dir() {
 	rm -rf "$2.new"; mkdir -p "$2.new"
 	cp -r "$1"/. "$2.new/" || { rm -rf "$2.new"; return 1; }
-	rm -rf "$2.old"
-	if [ -d "$2" ]; then mv "$2" "$2.old" || { rm -rf "$2.new"; return 1; }; fi
-	mv "$2.new" "$2" || return 1
-	rm -rf "$2.old"
+}
+# Swap the staged $1.new into place, keeping $1.old until the swap-in has
+# succeeded: a missing tree (/apks!) can mean an unbootable USB, so on a
+# failed swap-in the old tree is moved back rather than deleted.
+_commit_dir() {
+	rm -rf "$1.old"
+	if [ -d "$1" ]; then mv "$1" "$1.old" || { rm -rf "$1.new"; return 1; }; fi
+	if ! mv "$1.new" "$1"; then
+		[ -d "$1" ] || mv "$1.old" "$1" 2>/dev/null
+		return 1
+	fi
+	rm -rf "$1.old"
 }
 
 # Free the live modloop so its file on BOOT can be overwritten. Replaces
@@ -803,25 +814,48 @@ EOF
 	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks
 	_free_modloop || { bad "could not free the modloop — aborting (nothing on the USB was changed yet)"; _cleanup; return 1; }
 
-	# ---- overwrite boot files in place, crash-safe (temp name -> rename) ----
+	# ---- overwrite boot files in place, crash-safe (stage all, then rename) ----
 	echo "Writing the new system to the USB ..."
 	cp "$BOOTMNT/world.base" "$STATE/old.world.base" 2>/dev/null || true
-	ec=0
-	for f in vmlinuz-lts initramfs-lts modloop-lts; do
-		_swap_file "$m/boot/$f" "$BOOTMNT/boot/$f" || ec=1
-	done
-	_swap_dir "$m/apks" "$BOOTMNT/apks" || ec=1
-	if [ -f "$m/world.base" ]; then _swap_file "$m/world.base" "$BOOTMNT/world.base" || ec=1; fi
-	if [ -f "$m/alpine.base" ]; then _swap_file "$m/alpine.base" "$BOOTMNT/alpine.base" || ec=1; fi
-	# Bootloader payload files (plain files on the FAT — safe to replace from a
-	# running box, unlike the VBR/MBR boot code, which stays untouched). grub's
-	# core (EFI/BOOT/BOOTX64.EFI) and its modules (/boot/grub) ship as a matched
+	# Phase 1 — stage: every payload is copied to a .new name first. All the
+	# slow USB writes happen here while the old system is still complete and
+	# bootable; a failure or power cut in this phase changes nothing.
+	# Bootloader payload (ldlinux.c32, EFI, boot/grub) rides along: plain files
+	# on the FAT — safe to replace from a running box, unlike the VBR/MBR boot
+	# code, which stays untouched. grub's core and modules ship as a matched
 	# pair from the build; refreshing them with the kernel avoids running an
-	# ever-newer system under an ever-older loader. Guarded so an older image
-	# without these simply skips them.
-	[ -f "$m/ldlinux.c32" ] && { _swap_file "$m/ldlinux.c32" "$BOOTMNT/ldlinux.c32" || ec=1; }
-	[ -d "$m/EFI" ]        && { _swap_dir "$m/EFI" "$BOOTMNT/EFI" || ec=1; }
-	[ -d "$m/boot/grub" ]  && { _swap_dir "$m/boot/grub" "$BOOTMNT/boot/grub" || ec=1; }
+	# ever-newer system under an ever-older loader. Optional entries are guarded
+	# so an older image without them simply skips them.
+	ec=0; sfiles=""; sdirs=""
+	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
+		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
+	done
+	for f in world.base alpine.base ldlinux.c32; do
+		[ -f "$m/$f" ] || continue
+		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
+	done
+	_stage_dir "$m/apks" "$BOOTMNT/apks" && sdirs="$sdirs apks" || ec=1
+	for d in EFI boot/grub; do
+		[ -d "$m/$d" ] || continue
+		_stage_dir "$m/$d" "$BOOTMNT/$d" && sdirs="$sdirs $d" || ec=1
+	done
+	if [ "$ec" != 0 ]; then
+		# remove staged leftovers (a failed cp can leave a partial .new) — the
+		# running system on the USB was never touched
+		for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts world.base alpine.base ldlinux.c32; do
+			rm -f "$BOOTMNT/$f.new"
+		done
+		for d in apks EFI boot/grub; do rm -rf "$BOOTMNT/$d.new"; done
+		bad "staging the new system failed (USB full or failing?) — nothing on the USB was changed."
+		_cleanup; trap - EXIT INT TERM
+		return 1
+	fi
+	# push all staged data to the stick so the rename window carries no
+	# pending writes, then commit with back-to-back renames (phase 2)
+	sync
+	for f in $sfiles; do _commit_file "$BOOTMNT/$f" || ec=1; done
+	for d in $sdirs; do _commit_dir "$BOOTMNT/$d" || ec=1; done
+	sync
 	_cleanup; trap - EXIT INT TERM
 	[ "$ec" = 0 ] || { bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."; return 1; }
 
