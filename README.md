@@ -94,6 +94,25 @@ cached on the config partition and reinstall automatically at every boot, even w
 no network. `nas upgrade` preserves your added packages and re-pins the repository
 version to match the new release.
 
+### Adding firmware for other hardware
+
+The image ships GPU / wifi / Bluetooth / wired-NIC firmware for typical consumer
+hardware of the last ~15 years (see [Baked in Packages](#baked-in-packages)) — but not
+firmware for server NICs, ARM boards, or genuinely exotic devices. If something in your
+box needs a blob that isn't included:
+
+1. **Identify the missing file** — the kernel names it at boot:
+   `dmesg | grep -iE 'firmware|failed to load'`
+2. **Find the package that ships it** — `apk search linux-firmware` lists every vendor
+   package, or search the file name at [pkgs.alpinelinux.org](https://pkgs.alpinelinux.org/contents).
+3. **Install and persist it:** `apk add linux-firmware-<vendor>`, then `nas commit`,
+   then reboot.
+
+Added firmware is cached on the config partition and reinstalled **early** in every
+boot — before devices are probed (verified) — so after that one reboot the device
+simply works, network or not. Kernel *drivers* are a different thing and are already
+all included with the kernel; it's only these device-firmware blobs that are curated.
+
 ## Parity
 
 [SnapRAID](https://www.snapraid.it/) is baked into the image and simply needs to be configured.
@@ -354,14 +373,10 @@ __UPS monitoring (NUT)__
 * nut-openrc
 * nut-udev
 
-__Device Firmware__
+__Device Firmware__ (curated consumer-x86 set — repurposed laptops/desktops/NUCs/mini-PCs; anything else: see [Adding firmware for other hardware](#adding-firmware-for-other-hardware))
 
-* linux-firmware-amd
-* linux-firmware-amdgpu
-* linux-firmware-intel
-* linux-firmware-realtek
-* linux-firmware-mediatek
-* linux-firmware-ath10k
-* linux-firmware-ath11k
-* linux-firmware-brcm
-* linux-firmware-nvidia
+* GPU / display: linux-firmware-i915, -xe, -amdgpu, -radeon, -nvidia
+* Wifi: linux-firmware-intel (Intel wifi + Bluetooth), -mediatek, -ath10k, -ath11k, -ath12k, -ath6k, -ath9k_htc, -brcm, -cypress, -rtw88, -rtw89, -rtlwifi
+* Bluetooth: linux-firmware-qca, -rtl_bt, -ar3k
+* Wired NICs: linux-firmware-rtl_nic, -tigon, -bnx2, -e100
+* Laptop platform: linux-firmware-cirrus, -amd, -amdnpu, -dell, -hp, -lenovo, -synaptics

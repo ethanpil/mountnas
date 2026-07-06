@@ -131,16 +131,51 @@ nut
 nut-openrc
 nut-udev
 
-# --- device firmware (full set; not trimmed) ---
-linux-firmware-amd
+# --- device firmware (curated consumer-x86 set, ~365 MB vs ~756 MB full) ---
+# Target hardware = repurposed laptops / desktops / NUCs / mini-PCs from the
+# last ~15 years: GPU, wifi, Bluetooth, wired-NIC, and laptop-platform
+# firmware. Server NICs (mellanox/qed/cxgb*), ARM SoCs (qcom/mrvl/...), DSL,
+# and TV capture are deliberately NOT shipped — every drop shrinks the
+# modloop, the image, and boot time. Anything missing can be added on a
+# running box (README: "Adding firmware for other hardware") — apk-added
+# firmware installs early in boot, before devices are probed.
+#
+# GPU / display
+linux-firmware-i915
+linux-firmware-xe
 linux-firmware-amdgpu
+linux-firmware-radeon
+linux-firmware-nvidia
+# wifi (linux-firmware-intel = Intel wifi iwlwifi + Intel Bluetooth ibt)
 linux-firmware-intel
-linux-firmware-realtek
 linux-firmware-mediatek
 linux-firmware-ath10k
 linux-firmware-ath11k
+linux-firmware-ath12k
+linux-firmware-ath6k
+linux-firmware-ath9k_htc
 linux-firmware-brcm
-linux-firmware-nvidia
+linux-firmware-cypress
+linux-firmware-rtw88
+linux-firmware-rtw89
+linux-firmware-rtlwifi
+# Bluetooth (non-Intel)
+linux-firmware-qca
+linux-firmware-rtl_bt
+linux-firmware-ar3k
+# wired NICs found in desktops / mini-PCs
+linux-firmware-rtl_nic
+linux-firmware-tigon
+linux-firmware-bnx2
+linux-firmware-e100
+# laptop platform (speaker amps, AMD platform/NPU, vendor quirks)
+linux-firmware-cirrus
+linux-firmware-amd
+linux-firmware-amdnpu
+linux-firmware-dell
+linux-firmware-hp
+linux-firmware-lenovo
+linux-firmware-synaptics
 
 # --- initramfs builder ---
 mkinitfs
