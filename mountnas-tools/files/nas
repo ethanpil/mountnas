@@ -42,6 +42,7 @@ MountNAS $VERSION — control CLI
   nas status --deep   …plus SMART, SnapRAID status, time-sync (may wake disks)
   nas disks      Every disk: UUID, mount state, and a paste-ready fstab line
   nas restart    Re-mount disks + (re)start services (no reboot)
+  nas changes    List unsaved changes 'nas commit' would save (alias: nas changed)
   nas commit     Save changes to the USB            (alias: nas save)
   nas backup     Full image of the boot USB to a file  (--to <dir>) — see UPGRADE.md
   nas shutdown   Power off (warns on unsaved changes)
@@ -260,6 +261,18 @@ cmd_restart() {
 	# Re-run the storage supervisor: re-mount data disks and (re)start
 	# docker/samba/nfs, without rebooting. Handy after editing /etc/fstab.
 	rc-service mountnas restart
+}
+
+# nas changes (alias: changed) — list WHAT 'nas commit' would save, not just a
+# count. Surfaces Alpine's own 'lbu status' (A=added M=modified D=deleted).
+cmd_changes() {
+	out=$(lbu status 2>/dev/null)
+	n=$(printf '%s' "$out" | grep -c .)
+	mkdir -p "$STATE"; printf '%s\n' "${n:-0}" > "$STATE/unsaved" 2>/dev/null || true; UNSAVED_FRESH=1
+	if [ "${n:-0}" -eq 0 ]; then ok "no unsaved changes — nothing to commit"; return 0; fi
+	echo "$n unsaved change(s) that 'nas commit' would save (A=added M=modified D=deleted):"
+	printf '%s\n' "$out" | sed 's/^/  /'
+	echo "Save them with: nas commit"
 }
 
 cmd_commit() {
@@ -642,6 +655,7 @@ case "${1:-help}" in
 	validate) shift; cmd_status "$@" ;;
 	checkup) cmd_status --deep ;;
 	restart) cmd_restart ;;
+	changes|changed) cmd_changes ;;
 	commit|save) cmd_commit ;;
 	backup) shift; cmd_backup "$@" ;;
 	shutdown) cmd_shutdown ;;

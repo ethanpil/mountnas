@@ -115,6 +115,7 @@ The `nas` tool has been designed to help you manage the system.
 | `nas disks` | Lists every detected disk with its UUID and mount state, marks the boot USB, shows how `/etc/fstab` maps it, and prints a paste-ready fstab line for each unconfigured data partition. |
 | `nas validate` | Alias for `nas status` (the storage-config check). |
 | `nas restart` | Re-mounts data disks and (re)starts Docker/Samba/NFS without rebooting (runs `rc-service mountnas restart`). Run it after editing `/etc/fstab`. |
+| `nas changes` | Lists exactly what `nas commit` would save (added/modified/deleted files), not just a count. Alias: `nas changed`. |
 | `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition. Alias: `nas save`. |
 | `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
 | `nas upgrade` | Rewrites the OS on the USB **in place** from a release image — a local `mountnas-<tag>.img.gz` or an `https://` release URL (verified against the release's `SHA256SUMS` when present) — then reboot. Requires a `nas backup` first (see `UPGRADE.md`). |
