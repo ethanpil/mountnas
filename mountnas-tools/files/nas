@@ -830,7 +830,7 @@ EOF
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
 		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
 	done
-	for f in world.base alpine.base ldlinux.c32; do
+	for f in world.base alpine.base ldlinux.c32 boot/amd-ucode.img boot/intel-ucode.img; do
 		[ -f "$m/$f" ] || continue
 		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
 	done
@@ -842,7 +842,7 @@ EOF
 	if [ "$ec" != 0 ]; then
 		# remove staged leftovers (a failed cp can leave a partial .new) — the
 		# running system on the USB was never touched
-		for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts world.base alpine.base ldlinux.c32; do
+		for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts world.base alpine.base ldlinux.c32 boot/amd-ucode.img boot/intel-ucode.img; do
 			rm -f "$BOOTMNT/$f.new"
 		done
 		for d in apks EFI boot/grub; do rm -rf "$BOOTMNT/$d.new"; done

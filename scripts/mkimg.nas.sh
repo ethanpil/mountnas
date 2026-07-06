@@ -16,6 +16,13 @@ profile_nas() {
 	desc="MountNAS diskless NAS"
 	arch="${ARCH:-x86_64}"
 	kernel_flavors="lts"
+	# Early CPU microcode, same mechanism as Alpine's Extended profile: the
+	# vendor ucode packages are fetched as boot addons (their boot/*-ucode.img
+	# lands on the media next to the kernel) and write-bootcfg prepends them to
+	# the initrd line when present. The CPU picks its vendor's blob; the other
+	# is ignored. Stability fix for real hardware (errata are microcode fixes).
+	boot_addons="amd-ucode intel-ucode"
+	initrd_ucode="/boot/amd-ucode.img /boot/intel-ucode.img"
 	# Base cmdline only, read from scripts/cmdline.base — the SINGLE source of
 	# truth also copied onto the BOOT partition by build.yml (write-bootcfg reads
 	# it there). Never inline a cmdline here. Context that shaped its content:

@@ -15,13 +15,28 @@ BASE=$(cat "$B/cmdline.base") \
 # used verbatim and disable that discovery.
 APPEND="$BASE modloop=/boot/modloop-lts alpine_repo=auto"
 
+# Early CPU microcode: prepend the vendor ucode images when the media carries
+# them (fetched as boot_addons in mkimg.nas.sh; the CPU loads only its own
+# vendor's blob). Media written by an older build simply lacks the files and
+# the initrd line comes out plain — no error, no stale reference.
+UCODE=""
+for u in amd-ucode.img intel-ucode.img; do
+	[ -f "$B/boot/$u" ] && UCODE="$UCODE /boot/$u"
+done
+UCODE="${UCODE# }"
+
 # BIOS / syslinux
 {
 	echo "SERIAL 0 115200"; echo "PROMPT 1"; echo "TIMEOUT 30"; echo "DEFAULT mountnas"; echo
 	echo "LABEL mountnas"
 	echo "  MENU LABEL MountNAS"
 	echo "  KERNEL /boot/vmlinuz-lts"
-	echo "  INITRD /boot/initramfs-lts"
+	if [ -n "$UCODE" ]; then
+		# syslinux takes multiple initrds comma-separated; microcode must be first
+		echo "  INITRD $(printf '%s' "$UCODE" | tr ' ' ','),/boot/initramfs-lts"
+	else
+		echo "  INITRD /boot/initramfs-lts"
+	fi
 	echo "  APPEND $APPEND"
 } > "$B/syslinux.cfg"
 mkdir -p "$B/boot/syslinux"; cp "$B/syslinux.cfg" "$B/boot/syslinux/syslinux.cfg" 2>/dev/null || true
@@ -33,7 +48,8 @@ mkdir -p "$B/boot/grub"
 	echo "set timeout=3"; echo "set default=0"
 	echo "menuentry \"MountNAS\" {"
 	echo "  linux /boot/vmlinuz-lts $APPEND"
-	echo "  initrd /boot/initramfs-lts"
+	# grub takes multiple initrd args space-separated; microcode must be first
+	echo "  initrd ${UCODE:+$UCODE }/boot/initramfs-lts"
 	echo "}"
 } > "$B/boot/grub/grub.cfg"
 sync

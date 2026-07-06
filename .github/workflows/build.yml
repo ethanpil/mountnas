@@ -175,7 +175,9 @@ jobs:
           # modloop under /boot, the apk repo under /apks (with its .boot_repository
           # marker). Single slot: keep it as-is and just assert the pieces landed
           # (NO '|| true' — a setup-bootable layout change fails the build loudly).
-          for f in vmlinuz-lts initramfs-lts modloop-lts; do
+          # intel/amd-ucode.img come from boot_addons in mkimg.nas.sh (early CPU
+          # microcode); write-bootcfg prepends them to the initrd line.
+          for f in vmlinuz-lts initramfs-lts modloop-lts intel-ucode.img amd-ucode.img; do
             [ -f "$M/boot/$f" ] || { echo "ERROR: missing boot/$f"; exit 1; }
           done
           [ -f "$M/apks/x86_64/APKINDEX.tar.gz" ] || { echo "ERROR: apks/ has no APKINDEX"; exit 1; }
