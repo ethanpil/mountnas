@@ -304,7 +304,14 @@ EOF
 	fi
 	if [ "$rc" = 0 ]; then
 		mount -o remount,rw "$CFG" 2>/dev/null || true; sync
-		ok "backup written: $out"
+		# Read the file back and check the gzip stream end-to-end. This image is
+		# the ONLY rollback net for 'nas upgrade' — a bad sector or truncated
+		# write on the destination is best caught now, not during a disaster
+		# restore months later.
+		echo "Verifying the written image (gzip -t) ..."
+		gzip -t "$out" 2>/dev/null \
+			|| { bad "verification FAILED — the written backup is corrupt: $out"; rm -f "$out"; return 1; }
+		ok "backup written and verified: $out"
 		date '+%Y-%m-%d %H:%M' > "$STATE/last-backup" 2>/dev/null || true
 		# persistent copy ("<epoch> <date>") so 'nas status' and the upgrade gate
 		# can report backup age across reboots (saved with the next commit)
