@@ -461,6 +461,23 @@ EOF
 
 	_mount_boot_rw || return 1
 
+	# ---- cleanup that also fires on Ctrl-C / kill ----
+	# The download + unpack stages hold multi-GB temp files and a loop device;
+	# without a trap an interrupted upgrade leaks them (temp space usually lives
+	# on the data disk). Idempotent: every step is guarded, so running it again
+	# on the EXIT trap after an explicit call is harmless.
+	raw=""; m=""; loop=""
+	_cleanup() {
+		[ -n "$m" ] && umount "$m" 2>/dev/null
+		[ -n "$loop" ] && losetup -d "$loop" 2>/dev/null
+		[ -n "$raw" ] && rm -f "$raw"
+		[ -n "$dlf" ] && rm -f "$dlf"
+		[ -n "$m" ] && rmdir "$m" 2>/dev/null
+		return 0
+	}
+	trap '_cleanup; trap - EXIT INT TERM; exit 130' INT TERM
+	trap '_cleanup' EXIT
+
 	# ---- choose temp space and pre-check it fits the decompressed image ----
 	# Work in KiB with df -Pk so this holds under both busybox and coreutils df.
 	tmp="${TMPDIR:-}"
@@ -499,8 +516,7 @@ EOF
 	fi
 
 	# ---- unpack + loop-mount the image's BOOT partition (p1) ----
-	raw="$tmp/.nas-upgrade.$$.img"; m=$(mktemp -d); loop=""
-	_cleanup() { [ -n "$loop" ] && losetup -d "$loop" 2>/dev/null; rm -f "$raw"; [ -n "$dlf" ] && rm -f "$dlf"; rmdir "$m" 2>/dev/null; }
+	raw="$tmp/.nas-upgrade.$$.img"; m=$(mktemp -d)
 	echo "Unpacking image into $tmp ..."
 	case "$img" in
 		*.gz)
@@ -516,13 +532,13 @@ EOF
 	loop=$(losetup -fP --show "$raw") || { bad "losetup failed"; _cleanup; return 1; }
 	mount -o ro "${loop}p1" "$m" 2>/dev/null || { bad "cannot mount the image's BOOT partition"; _cleanup; return 1; }
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
-		[ -f "$m/$f" ] || { bad "image is missing $f — not a MountNAS image?"; umount "$m"; _cleanup; return 1; }
+		[ -f "$m/$f" ] || { bad "image is missing $f — not a MountNAS image?"; _cleanup; return 1; }
 	done
 
 	# ---- free the live modloop so we can overwrite it in place (official tool) ----
 	echo "Freeing the live modloop (copy-modloop) ..."
 	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks
-	copy-modloop || { bad "copy-modloop failed — aborting (nothing on the USB was changed yet)"; umount "$m"; _cleanup; return 1; }
+	copy-modloop || { bad "copy-modloop failed — aborting (nothing on the USB was changed yet)"; _cleanup; return 1; }
 
 	# ---- overwrite boot files in place, crash-safe (temp name -> rename) ----
 	echo "Writing the new system to the USB ..."
@@ -542,7 +558,7 @@ EOF
 		rm -rf "$BOOTMNT/apks.new"; ec=1
 	fi
 	if [ -f "$m/world.base" ]; then { cp "$m/world.base" "$BOOTMNT/.world.base.new" && mv "$BOOTMNT/.world.base.new" "$BOOTMNT/world.base"; } || ec=1; fi
-	umount "$m"; _cleanup
+	_cleanup; trap - EXIT INT TERM
 	[ "$ec" = 0 ] || { bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."; return 1; }
 
 	# ---- reconcile /etc/apk/world (preserve user-added pkgs across the version bump) ----
