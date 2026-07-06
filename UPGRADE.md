@@ -83,8 +83,10 @@ It will:
 1. Show the upgrade warning and require you to type **`YES`** to confirm you have a backup.
 2. Check there is enough temp space to unpack the image (aborts cleanly if not).
 3. Unpack the image and mount its boot partition.
-4. Run **`copy-modloop`** — Alpine's tool that moves the running kernel modules into RAM and
-   detaches the live modloop, so the OS files on the USB can be rewritten safely.
+4. Free the live modloop: copy the running **kernel modules** into RAM (tens of MB —
+   the firmware files are deliberately left behind, since every device already received
+   its firmware at boot) and detach the loopback, so the OS files on the USB can be
+   rewritten safely.
 5. Overwrite the boot files (`vmlinuz`, `initramfs`, `modloop`, the on-USB `apks` repo,
    `world.base`) in place, writing to temp names then renaming so an interruption can't
    corrupt the running system. The bootloader payload (grub's EFI core + modules,
@@ -97,8 +99,8 @@ It will:
    you added yourself are left alone).
 8. Regenerate the bootloader config and `nas commit` your configuration.
 
-Nothing you rely on is touched until step 5, and if `copy-modloop` or the unpack fails
-first, the box is left exactly as it was.
+Nothing you rely on is touched until step 5, and if the modloop-free step or the unpack
+fails first, the box is left exactly as it was.
 
 ### 4. Reboot
 
@@ -134,11 +136,10 @@ Your data disks were never part of the upgrade or the backup, so they are unaffe
 
 ## Notes
 
-- **RAM.** `copy-modloop` unpacks the kernel modules **and the full firmware set** into
-  the RAM root until you reboot — well over 1 GB uncompressed. The RAM root (tmpfs) is
-  sized at half the installed RAM and already holds the running system, so in-place
-  upgrades want **8 GB+ RAM**; on a 4 GB box `nas upgrade` detects the shortfall and
-  aborts up front, before anything on the USB is touched.
+- **RAM.** The modloop-free step holds only the **kernel modules** (~150–250 MB) in RAM
+  until you reboot — the firmware tree is deliberately not copied, so in-place upgrades
+  work fine on **4 GB boxes**. `nas upgrade` still measures the exact space needed first
+  and aborts cleanly, before anything on the USB is touched, if even that can't fit.
 - **Temp space.** Unpacking a `.img.gz` needs room for the ~6 GB decompressed image on the
   data disk (or wherever `TMPDIR` points). `nas upgrade` checks this before doing anything.
 - **Config safety.** Because `MNASCFG` is a separate partition, upgrading never risks your

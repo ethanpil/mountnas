@@ -83,9 +83,9 @@ several CI steps exist.
 - **Single-slot: one OS on the BOOT (FAT/ESP) partition; config on `MNASCFG` (ext4).**
   BOOT holds the native diskless layout (`/boot`, `/apks`); overlay is found by
   **label** (`ovl_dev=LABEL=MNASCFG`), not a UUID. `nas upgrade` rewrites BOOT in
-  place (via `copy-modloop`); rollback is a full-image `nas backup` (see §4a). The
-  old A/B two-slot scheme was removed — it only existed to dodge the busy-modloop
-  problem, which `copy-modloop` solves directly.
+  place (via the `_free_modloop` step in `nas`); rollback is a full-image `nas backup`
+  (see §4a). The old A/B two-slot scheme was removed — it only existed to dodge the
+  busy-modloop problem, which the modules-to-RAM free step solves directly.
 - **Data services (docker/samba/nfs) are NOT in any runlevel.** The `mountnas`
   service starts them only once `/mnt/nasdata` is mounted. Do not `rc-update add`
   them — `nas status` flags it.
@@ -124,11 +124,13 @@ payload too (removed the iso9660 + its xorriso `world.base` embed step).
 ### 4a. Upgrade + backup model (single-slot)
 
 - **`nas upgrade <img.gz>`** rewrites BOOT **in place**: warn+`YES` gate → free-space
-  precheck → unpack + loop-mount the image's p1 → **`copy-modloop`** (moves modules to
-  RAM, detaches the live modloop so it's overwritable) → overwrite `/boot`+`/apks`+
-  `world.base` (temp-name then rename = crash-safe) → reconcile `/etc/apk/world`
-  (new base ∪ user extras) → `write-bootcfg` + `lbu commit` → reboot. Config/data
-  untouched. **No automatic rollback.**
+  precheck → unpack + loop-mount the image's p1 → **`_free_modloop`** (moves ONLY the
+  kernel modules to RAM — not the firmware tree, which does not fit a 4 GB box's
+  tmpfs; detaches the live modloop so it's overwritable; replaced Alpine's
+  `copy-modloop`, see §8 known-bug note) → overwrite `/boot`+`/apks`+`world.base`+
+  bootloader payload (temp-name then rename = crash-safe) → reconcile `/etc/apk/world`
+  (new base ∪ user extras) → re-pin repos → `write-bootcfg` + `lbu commit` → reboot.
+  Config/data untouched. **No automatic rollback.**
 - **`nas backup`** images the WHOLE USB (`gzip < /dev/<usb>`) to a file (default
   `/mnt/nasdata/backups`, or `--to`). It briefly remounts `/cfg` ro for a consistent
   image. This is the rollback net: recovery = write the image to another USB and boot.
@@ -332,7 +334,7 @@ init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in 
    failing boot blocks the release, see §6 "Lint + boot gate"). Still to do manually:
    boot from a **real USB stick on real hardware**, confirm the seed overlay applies
    (root-owned, doas works), and that `mountnas` holds then releases docker/samba/nfs
-   around `/mnt/nasdata`; and that `command -v copy-modloop` is present.
+   around `/mnt/nasdata`.
 2. **Validate the single-slot upgrade + backup (§4a).** The upgrade half is now
    **automated in CI**: the "Upgrade smoke test" step boots the previous published
    release in QEMU and drives a real `nas upgrade` to the freshly built image over
@@ -350,25 +352,27 @@ init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in 
    on-media copy (no baked-in fallback; it fails loudly if the file is missing).
 4. The rest of the plan's "assumptions to validate on first build" (its §11).
 
-**Known bug — in-place upgrade fails at `copy-modloop` (`/.modloop` busy).**
-The CI upgrade smoke test (upgrading a booted **alpha-1** box to a new image)
-reaches `nas upgrade`, passes the YES gate, decompresses the image, then fails:
-```
-Freeing the live modloop (copy-modloop) ...
- * Unmounting /.modloop ... umount: /.modloop: target is busy.
- * ERROR: modloop failed to stop
-```
-So the OS files on the USB are never rewritten (safely — nothing was changed).
-Because the upgrade runs the **source** release's `nas` code, this is alpha-1's
-behavior and cannot be patched retroactively; alpha-1 boxes likely can't
-`nas upgrade` and must reflash. It is almost certainly not a QEMU artifact:
-something holds a reference under `/.modloop` when `copy-modloop` tries to
-detach it, and MountNAS keeps the BOOT partition mounted (the `mountnas`
-service binds `$BOOTMNT/apks`), which is design-specific. **Root cause not yet
-determined** — a live-box diagnostic questionnaire is pending. Until a green
-upgrade is observed, the CI upgrade test is **non-blocking** (`continue-on-error`
-in `build.yml`); re-tighten it to blocking once fixed. This is CONTEXT §8 open
-item 2 turning up a real defect on first execution — exactly what the test is for.
+**Known bug (ROOT CAUSE FOUND, fixed in alpha-4) — in-place upgrade failed at
+`copy-modloop`.** The CI upgrade test + a live-box diagnostic session nailed it:
+Alpine's `copy-modloop` does `cp -a` of the WHOLE modloop tree — kernel modules
+**plus the full firmware set** — into the tmpfs RAM root (= half of RAM). Two
+RAM-dependent failure modes, both observed:
+- **4 GB box (real hardware):** the copy hits ENOSPC mid-firmware; worse, the
+  aborted partial `/lib/modules.tmp` fills the tmpfs and wedges `lbu commit`
+  ("tar: empty archive") until a reboot clears RAM.
+- **8 GB (CI VM):** the copy fits, then `umount /.modloop` reported a (spurious,
+  transient) "target is busy" → "modloop failed to stop".
+Fix shipped in the `nas` CLI (alpha-4): **`_free_modloop`** replaces
+`copy-modloop` — copies ONLY the kernel modules (tens of MB, exact headroom
+measured first), clears the kernel's `firmware_class.path` if it points into
+the modloop (post-detach loads fall back to `/lib/firmware`, where apk-added
+blobs live — verified on a live box that apk-added firmware installs EARLY at
+boot, before device probing), then stops the modloop service with a
+direct/lazy-umount fallback for the transient-busy case.
+Because the upgrade runs the **source** release's code, alpha-1/2/3 boxes still
+hit the old path and must reflash to alpha-4; the CI upgrade test stays
+**non-blocking** until the first green run (alpha-4 → alpha-5 is the first pair
+that can pass), then re-tighten it to blocking.
 
 **Known caveats:**
 - **Signing key:** set the `ABUILD_PRIVKEY` repo secret for a fixed key (stable trust

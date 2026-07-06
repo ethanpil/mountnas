@@ -188,8 +188,9 @@ and reconfigure. Your data disks are untouched either way.
 
 ## Upgrading
 
-MountNAS upgrades the OS **in place** on the boot USB (single-slot), using Alpine's
-`copy-modloop` to safely swap the running system's files, then a reboot. Because a bad
+MountNAS upgrades the OS **in place** on the boot USB (single-slot): the kernel modules
+are copied to RAM and the loopback detached so the running system's files can be safely
+swapped, then a reboot. Because a bad
 upgrade on a headless box can leave it unbootable, `nas upgrade` **requires** a full-image
 `nas backup` first — copied off the box.
 

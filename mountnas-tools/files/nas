@@ -596,6 +596,59 @@ _swap_dir() {
 	rm -rf "$2.old"
 }
 
+# Free the live modloop so its file on BOOT can be overwritten. Replaces
+# Alpine's copy-modloop, which cp -a's the WHOLE modloop tree — kernel modules
+# AND the full firmware set (hundreds of MB) — into the tmpfs RAM root (sized
+# at half of RAM): on a 4 GB box the copy hits ENOSPC mid-way (confirmed on
+# real hardware) and the aborted partial copy fills the tmpfs, wedging lbu.
+# A running system does not read firmware FILES again: every probed device got
+# its firmware uploaded at boot, and anything plugged in before the reboot
+# falls back to /lib/firmware (where apk-installed blobs live). So copy ONLY
+# the kernel modules (tens of MB), retarget the kernel's firmware search path
+# away from the vanishing modloop, and detach it.
+_free_modloop() {
+	src=$(readlink -f /lib/modules 2>/dev/null)
+	case "$src" in
+		/.modloop/*) ;;
+		*) return 0 ;;   # not modloop-backed (already freed) — nothing to do
+	esac
+	# accurate headroom check: kernel modules only, firmware excluded
+	need_kb=65536   # + margin for the rest of the upgrade
+	for d in "$src"/*; do
+		[ "$(basename "$d")" = firmware ] && continue
+		need_kb=$((need_kb + $(du -sk "$d" 2>/dev/null | awk '{print $1}') ))
+	done
+	free_kb=$(df -Pk / 2>/dev/null | awk 'NR==2{print $4}')
+	if [ "${free_kb:-0}" -lt "$need_kb" ]; then
+		bad "not enough RAM headroom to hold the kernel modules: need ~$((need_kb / 1024)) MB free on / (RAM root), have $(( ${free_kb:-0} / 1024)) MB."
+		return 1
+	fi
+	rm -rf /lib/modules.tmp; mkdir -p /lib/modules.tmp
+	for d in "$src"/*; do
+		[ "$(basename "$d")" = firmware ] && continue
+		cp -a "$d" /lib/modules.tmp/ || { rm -rf /lib/modules.tmp; return 1; }
+	done
+	# in-modloop firmware disappears with the unmount: clear the kernel's
+	# custom firmware search path if it points there, so any load between now
+	# and the reboot falls back to /lib/firmware
+	fwp=/sys/module/firmware_class/parameters/path
+	case "$(cat "$fwp" 2>/dev/null)" in
+		/.modloop/*) printf '' > "$fwp" 2>/dev/null || true ;;
+	esac
+	# detach. The service is the normal path; a direct/lazy umount is the
+	# fallback for a transient holder (a spurious 'target is busy' was seen
+	# once under QEMU) — with -l the mount leaves the namespace now and the
+	# loop device auto-clears when the last reference drops, which frees the
+	# modloop file for the crash-safe rename-overwrite either way.
+	if ! rc-service modloop stop >/dev/null 2>&1; then
+		umount /.modloop 2>/dev/null || umount -l /.modloop 2>/dev/null \
+			|| { rm -rf /lib/modules.tmp; return 1; }
+	fi
+	rm -f /lib/modules 2>/dev/null || rm -rf /lib/modules
+	mv /lib/modules.tmp /lib/modules
+	return 0
+}
+
 # nas upgrade --check — one GitHub API call: is a different release published?
 # No auto-update, no scheduling; prints the exact command to run when one is.
 _upgrade_check() {
@@ -619,9 +672,9 @@ _upgrade_check() {
 
 # nas upgrade <mountnas-*.img.gz>
 # Overwrites the OS on the boot USB in place, then you reboot. The live modloop is
-# busy (loop-mounted), so we free it first with copy-modloop (official Alpine tool:
-# copies modules to RAM, unmounts the loopback) — after that the modloop file can be
-# rewritten safely. Config (/cfg) and data disks are never touched.
+# busy (loop-mounted), so we free it first with _free_modloop (copies only the
+# kernel modules to RAM, detaches the loopback) — after that the modloop file can
+# be rewritten safely. Config (/cfg) and data disks are never touched.
 cmd_upgrade() {
 	img="${1:-}"; url=""; dlf=""
 	[ "$img" = "--check" ] && { _upgrade_check; return $?; }
@@ -630,7 +683,6 @@ cmd_upgrade() {
 		http://*|https://*) url="$img" ;;
 		*) [ -f "$img" ] || { bad "not found: $img"; return 1; } ;;
 	esac
-	command -v copy-modloop >/dev/null 2>&1 || { bad "copy-modloop not found (alpine-conf) — cannot upgrade safely"; return 1; }
 
 	# ---- warning + backup gate ----
 	cat <<EOF
@@ -729,25 +781,13 @@ EOF
 		[ -f "$m/$f" ] || { bad "image is missing $f — not a MountNAS image?"; _cleanup; return 1; }
 	done
 
-	# ---- RAM headroom pre-check ----
-	# copy-modloop unpacks the live modloop (kernel modules + the full firmware
-	# set) into the tmpfs RAM root, which defaults to HALF of the machine's RAM.
-	# On a low-RAM box it fills mid-copy and the upgrade aborts late and noisily
-	# (a wall of ENOSPC errors — seen in CI at 4 GB). Require free space on /
-	# for ~3x the compressed modloop up front, with a clear message instead.
-	ml_kb=$(( $(stat -c %s "$BOOTMNT/boot/modloop-lts" 2>/dev/null || echo 0) / 1024 ))
-	root_free_kb=$(df -Pk / 2>/dev/null | awk 'NR==2{print $4}')
-	if [ "${ml_kb:-0}" -gt 0 ] && [ "${root_free_kb:-0}" -lt $((ml_kb * 3)) ]; then
-		bad "not enough RAM headroom for copy-modloop: need ~$((ml_kb * 3 / 1024)) MB free on / (RAM root), have $(( ${root_free_kb:-0} / 1024)) MB."
-		bad "This box has too little RAM for an in-place upgrade — nothing was changed."
-		bad "The RAM root is sized at half the installed RAM; add RAM, or reinstall from the new image instead (config restore via 'nas backup')."
-		_cleanup; return 1
-	fi
-
-	# ---- free the live modloop so we can overwrite it in place (official tool) ----
-	echo "Freeing the live modloop (copy-modloop) ..."
+	# ---- free the live modloop so we can overwrite it in place ----
+	# _free_modloop copies ONLY the kernel modules to RAM (not the firmware
+	# tree) and does its own headroom pre-check — fits comfortably on 4 GB
+	# boxes, unlike Alpine's copy-modloop (see the function comment).
+	echo "Freeing the live modloop (copying kernel modules to RAM) ..."
 	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks
-	copy-modloop || { bad "copy-modloop failed — aborting (nothing on the USB was changed yet)"; _cleanup; return 1; }
+	_free_modloop || { bad "could not free the modloop — aborting (nothing on the USB was changed yet)"; _cleanup; return 1; }
 
 	# ---- overwrite boot files in place, crash-safe (temp name -> rename) ----
 	echo "Writing the new system to the USB ..."
