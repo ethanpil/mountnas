@@ -218,10 +218,14 @@ jobs:
           # Size report: BOOT usage + the biggest payloads, so size regressions
           # are visible in every build log (the partition sizes above are frozen
           # per deployed stick — headroom must be watched, not discovered).
+          # awk does the top-15 truncation itself: 'head' would close the pipe
+          # early and SIGPIPE 'sort' (exit 141), which the strict step shell
+          # turns into a build failure. Informational only — never fail on it.
           echo "== BOOT size report =="
-          df -h "$M"
+          df -h "$M" || true
           du -sh "$M"/apks "$M"/boot 2>/dev/null || true
-          find "$M" -type f -exec du -k {} + | sort -rn | head -15 | awk '{printf "  %6.1f MB  %s\n", $1/1024, $2}'
+          { find "$M" -type f -exec du -k {} + | sort -rn \
+              | awk 'NR<=15 {printf "  %6.1f MB  %s\n", $1/1024, $2}'; } || true
           #  - UEFI (OVMF): grub at the ESP removable fallback path
           #    (/EFI/BOOT/BOOTX64.EFI) so the firmware boots with no NVRAM entry.
           #    grub-install only lays down the core image + modules; it loads the
