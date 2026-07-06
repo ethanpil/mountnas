@@ -134,10 +134,41 @@ EOF
 mk root:root 0644 "$tmp/etc/smartd.conf" <<'EOF'
 # MountNAS smartd defaults — you own this file (edit, then: nas commit).
 # -n standby,q : never wake a spun-down disk just to poll SMART.
-# For failure ALERTS, append a notifier, e.g.:
-#   DEVICESCAN -n standby,q -m root -M exec /usr/local/bin/smart-alert
-# (see 'man smartd.conf'), then: nas commit
+# For failure ALERTS by email: configure /etc/msmtprc (README "Email alerts"),
+# then append your address and run 'nas commit':
+#   DEVICESCAN -n standby,q -m you@example.com
 DEVICESCAN -n standby,q
+EOF
+
+# ---- outbound mail: mail(1) -> msmtp -> your SMTP relay ----
+# smartd's warning script (and anything else) calls mail(1); /etc/mail.rc
+# points it at msmtp. Both spellings are set because mailx flavors differ on
+# the variable name — unknown 'set' variables are ignored harmlessly.
+mk root:root 0644 "$tmp/etc/mail.rc" <<'EOF'
+# Wire mail(1) to msmtp (send-only SMTP; configure /etc/msmtprc first).
+set sendmail=/usr/bin/msmtp
+set mta=/usr/bin/msmtp
+EOF
+
+# msmtprc holds an SMTP password once configured -> mode 0600, root-owned.
+mk root:root 0600 "$tmp/etc/msmtprc" <<'EOF'
+# MountNAS outbound mail (msmtp) — you own this file (edit, then: nas commit).
+# Fill in your SMTP relay below, then test with:
+#   echo test | mail -s "MountNAS test" you@example.com
+# Keep this file mode 0600 — it holds a password.
+defaults
+auth           on
+tls            on
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+logfile        /var/log/msmtp.log
+
+# account        mailbox
+# host           smtp.example.com
+# port           587
+# from           nas@example.com
+# user           nas@example.com
+# password       CHANGE-ME
+# account default : mailbox
 EOF
 
 # ---- sshd: reachable on a fresh, headless box (you own this file) ----

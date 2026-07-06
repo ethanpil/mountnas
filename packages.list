@@ -30,6 +30,9 @@ curl
 wget
 rsync
 rclone
+# restic: encrypted, deduplicated, VERSIONED backups (rclone syncs, restic
+# backs up) to local paths, SFTP, S3, or any rclone remote. Static binary.
+restic
 openssh
 openssh-client
 openssh-sftp-server
@@ -42,6 +45,9 @@ tailscale
 # zerotier-one is built locally (see the /zerotier-one APKBUILD): it repackages
 # the upstream prebuilt apk under our signing key, since it is not in Alpine.
 zerotier-one
+# plain kernel WireGuard (wg + wg-quick) for point-to-point/site-to-site
+# links — the module already ships in linux-lts; no service, bring up per use
+wireguard-tools
 
 # --- name resolution / discovery ---
 avahi
@@ -78,6 +84,11 @@ snapraid
 mergerfs
 mdadm
 lvm2
+# LUKS disk encryption. The dmcrypt boot service (unlocks before localmount)
+# ships in -openrc but is OFF until enabled per host: rc-update add dmcrypt boot
+# — see README "Encrypted data disks (LUKS)".
+cryptsetup
+cryptsetup-openrc
 
 # --- partitioning ---
 parted
@@ -93,7 +104,24 @@ hdparm
 lsscsi
 sg3_utils
 ddrescue
+# testdisk: partition-table recovery + PhotoRec undelete — recovery tools must
+# already be on the box when the disaster happens (same logic as ddrescue)
+testdisk
+# f3: detect counterfeit/failing flash media (f3probe, f3read/f3write) — this
+# project lives on USB sticks, so it should be able to test them
+f3
 fio
+
+# --- file integrity / dedup ---
+# xxhash: very fast checksums (xxhsum) for verifying large media copies
+xxhash
+# fdupes: find duplicate files after consolidating old drives onto the NAS
+fdupes
+
+# --- compression (busybox only DEcompresses these; full tools for backup pipes) ---
+zstd
+lz4
+xz
 
 # --- hardware identification ---
 pciutils
@@ -130,6 +158,13 @@ doas
 nut
 nut-openrc
 nut-udev
+
+# --- outbound email for alerts (smartd, cron/SnapRAID output) ---
+# msmtp is a send-only SMTP client (no daemon, no queue); mailx provides the
+# mail(1) command smartd's warning script calls, wired to msmtp via the seeded
+# /etc/mail.rc. Configure /etc/msmtprc first — README "Email alerts".
+msmtp
+mailx
 
 # --- device firmware (curated consumer-x86 set, ~365 MB vs ~756 MB full) ---
 # Target hardware = repurposed laptops / desktops / NUCs / mini-PCs from the
