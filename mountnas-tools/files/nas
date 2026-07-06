@@ -427,6 +427,11 @@ EOF
 	echo "Imaging $dev (~$(( ${sz:-0} /1048576)) MB) -> $out"
 	echo "This can take several minutes; the image compresses (mostly-empty space shrinks away)."
 	mkdir -p "$STATE" 2>/dev/null || true
+	# /cfg is remounted read-only for a quiescent image. An interrupt (Ctrl-C)
+	# during the multi-minute imaging must never strand it read-only — every
+	# later 'nas commit' would fail long after the cause is forgotten — and must
+	# not leave a partial backup file behind.
+	trap 'mount -o remount,rw "$CFG" 2>/dev/null; rm -f "$out"; echo; bad "backup interrupted — partial file removed, $CFG restored read-write"; exit 130' INT TERM
 	sync; mount -o remount,ro "$CFG" 2>/dev/null || true
 	# pv gives a progress bar + ETA when available. Both stages must be checked:
 	# if pv hits a read error mid-device, gzip still exits 0 on the truncated
@@ -438,8 +443,11 @@ EOF
 	else
 		gzip -c < "$dev" > "$out" && rc=0 || rc=1
 	fi
+	trap - INT TERM
 	if [ "$rc" = 0 ]; then
-		mount -o remount,rw "$CFG" 2>/dev/null || true; sync
+		mount -o remount,rw "$CFG" 2>/dev/null \
+			|| warn "could not remount $CFG read-write — 'nas commit' will fail until you run: mount -o remount,rw $CFG"
+		sync
 		# Read the file back and check the gzip stream end-to-end. This image is
 		# the ONLY rollback net for 'nas upgrade' — a bad sector or truncated
 		# write on the destination is best caught now, not during a disaster
@@ -455,7 +463,8 @@ EOF
 		printf '%s %s\n' "$(date +%s)" "$(date '+%Y-%m-%d %H:%M')" > /etc/mountnas/last-backup 2>/dev/null || true
 		warn "COPY THIS FILE TO ANOTHER COMPUTER — a backup stored only on this box can't save a dead box."
 	else
-		mount -o remount,rw "$CFG" 2>/dev/null || true
+		mount -o remount,rw "$CFG" 2>/dev/null \
+			|| warn "could not remount $CFG read-write — 'nas commit' will fail until you run: mount -o remount,rw $CFG"
 		bad "backup failed (out of space?): $out"; rm -f "$out" 2>/dev/null; return 1
 	fi
 }
