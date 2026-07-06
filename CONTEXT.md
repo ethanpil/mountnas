@@ -350,6 +350,26 @@ init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in 
    on-media copy (no baked-in fallback; it fails loudly if the file is missing).
 4. The rest of the plan's "assumptions to validate on first build" (its §11).
 
+**Known bug — in-place upgrade fails at `copy-modloop` (`/.modloop` busy).**
+The CI upgrade smoke test (upgrading a booted **alpha-1** box to a new image)
+reaches `nas upgrade`, passes the YES gate, decompresses the image, then fails:
+```
+Freeing the live modloop (copy-modloop) ...
+ * Unmounting /.modloop ... umount: /.modloop: target is busy.
+ * ERROR: modloop failed to stop
+```
+So the OS files on the USB are never rewritten (safely — nothing was changed).
+Because the upgrade runs the **source** release's `nas` code, this is alpha-1's
+behavior and cannot be patched retroactively; alpha-1 boxes likely can't
+`nas upgrade` and must reflash. It is almost certainly not a QEMU artifact:
+something holds a reference under `/.modloop` when `copy-modloop` tries to
+detach it, and MountNAS keeps the BOOT partition mounted (the `mountnas`
+service binds `$BOOTMNT/apks`), which is design-specific. **Root cause not yet
+determined** — a live-box diagnostic questionnaire is pending. Until a green
+upgrade is observed, the CI upgrade test is **non-blocking** (`continue-on-error`
+in `build.yml`); re-tighten it to blocking once fixed. This is CONTEXT §8 open
+item 2 turning up a real defect on first execution — exactly what the test is for.
+
 **Known caveats:**
 - **Signing key:** set the `ABUILD_PRIVKEY` repo secret for a fixed key (stable trust
   anchor). Without it the key is random per build (`build-<hex>.rsa.pub`, published as
