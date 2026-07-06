@@ -22,5 +22,13 @@ ips=$(ip -4 -o addr show scope global 2>/dev/null | awk '{sub(/\/.*/,"",$4); pri
 	else
 		printf '  IP: (waiting for network)\n'
 	fi
+	# RAM floor: the OS + every package unpack into tmpfs on each boot, so low
+	# RAM shows up as mysterious failures (full RAM root, OOM) — say it up
+	# front, on the screen someone looks at first. 3.4 GB threshold: a real
+	# 4 GB box reports ~3.7-4.0 GB MemTotal (firmware/iGPU reservations).
+	mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+	if [ -n "$mem_kb" ] && [ "$mem_kb" -lt 3500000 ]; then
+		printf '  NOTE: only %s MB RAM — 4 GB+ recommended (the OS runs from RAM)\n' "$((mem_kb/1024))"
+	fi
 	printf '  Console login: root   then run: nas setup\n\n'
 } > /etc/issue 2>/dev/null || true
