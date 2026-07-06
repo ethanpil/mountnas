@@ -17,7 +17,12 @@ confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
 _blocked() { awk -v m="$1" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts; }
 # Refresh the prompt's unsaved-count cache. Called after every command so the
 # PS1 indicator stays current without ever running lbu from the prompt itself.
-_refresh_unsaved() { mkdir -p "$STATE"; lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || true; }
+# Commands that already counted changes write the cache themselves and set
+# UNSAVED_FRESH so lbu doesn't run a second time.
+_refresh_unsaved() {
+	[ "${UNSAVED_FRESH:-0}" = 1 ] && return 0
+	mkdir -p "$STATE"; lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || true
+}
 
 cmd_version() { echo "MountNAS $VERSION"; }
 
@@ -103,6 +108,8 @@ cmd_status() {
 	done
 	n=$(lbu status 2>/dev/null | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
+	# reuse this count for the prompt cache instead of running lbu again on exit
+	mkdir -p "$STATE"; printf '%s\n' "${n:-0}" > "$STATE/unsaved" 2>/dev/null || true; UNSAVED_FRESH=1
 	# last-backup recency (persisted by nas backup: "<epoch> <YYYY-mm-dd HH:MM>")
 	lbk=$(cat /etc/mountnas/last-backup 2>/dev/null || true)
 	case "${lbk%% *}" in
