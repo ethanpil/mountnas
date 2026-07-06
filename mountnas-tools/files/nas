@@ -361,7 +361,8 @@ cmd_setup() {
 	esac
 	printf '%s\n' "$hn" > /etc/hostname; hostname "$hn" 2>/dev/null; ok "hostname set to $hn"
 
-	echo "[2/5] Root password"; passwd
+	echo "[2/5] Root password"
+	pw_ok=0; passwd && pw_ok=1
 	# Set the timezone directly from the baked-in tzdata. We deliberately do NOT use
 	# setup-timezone: it runs 'apk add tzdata', which fails offline (this appliance
 	# has no internet repo and the on-media repo is not always mounted). tzdata ships
@@ -412,6 +413,18 @@ cmd_setup() {
 			;;
 		*) ok "using DHCP (auto-configured at boot)" ;;
 	esac
+
+	# With a root password now set, close the shipped passwordless-SSH hole
+	# (PermitEmptyPasswords yes exists only so a fresh headless box is reachable).
+	# Touch the directive only while it is still the shipped default — a
+	# user-edited sshd_config is never modified. PasswordAuthentication is left
+	# alone on purpose: disabling it without a confirmed key would strand a
+	# headless box.
+	if [ "$pw_ok" = 1 ] && grep -q '^PermitEmptyPasswords yes$' /etc/ssh/sshd_config 2>/dev/null; then
+		sed -i 's/^PermitEmptyPasswords yes$/PermitEmptyPasswords no/' /etc/ssh/sshd_config
+		rc-service sshd restart >/dev/null 2>&1 || true
+		ok "SSH empty-password login disabled (a root password is set now)"
+	fi
 
 	# Mark setup as completed so the first-login auto-run (profile.d/nas-welcome.sh)
 	# stops offering the wizard. Written before the commit so it persists with it.

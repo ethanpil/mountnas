@@ -44,7 +44,7 @@ Log in as root (no password yet) — at the console or over SSH. `nas setup` sta
 
 **Reaching a headless box on first boot (no monitor).** Two options, both work out of the box:
 
-- **Passwordless SSH (default).** The shipped image permits root login over SSH with no password, so you can `ssh root@<ip>` (or `ssh root@mountnas.local`) and just press Enter at the password prompt. ⚠️ **This is insecure on an untrusted network.** Run `nas setup` to set a password and/or add a key, then tighten `/etc/ssh/sshd_config` (e.g. `PermitRootLogin prohibit-password`, `PasswordAuthentication no`, `PermitEmptyPasswords no`) and `nas commit`.
+- **Passwordless SSH (default).** The shipped image permits root login over SSH with no password, so you can `ssh root@<ip>` (or `ssh root@mountnas.local`) and just press Enter at the password prompt. ⚠️ **This is insecure on an untrusted network.** Run `nas setup` — once it sets a root password it automatically disables empty-password SSH logins (`PermitEmptyPasswords no`). Tighten further in `/etc/ssh/sshd_config` if you use keys (e.g. `PermitRootLogin prohibit-password`, `PasswordAuthentication no`) and `nas commit`.
 - **Pre-seed an SSH key (headless, recommended).** After flashing, drop your public key in a file named `authorized_keys` onto the FAT **BOOT** partition (readable from any OS). On every boot MountNAS installs those keys into `/root/.ssh`, so you can key in immediately. Once you've committed, you can delete the file and disable passwordless SSH as above.
 
 ## Adding your disks (TL;DR: Use /etc/fstab - like normal Linux)

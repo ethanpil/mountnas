@@ -112,10 +112,11 @@ mk root:root 0644 "$tmp/etc/ssh/sshd_config" <<'EOF'
 Include /etc/ssh/sshd_config.d/*.conf
 
 # Default: passwordless root login so a fresh headless box is reachable. INSECURE
-# on untrusted networks — tighten after first boot, e.g.:
+# on untrusted networks. 'nas setup' flips PermitEmptyPasswords to 'no'
+# automatically once a root password is set (only while the line below is still
+# the shipped default). Tighten further yourself, e.g.:
 #   PermitRootLogin prohibit-password
 #   PasswordAuthentication no
-#   PermitEmptyPasswords no
 PermitRootLogin yes
 PasswordAuthentication yes
 PermitEmptyPasswords yes
