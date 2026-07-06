@@ -1,5 +1,17 @@
 # Changelog
 
+## [alpha-6] — 2026-07-06
+
+### Added
+- **LUKS disk encryption** (`cryptsetup` + the `dmcrypt` boot service, off by default): mdadm and LVM shipped but encrypted data disks did not — and dm-crypt is needed at mount time, exactly when a box may be offline. Keyfile-based unlock before `localmount`; README "Encrypted data disks (LUKS)" documents the flow and the honest threat model.
+- **Working email alerts** (`msmtp` + `mailx`): the image previously had *no mail transport*, so smartd's notifier had nowhere to send. `mail(1)` is pre-wired to msmtp; a commented `/etc/msmtprc` template (mode 0600) ships, and the seeded `smartd.conf` shows the one-liner. Works from cron too (SnapRAID reports).
+- **restic**: encrypted, deduplicated, versioned backups to local disks, SFTP, S3, or any rclone remote — rclone syncs, restic backs up. The one real size cost (~14 MB static binary).
+- **Recovery & media testing**: `testdisk` (partition recovery + PhotoRec undelete) and `f3` (counterfeit/failing flash detection) — recovery tools must already be on the box when the disaster happens.
+- **Plain WireGuard** (`wireguard-tools`: wg + wg-quick) alongside Tailscale/ZeroTier; the kernel module was already in linux-lts.
+- **Small QoL tools**: `zstd`/`lz4`/`xz` (full compressors; busybox only decompresses), `xxhash` (fast copy verification), `fdupes` (duplicate hunting after consolidating old drives).
+
+Net cost: ~16 MB of packages against the ~130 MB alpha-5 saved. The upgrade smoke test runs **blocking** for the first time this release (alpha-5 → alpha-6).
+
 ## [alpha-5] — 2026-07-06
 
 ### Fixed

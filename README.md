@@ -134,6 +134,36 @@ all included with the kernel; it's only these device-firmware blobs that are cur
 
 SnapRAID and mergerfs complement each other: SnapRAID gives you parity, mergerfs gives you a single namespace. Keep `/mnt/nasdata` (the system disk) out of both.
 
+## Encrypted data disks (LUKS)
+
+`cryptsetup` is baked in, along with the `dmcrypt` boot service that unlocks volumes *before* `localmount` runs (off by default). Keyfile-based unlock is the supported path — a passphrase prompt at boot would strand a headless box.
+
+```sh
+# one-time setup (as root); the keyfile lives in the committed overlay
+mkdir -p /etc/luks && dd if=/dev/urandom of=/etc/luks/data.key bs=64 count=1 && chmod 600 /etc/luks/data.key
+cryptsetup luksFormat /dev/sdX1 /etc/luks/data.key          # DESTROYS the partition
+cryptsetup open --key-file /etc/luks/data.key /dev/sdX1 cryptdata
+mkfs.ext4 -L cryptdata /dev/mapper/cryptdata
+```
+
+Then wire it for boot: add to `/etc/conf.d/dmcrypt`:
+
+```text
+target=cryptdata
+source='/dev/sdX1'
+key='/etc/luks/data.key'
+```
+
+enable the service and mount by mapper path (keep `nofail`):
+
+```sh
+rc-update add dmcrypt boot
+echo '/dev/mapper/cryptdata  /mnt/disk1  ext4  rw,noatime,nofail  0 2' >> /etc/fstab
+nas status && nas commit
+```
+
+**Honest threat model:** the keyfile sits in the (unencrypted) overlay on the boot USB, so this protects your *data disks* if they are stolen or RMA'd separately — it does **not** protect against someone taking the stick *and* the disks together. That is the right trade for unattended boot; if you need more, keep the key elsewhere and unlock manually.
+
 ## The MountNAS swiss army knife: `nas`
 
 The `nas` tool has been designed to help you manage the system.
@@ -184,10 +214,20 @@ MountNAS is a *diskless, run-from-RAM* Alpine system: every boot the OS is rebui
 - **Small boot helpers.** `mountnas-net` brings up wired DHCP dynamically; `mountnas-sshkey` installs an `authorized_keys` file dropped on the BOOT partition (headless first login); `mountnas-issue` shows the live IP + hostname on the console *before* login; and the `nas-resize` profile snippet fixes terminal size on serial consoles (`qm terminal`, IPMI serial-over-LAN).
 - **One image, in-place upgrades.** A single `.img.gz` is both the installer and the upgrade payload: `nas upgrade` rewrites the OS partition in place and `nas backup` images the whole USB as the rollback net — no A/B slots to reason about.
 
-## Disk health (smartd) and UPS (nut)
+## Disk health (smartd), email alerts, and UPS (nut)
 
-smartd runs; add a notifier in /etc/smartd.conf then nas commit. nut is installed;
-configure /etc/nut/*, enable nut-upsd + nut-upsmon, set SHUTDOWNCMD "/sbin/poweroff", nas commit.
+**smartd** runs out of the box and never wakes spun-down disks (`-n standby,q` in the shipped `/etc/smartd.conf`).
+
+**Email alerts** work once you point msmtp at your SMTP relay — a NAS that can't tell you a disk is dying isn't monitoring anything:
+
+1. Edit `/etc/msmtprc` (a commented template ships; keep it mode 0600 — it holds a password).
+2. Test it: `echo test | mail -s "MountNAS test" you@example.com`
+3. Add your address to `/etc/smartd.conf`: `DEVICESCAN -n standby,q -m you@example.com`
+4. `rc-service smartd restart && nas commit`
+
+The same `mail` command works from cron — pipe your SnapRAID sync/scrub output through it.
+
+**UPS:** nut is installed; configure `/etc/nut/*`, enable nut-upsd + nut-upsmon, set `SHUTDOWNCMD "/sbin/poweroff"`, then `nas commit`.
 
 ## Firewall
 
@@ -283,6 +323,7 @@ __Parity / Volume Management__
 * mergerfs (Download static binary from GitHub release page)
 * mdadm
 * lvm2
+* cryptsetup + cryptsetup-openrc (LUKS; see [Encrypted data disks](#encrypted-data-disks-luks))
 
 __Disk Health / Recovery / Benchmarking__
 
@@ -292,7 +333,15 @@ __Disk Health / Recovery / Benchmarking__
 * lsscsi
 * sg3_utils
 * ddrescue
+* testdisk (partition recovery + PhotoRec undelete)
+* f3 (counterfeit/failing flash detection)
 * fio
+
+__File Integrity / Dedup / Compression__
+
+* xxhash (fast checksums for verifying large copies)
+* fdupes (duplicate-file finder)
+* zstd, lz4, xz (busybox only decompresses these)
 
 __Device Manager__
 
@@ -306,6 +355,7 @@ __Networking / Transfer__
 * wget
 * rsync
 * rclone
+* restic (encrypted, deduplicated, versioned backups — to local disks, SFTP, S3, or any rclone remote)
 * openssh
 * openssh-client
 * openssh-sftp-server
@@ -315,6 +365,7 @@ __Overlay / Mesh VPN (services OFF by default)__
 
 * tailscale
 * zerotier-one
+* wireguard-tools (plain kernel WireGuard: wg + wg-quick)
 
 __Name Resolution / Discovery__
 
@@ -378,6 +429,11 @@ __UPS monitoring (NUT)__
 * nut
 * nut-openrc
 * nut-udev
+
+__Outbound Email (alerts)__
+
+* msmtp (send-only SMTP client; configure `/etc/msmtprc`)
+* mailx (provides `mail(1)`, pre-wired to msmtp — see [email alerts](#disk-health-smartd-email-alerts-and-ups-nut))
 
 __Device Firmware__ (curated consumer-x86 set — repurposed laptops/desktops/NUCs/mini-PCs; anything else: see [Adding firmware for other hardware](#adding-firmware-for-other-hardware))
 
