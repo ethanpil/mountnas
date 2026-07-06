@@ -3,6 +3,7 @@ mountnas-tools
 
 # --- core shell / base utilities ---
 bash
+zsh
 coreutils
 findutils
 util-linux
@@ -32,6 +33,9 @@ rclone
 openssh
 openssh-client
 openssh-sftp-server
+# mosh: roaming, low-latency remote shell over UDP (60000-61000). No daemon —
+# mosh-server is spawned per-session over SSH, so nothing to enable.
+mosh
 
 # --- mesh VPN (services OFF by default) ---
 tailscale

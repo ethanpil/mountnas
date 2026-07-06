@@ -224,6 +224,7 @@ __MountNAS Helper Utilities__
 
 __Core Shell / Base Utilities__
 * bash
+* zsh (alternate login shell — `chsh -s /bin/zsh`, then `nas commit`)
 * coreutils
 * findutils
 * util-linux
@@ -282,6 +283,7 @@ __Networking / Transfer__
 * openssh
 * openssh-client
 * openssh-sftp-server
+* mosh (roaming, low-latency remote shell over UDP; spawned per-session over SSH, no daemon)
 
 __Overlay / Mesh VPN (services OFF by default)__
 
