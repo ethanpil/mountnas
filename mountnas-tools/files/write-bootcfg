@@ -4,8 +4,12 @@
 # both a BIOS (syslinux) and a UEFI (grub) config pointing at it.
 set -eu
 B="$1"
-BASE=$(cat "$B/cmdline.base" 2>/dev/null || echo \
-  "modules=loop,squashfs,sd-mod,usb-storage,vfat,ext4,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk console=tty1 console=ttyS0,115200 ovl_dev=LABEL=MNASCFG")
+# cmdline.base is written to the BOOT partition at build time from the repo's
+# single source (scripts/cmdline.base). No baked-in fallback here on purpose:
+# silently booting a possibly-stale cmdline is worse than refusing — a missing
+# cmdline.base means the BOOT partition is damaged or not a MountNAS layout.
+BASE=$(cat "$B/cmdline.base") \
+  || { echo "write-bootcfg: FATAL: $B/cmdline.base missing — refusing to guess the kernel cmdline" >&2; exit 1; }
 # modloop path is resolved relative to the boot media by the init. The apk repo is
 # found via the .boot_repository marker (alpine_repo=auto) — a literal path would be
 # used verbatim and disable that discovery.

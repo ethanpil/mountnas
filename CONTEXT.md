@@ -327,9 +327,10 @@ init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in 
    (write the backup image to a second USB and boot it).
 3. **Boot-module breadth (addressed, verify).** The cmdline loads
    `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a VM
-   disk (Proxmox defaults to VirtIO SCSI) is found at boot. The list is kept in sync
-   across **three** places — `mkimg.nas.sh`, the `.img` `cmdline.base` echo in
-   `build.yml`, and the `write-bootcfg` fallback default; change all three together.
+   disk (Proxmox defaults to VirtIO SCSI) is found at boot. The cmdline now has a
+   **single source**: `scripts/cmdline.base` — `mkimg.nas.sh` reads it (via
+   `CMDLINE_FILE`), `build.yml` copies it onto BOOT, and `write-bootcfg` reads the
+   on-media copy (no baked-in fallback; it fails loudly if the file is missing).
 4. The rest of the plan's "assumptions to validate on first build" (its §11).
 
 **Known caveats:**
