@@ -220,10 +220,18 @@ jobs:
           #    setup-bootable's plain mbr.bin, which can't boot GPT). SeaBIOS -> this
           #    MBR -> the legacy-bootable partition's VBR -> syslinux just installed.
           dd bs=440 count=1 conv=notrunc if=/usr/share/syslinux/gptmbr.bin of="$LOOP"
+          # Writing the MBR boot code above makes the kernel re-read the loop
+          # partition table, and the p2 node can momentarily vanish (mount fails
+          # with "Can't lookup blockdev" — seen in CI). Re-probe and retry.
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [ -b "${LOOP}p2" ] && mount "${LOOP}p2" "$M" 2>/dev/null && break
+            partprobe "$LOOP" 2>/dev/null || true; sleep 1
+          done
+          mountpoint -q "$M" || { echo "ERROR: cannot mount ${LOOP}p2 after partprobe retries"; exit 1; }
           # MNASCFG carries the seed overlay AND the apk cache dir (next to the
           # apkovl — the standard Alpine diskless cache spot; /etc/apk/cache in
           # the overlay points at /cfg/cache, which is this directory at runtime).
-          mount "${LOOP}p2" "$M"; cp "$OVL" "$M/$(basename "$OVL")"; mkdir -p "$M/cache"; sync; umount "$M"
+          cp "$OVL" "$M/$(basename "$OVL")"; mkdir -p "$M/cache"; sync; umount "$M"
           losetup -d "$LOOP"; gzip -9 "$IMG"
           # Stage the release files under branded names (published individually,
           # un-zipped). ONE image now serves BOTH fresh install (write to USB) and
