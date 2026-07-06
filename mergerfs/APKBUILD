@@ -36,3 +36,12 @@ package() {
 	install -Dm755 "$bin" "$pkgdir"/usr/bin/mergerfs
 	return 0
 }
+
+# Committed (NOT regenerated in CI) so the pinned release is integrity-checked:
+# if the GitHub asset is ever replaced, the build fails instead of shipping it.
+# The source filename is arch-dependent ($_ma); only the x86_64/amd64 tarball is
+# built by CI today — when enabling another arch, append its tarball's sum here.
+# On a pkgver bump, refresh with: abuild checksum
+sha512sums="
+c47f71183c19787f93653e2df6c65989eb7c7c4228132a7aa62dbd38b413d7fac90576ab52ae10a2c641c0d943ac398c3b06ad708cab2844ebc9f243dec90625  mergerfs-2.42.0-static-linux_amd64.tar.gz
+"

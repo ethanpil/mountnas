@@ -27,3 +27,10 @@ package() {
 	# from RAM needs neither ('snapraid --help' covers usage), so just remove them.
 	rm -rf "$pkgdir"/usr/share/man
 }
+
+# Committed (NOT regenerated in CI) so the pinned release is integrity-checked:
+# if the GitHub asset is ever replaced, the build fails instead of shipping it.
+# On a pkgver bump, refresh with: abuild checksum
+sha512sums="
+4e611e5d95a02702abbc8150375e74a1236094e0695792d155147a04dc71e1b1da327d4eb28702a424474adfc7e50cebc2d6b9daa55e78eeb70b384127a1b5bd  snapraid-14.7.tar.gz
+"

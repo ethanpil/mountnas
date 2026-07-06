@@ -124,11 +124,14 @@ jobs:
             echo "== build mountnas-tools =="
             ( cd "$HOME"/repo/mountnas-tools && abuild -r )
             echo "== build snapraid (compiled from source) =="
-            ( cd "$HOME"/repo/snapraid && abuild checksum && abuild -r )
+            # No 'abuild checksum' here: the sha512sums committed in each APKBUILD
+            # are the integrity check. Regenerating them at build time would make
+            # verification a no-op (hash whatever was just downloaded).
+            ( cd "$HOME"/repo/snapraid && abuild -r )
             echo "== build mergerfs (repackage upstream static binary) =="
-            ( cd "$HOME"/repo/mergerfs && abuild checksum && abuild -r )
+            ( cd "$HOME"/repo/mergerfs && abuild -r )
             echo "== build zerotier-one (repackage upstream apk under our key) =="
-            ( cd "$HOME"/repo/zerotier-one && abuild checksum && abuild -r )
+            ( cd "$HOME"/repo/zerotier-one && abuild -r )
             echo "== ISO =="
             cp "$HOME"/repo/scripts/* aports/scripts/
             mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"

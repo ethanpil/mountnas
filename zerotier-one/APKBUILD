@@ -30,3 +30,12 @@ package() {
 	cp -a "$srcdir/usr" "$pkgdir/usr"
 	install -Dm755 "$srcdir/zerotier-one.initd" "$pkgdir/etc/init.d/zerotier-one"
 }
+
+# Committed (NOT regenerated in CI) so the pinned release is integrity-checked:
+# if the GitHub asset is ever replaced, the build fails instead of shipping it.
+# On a pkgver bump — or any edit to zerotier-one.initd — refresh with:
+# abuild checksum
+sha512sums="
+ee5dd3fd83699f57d980965e6cbd876a0cda479c35cf31e122c85fa01b1aba579c461fb5fa412282dcd34b565a6244c6be55b984b1ee8b20459d29975af00437  upstream-zerotier-one-1.16.2-r0-x86_64.apk
+ab4fe807160043c3b97fc658922bd015bf7220eabf3346d1c7d3b78bfc5f141a3f501118033a5f9e554f4feeebb392d31c9f39b779589e0bd133df087f7dd40e  zerotier-one.initd
+"
