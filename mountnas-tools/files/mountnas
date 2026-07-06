@@ -33,6 +33,10 @@ start() {
 	# The '! mountpoint -q' guard makes this idempotent: on 'mountnas restart' a
 	# second bind would STACK another mount on the same target instead of
 	# replacing it, slowly leaking mounts. Bind only when nothing is there yet.
+	# mkdir first: the mountpoint lives on the RAM root and exists on no boot —
+	# without it the mount fails ("mount point does not exist"), the bind never
+	# happens, and offline apk breaks (found via a live-box diagnostic).
+	mkdir -p "$BOOTMNT"
 	if mountpoint -q "$BOOTMNT" || mount -o ro LABEL=BOOT "$BOOTMNT" 2>>"$LOG"; then
 		mkdir -p "$STATE/apks"
 		if [ -d "$BOOTMNT/apks" ] && ! mountpoint -q "$STATE/apks"; then
