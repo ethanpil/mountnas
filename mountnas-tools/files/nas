@@ -729,6 +729,21 @@ EOF
 		[ -f "$m/$f" ] || { bad "image is missing $f — not a MountNAS image?"; _cleanup; return 1; }
 	done
 
+	# ---- RAM headroom pre-check ----
+	# copy-modloop unpacks the live modloop (kernel modules + the full firmware
+	# set) into the tmpfs RAM root, which defaults to HALF of the machine's RAM.
+	# On a low-RAM box it fills mid-copy and the upgrade aborts late and noisily
+	# (a wall of ENOSPC errors — seen in CI at 4 GB). Require free space on /
+	# for ~3x the compressed modloop up front, with a clear message instead.
+	ml_kb=$(( $(stat -c %s "$BOOTMNT/boot/modloop-lts" 2>/dev/null || echo 0) / 1024 ))
+	root_free_kb=$(df -Pk / 2>/dev/null | awk 'NR==2{print $4}')
+	if [ "${ml_kb:-0}" -gt 0 ] && [ "${root_free_kb:-0}" -lt $((ml_kb * 3)) ]; then
+		bad "not enough RAM headroom for copy-modloop: need ~$((ml_kb * 3 / 1024)) MB free on / (RAM root), have $(( ${root_free_kb:-0} / 1024)) MB."
+		bad "This box has too little RAM for an in-place upgrade — nothing was changed."
+		bad "The RAM root is sized at half the installed RAM; add RAM, or reinstall from the new image instead (config restore via 'nas backup')."
+		_cleanup; return 1
+	fi
+
 	# ---- free the live modloop so we can overwrite it in place (official tool) ----
 	echo "Freeing the live modloop (copy-modloop) ..."
 	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks

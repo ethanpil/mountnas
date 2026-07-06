@@ -134,8 +134,11 @@ Your data disks were never part of the upgrade or the backup, so they are unaffe
 
 ## Notes
 
-- **RAM.** `copy-modloop` holds the uncompressed kernel modules (~300–500 MB) in RAM until
-  you reboot — fine on typical NAS hardware.
+- **RAM.** `copy-modloop` unpacks the kernel modules **and the full firmware set** into
+  the RAM root until you reboot — well over 1 GB uncompressed. The RAM root (tmpfs) is
+  sized at half the installed RAM and already holds the running system, so in-place
+  upgrades want **8 GB+ RAM**; on a 4 GB box `nas upgrade` detects the shortfall and
+  aborts up front, before anything on the USB is touched.
 - **Temp space.** Unpacking a `.img.gz` needs room for the ~6 GB decompressed image on the
   data disk (or wherever `TMPDIR` points). `nas upgrade` checks this before doing anything.
 - **Config safety.** Because `MNASCFG` is a separate partition, upgrading never risks your

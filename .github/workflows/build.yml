@@ -343,9 +343,15 @@ jobs:
           # detect-zeroes=unmap: the guest unpacks ~6 GB that is mostly zeros
           # onto the payload disk; punching holes for zero writes keeps the
           # host file small so /mnt can never fill (see the ENOSPC note above).
+          # -m 8192: copy-modloop unpacks the modloop (modules + the full vendor
+          # firmware set) into the tmpfs RAM root, which defaults to HALF of
+          # RAM. At 4 GB the ~2 GB tmpfs (already holding the installed system)
+          # fills and the upgrade aborts — a real limitation of low-RAM boxes
+          # ('nas upgrade' pre-checks it), not an upgrade-logic failure. Test
+          # with typical NAS memory.
           {
             echo '#!/bin/sh'
-            echo "exec qemu-system-x86_64 $KVM -m 4096 -nographic \\"
+            echo "exec qemu-system-x86_64 $KVM -m 8192 -nographic \\"
             echo "  -drive file=$WORK/old.img,format=raw,if=virtio,discard=unmap,detect-zeroes=unmap \\"
             echo "  -drive file=$WORK/updisk.img,format=raw,if=virtio,discard=unmap,detect-zeroes=unmap"
           } > "$WORK/run-qemu.sh"
