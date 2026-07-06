@@ -4,7 +4,7 @@ on:
     inputs:
       release_tag:   { description: "Release tag (image filename)", required: true, default: "dev" }
       alpine_branch: { description: "Alpine branch", required: true, default: "latest-stable" }
-      aports_ref:    { description: "aports git ref — MUST match alpine_branch's version (latest-stable is currently 3.24, so use 3.24-stable)", required: true, default: "3.24-stable" }
+      aports_ref:    { description: "aports git ref — leave EMPTY to auto-derive from the installed Alpine version (e.g. 3.24 -> 3.24-stable); set only to override", required: false, default: "" }
       arch:          { description: "Architecture", required: true, default: "x86_64" }
 jobs:
   build:
@@ -45,6 +45,14 @@ jobs:
         run: |
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
+          # aports_ref MUST match the installed Alpine's version (a mkimage.sh from
+          # the wrong aports fails against the installed apk-tools). Deriving it
+          # here removes the update-both-inputs footgun on a new Alpine release;
+          # the workflow input stays as a manual override.
+          if [ -z "$APORTS_REF" ]; then
+            APORTS_REF="$(cut -d. -f1,2 /etc/alpine-release)-stable"
+          fi
+          echo "aports ref: $APORTS_REF"
           apk update; adduser -D build; addgroup build abuild 2>/dev/null || true
           # abuild runs as the non-root build user but must 'apk add' build deps
           # ('-r' installs both make- and regular depends), which needs root. Give it

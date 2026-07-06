@@ -163,9 +163,11 @@ The CI **preflight** (`apk add --simulate`) excludes all four local packages
 Everything below is in `.github/workflows/build.yml`. Each line fixes a real
 failure encountered during bring-up.
 
-**Version match.** `alpine_branch=latest-stable` (= v3.24 now), and **`aports_ref`
-MUST match** (`3.24-stable`). A `mkimage.sh` from the wrong aports version fails
-against the installed apk-tools. Bump both together on a new Alpine release.
+**Version match.** `alpine_branch=latest-stable` (= v3.24 now), and the aports ref
+MUST match — a `mkimage.sh` from the wrong aports version fails against the
+installed apk-tools. The workflow now **auto-derives** the ref from the installed
+`/etc/alpine-release` (`3.24` → `3.24-stable`) when the `aports_ref` input is left
+empty; the input remains as a manual override only.
 
 **Non-root build user + GitHub runner restrictions** (the big class of failures):
 - **Unprivileged userns is blocked on ubuntu-24.04 runners** → apk's package-script
@@ -349,7 +351,8 @@ init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in 
 
 GitHub → Actions → **Build MountNAS** → Run workflow. Inputs: `release_tag`
 (image filename + release tag), `alpine_branch=latest-stable`,
-**`aports_ref=3.24-stable`** (must match the branch version), `arch=x86_64`.
+`aports_ref` **left empty** (auto-derived from the installed Alpine version;
+set only to override), `arch=x86_64`.
 Output: a GitHub Release tagged `<release_tag>` with the files in §4.
 
 ## 10. References
