@@ -39,6 +39,19 @@ start() {
 	# device was not ready that early. /cfg is a LOCAL ext4 partition, so this
 	# retry cannot hang the way a remote mount can.
 	mountpoint -q /cfg || { mkdir -p /cfg; mount /cfg 2>>"$LOG" || log "/cfg mount failed"; }
+	# Power loss is the normal failure mode for a NAS without a UPS, and a
+	# dirty-enough ext4 refuses to mount — losing the saves path until someone
+	# fscks by hand (nothing else ever fscks /cfg: fstab pass is 0 and no fsck
+	# service is enabled). Preen mode is safe here: the fs is unmounted (the
+	# mount just failed) and -p makes only safe automatic repairs.
+	if ! mountpoint -q /cfg; then
+		cdev=$(findfs LABEL=MNASCFG 2>/dev/null)
+		if [ -n "$cdev" ]; then
+			log "running e2fsck -p on $cdev after failed /cfg mount"
+			e2fsck -p "$cdev" >>"$LOG" 2>&1 || log "e2fsck exited $? on $cdev"
+			mount /cfg 2>>"$LOG" || log "/cfg mount failed after fsck"
+		fi
+	fi
 	if mountpoint -q /cfg; then echo ok > "$STATE/cfg"; else echo fail > "$STATE/cfg"
 		ewarn "Config partition /cfg NOT mounted — 'nas commit' will refuse to save."; log "/cfg NOT mounted"; fi
 
