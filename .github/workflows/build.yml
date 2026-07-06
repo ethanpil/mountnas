@@ -277,6 +277,57 @@ jobs:
           }
           run_boot bios
           run_boot uefi -bios /usr/share/ovmf/OVMF.fd
+      # Upgrade-path smoke test: boot the PREVIOUS published release in QEMU and
+      # drive its serial console (expect) through a real 'nas upgrade' to the
+      # image THIS run just built, then reboot and require (a) a login shell,
+      # (b) the new version, (c) a world free of media-unresolvable packages.
+      # This exercises the riskiest shipped path — the one that can brick a
+      # headless box — before anything is published. Skipped with a notice when
+      # the repo has no previous release carrying an .img.gz (first release,
+      # forks). Work area lives on /mnt (the runner's big ephemeral disk):
+      # old image (~6 GB) + payload disk (~8 GB real).
+      - name: Upgrade smoke test (previous release -> this build)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest"
+          old_url=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$api" 2>/dev/null \
+            | jq -r '.assets[]?.browser_download_url // empty' | grep -m1 '\.img\.gz$' || true)
+          if [ -z "$old_url" ]; then
+            echo "NOTICE: no previous release with an .img.gz asset - skipping the upgrade test."
+            exit 0
+          fi
+          echo "previous release image: $old_url"
+          sudo apt-get install -qy expect
+          WORK=/mnt/upgrade-test; sudo mkdir -p "$WORK"; sudo chmod 777 "$WORK"
+          # Expected post-upgrade version = the new image's mountnas-tools pkgver,
+          # read from the apk filename inside the image the boot test unpacked.
+          LOOP=$(sudo losetup -fP --show /tmp/nas.img)
+          M=$(mktemp -d); sudo mount -o ro "${LOOP}p1" "$M"
+          NEWVER=$(basename "$(ls "$M"/apks/${{ inputs.arch }}/mountnas-tools-*.apk | head -n1)" .apk)
+          NEWVER=${NEWVER#mountnas-tools-}; NEWVER=${NEWVER%-r*}
+          sudo umount "$M"; sudo losetup -d "$LOOP"; rmdir "$M"
+          rm -f /tmp/nas.img   # return the boot test's 6 GB before unpacking more
+          echo "expecting post-upgrade version: $NEWVER"
+          curl -fsSL "$old_url" | gzip -dc > "$WORK/old.img"
+          # Payload disk: carries the new .img.gz into the guest AND provides the
+          # upgrade's temp space (needs ~7 GiB free -> 12G, no reserved blocks).
+          truncate -s 12G "$WORK/updisk.img"
+          mkfs.ext4 -Fq -m0 "$WORK/updisk.img"
+          UD=$(mktemp -d); sudo mount -o loop "$WORK/updisk.img" "$UD"
+          sudo cp "out/mountnas-${{ inputs.release_tag }}.img.gz" "$UD/new.img.gz"
+          sudo umount "$UD"; rmdir "$UD"
+          KVM=""
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; KVM="-enable-kvm -cpu host"; fi
+          {
+            echo '#!/bin/sh'
+            echo "exec qemu-system-x86_64 $KVM -m 4096 -nographic \\"
+            echo "  -drive file=$WORK/old.img,format=raw,if=virtio \\"
+            echo "  -drive file=$WORK/updisk.img,format=raw,if=virtio"
+          } > "$WORK/run-qemu.sh"
+          expect scripts/ci-upgrade-test.exp "$WORK/run-qemu.sh" "$NEWVER"
       # Publish each artifact (img.gz, rsa.pub, SHA256SUMS) as a SEPARATE,
       # individually-downloadable release asset — not a single zip.
       - name: Publish release

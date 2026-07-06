@@ -1,0 +1,94 @@
+#!/usr/bin/expect -f
+# ci-upgrade-test.exp <qemu-launch-script> <expected-version>
+#
+# Drives a MountNAS guest through a REAL in-place upgrade over the serial
+# console: boot the previous release, skip the first-boot wizard, mount the
+# second disk carrying the new image, run 'nas upgrade', reboot, and require
+# the upgraded system to reach a shell reporting the expected version with a
+# clean /etc/apk/world. Called by the "Upgrade smoke test" step in build.yml,
+# which stages the disks and the launch script.
+#
+# Expect pitfall handled below: the terminal ECHOES every command we type, so
+# a marker string sent as part of a command would match its own echo. Markers
+# are therefore split with quotes in the sent command (WORLD"-OK") and matched
+# unsplit (WORLD-OK), which only the command's OUTPUT can produce.
+
+set qemu   [lindex $argv 0]
+set newver [lindex $argv 1]
+set timeout 480
+
+proc die {msg} { puts "\nUPGRADE-TEST FAIL: $msg"; exit 1 }
+
+# Reach a root shell, skipping the first-boot wizard if it auto-starts (the
+# guest has no root password and no setup-done marker; Ctrl-C exits the wizard
+# and lands on the prompt, which ends in ":~# " for root).
+proc login_to_shell {what} {
+    expect {
+        -re "login:" {}
+        timeout { die "no login prompt $what" }
+    }
+    send "root\r"
+    expect {
+        -re {Hostname \[} { send "\003"; exp_continue }
+        -re {:~# } {}
+        timeout { die "no shell prompt $what" }
+    }
+}
+
+spawn sh $qemu
+
+# --- old release: boot to a shell ---
+login_to_shell "booting the old release"
+
+# --- mount the second disk (carries the new .img.gz) ---
+send "mkdir -p /media/upgrade && mount /dev/vdb /media/upgrade && echo MOUNT\"-OK\"\r"
+expect {
+    "MOUNT-OK" {}
+    timeout { die "could not mount the upgrade-payload disk" }
+}
+expect -re {:~# }
+
+# --- run the upgrade (temp space on the payload disk) ---
+send "TMPDIR=/media/upgrade nas upgrade /media/upgrade/new.img.gz\r"
+expect {
+    "Type YES" { send "YES\r" }
+    timeout { die "upgrade never reached the YES confirmation gate" }
+}
+set timeout 1500
+expect {
+    "Upgrade written successfully" {}
+    "RESTORE YOUR BACKUP" { die "upgrade reported write failures" }
+    -re {\[FAIL\]} { die "upgrade failed" }
+    timeout { die "upgrade did not complete in time" }
+}
+set timeout 480
+expect -re {:~# }
+
+# --- the reconciled world must not contain packages the media can't resolve ---
+send "grep -qx linux-firmware /etc/apk/world && echo WORLD\"-BAD\" || echo WORLD\"-OK\"\r"
+expect {
+    "WORLD-BAD" { die "linux-firmware leaked into /etc/apk/world (world.base drift)" }
+    "WORLD-OK" {}
+    timeout { die "world check produced no output" }
+}
+expect -re {:~# }
+
+# --- reboot into the upgraded system ---
+send "/sbin/reboot\r"
+login_to_shell "after rebooting into the upgraded system"
+
+# --- the running version must be the new build's pkgver ---
+send "cat /usr/share/mountnas/version\r"
+expect {
+    -ex $newver {}
+    timeout { die "post-upgrade version mismatch (expected $newver)" }
+}
+expect -re {:~# }
+
+send "/sbin/poweroff\r"
+expect {
+    eof {}
+    timeout { die "guest did not power off" }
+}
+puts "\nUPGRADE-TEST PASS: upgraded to $newver, rebooted, world clean"
+exit 0

@@ -333,11 +333,15 @@ init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in 
    boot from a **real USB stick on real hardware**, confirm the seed overlay applies
    (root-owned, doas works), and that `mountnas` holds then releases docker/samba/nfs
    around `/mnt/nasdata`; and that `command -v copy-modloop` is present.
-2. **Validate the single-slot upgrade + backup (§4a).** `nas backup` → a valid
-   `mountnas-backup-*.img.gz`; `nas upgrade <img.gz>` → warn+`YES` gate, free-space
-   precheck, `copy-modloop`, crash-safe in-place overwrite, world reconcile, reboot into
-   the new version with **config + a user-added package preserved**; then a restore drill
-   (write the backup image to a second USB and boot it).
+2. **Validate the single-slot upgrade + backup (§4a).** The upgrade half is now
+   **automated in CI**: the "Upgrade smoke test" step boots the previous published
+   release in QEMU and drives a real `nas upgrade` to the freshly built image over
+   the serial console (expect script `scripts/ci-upgrade-test.exp`) — YES gate,
+   copy-modloop, in-place overwrite, world reconcile (asserts no `linux-firmware`
+   leak), reboot into the new version. It skips with a notice when no previous
+   release exists. Still manual: `nas backup` → restore drill (write the backup
+   image to a second USB and boot it), and config + user-added-package
+   preservation across a real upgrade.
 3. **Boot-module breadth (addressed, verify).** The cmdline loads
    `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a VM
    disk (Proxmox defaults to VirtIO SCSI) is found at boot. The cmdline now has a
