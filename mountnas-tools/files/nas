@@ -213,30 +213,85 @@ cmd_status() {
 	return 0
 }
 
-# nas disks — every disk with UUID + mount state, marking the boot USB / cfg
-# partition, plus a paste-ready fstab line for each unconfigured data partition.
+# Disk temperature WITHOUT waking sleeping drives: hdparm -C reports the power
+# state without spinning up — a drive in standby shows "standby" instead of a
+# reading. Temps come from hwmon: the drivetemp module (loaded via /etc/modules)
+# covers SATA; NVMe registers its own sensor. "-" when no sensor exists (VMs,
+# USB bridges without SAT).
+_disk_temp() {
+	case "$(hdparm -C "/dev/$1" 2>/dev/null)" in
+		*standby*|*sleeping*) echo standby; return 0 ;;
+	esac
+	t=$(cat "/sys/block/$1/device/hwmon/hwmon"*/temp1_input 2>/dev/null | head -n1)
+	if [ -z "$t" ]; then
+		# fallback: sensor may sit deeper (e.g. NVMe controller); sysfs paths
+		# never contain whitespace, so head+cat is safe
+		f=$(find "/sys/block/$1/device/" -maxdepth 4 -name temp1_input 2>/dev/null | head -n1)
+		[ -n "$f" ] && t=$(cat "$f" 2>/dev/null)
+	fi
+	case "$t" in
+		''|*[!0-9]*) echo "-" ;;
+		*) echo "$((t / 1000))C" ;;
+	esac
+}
+
+# nas disks — one header row per physical disk (hardware identity: vendor,
+# model, serial, firmware, bus, HDD/SSD, temperature) with its partitions
+# indented underneath (fstype, label, UUID, mountpoint, free space), plus a
+# paste-ready fstab line for each unconfigured data partition. All identity
+# fields come from lsblk/sysfs — no disk spin-up.
 cmd_disks() {
 	bp=$(findfs LABEL=BOOT 2>/dev/null)
 	usb=$(lsblk -no pkname "$bp" 2>/dev/null | head -n1)
 	TAB=$(printf '\t')
 
 	echo "Detected disks (* = MountNAS boot USB — do NOT add to fstab):"
-	printf "  %-8s %-7s %-8s %-20s %s\n" NAME SIZE FSTYPE MOUNTPOINT UUID
 	# JSON + jq (not 'eval' of lsblk pairs): a filesystem label is arbitrary user
 	# data — under eval a label like '$(...)' would run as root, and quotes or
 	# spaces would garble parsing. jq emits TSV with '-' placeholders for empty
-	# fields so the tab-separated read can't collapse columns either.
-	lsblk -Jo NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT 2>/dev/null \
-	| jq -r '.blockdevices[] | recurse(.children[]?)
-		| select(.type=="disk" or .type=="part")
-		| [.name, .type, .size, (.fstype // "-"), (.label // "-"),
-		   (.uuid // "-"), (.mountpoint // "(not mounted)")] | @tsv' \
-	| while IFS="$TAB" read -r NAME TYPE SIZE FSTYPE LABEL UUID MOUNTPOINT; do
-		tag=""
-		[ "$NAME" = "$usb" ] && tag=" *"
-		[ "$LABEL" = BOOT ]  && tag=" * (BOOT)"
-		[ "$LABEL" = MNASCFG ] && tag=" * (cfg)"
-		printf "  %-8s %-7s %-8s %-20s %s%s\n" "$NAME" "$SIZE" "$FSTYPE" "$MOUNTPOINT" "$UUID" "$tag"
+	# fields so the tab-separated read can't collapse columns either. A "D" row
+	# per disk, then a "P" row per partition — including the disk itself when a
+	# filesystem sits directly on it (no partition table).
+	lsblk -Jo 'NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT,FSAVAIL,FSUSE%,VENDOR,MODEL,SERIAL,REV,TRAN,ROTA' 2>/dev/null \
+	| jq -r '
+		def s(f): (f // "-") | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end;
+		def prow: [ "P", .name, s(.size), s(.fstype), s(.label), s(.uuid),
+		            (.mountpoint // "-"), s(.fsavail), s(."fsuse%") ] | @tsv;
+		.blockdevices[] | select(.type=="disk") as $d |
+		( [ "D", $d.name, s($d.size), s($d.tran),
+		    (if $d.rota then "HDD" else "SSD" end),
+		    s($d.vendor), s($d.model), s($d.serial), s($d.rev) ] | @tsv ),
+		( $d | select(.fstype != null) | prow ),
+		( $d.children[]? | select(.type=="part") | prow )' \
+	| while IFS="$TAB" read -r k f1 f2 f3 f4 f5 f6 f7 f8; do
+		case "$k" in
+		D)
+			# f1=name f2=size f3=tran f4=HDD/SSD f5=vendor f6=model f7=serial f8=rev
+			tag=""; [ "$f1" = "$usb" ] && tag="   *"
+			id=""
+			[ "$f5" != "-" ] && id="$f5 "
+			[ "$f6" != "-" ] && id="$id$f6"
+			[ -n "$id" ] || id="(unknown model)"
+			sn=""; [ "$f7" != "-" ] && sn="  SN:$f7"
+			fw=""; [ "$f8" != "-" ] && fw="  fw:$f8"
+			printf "\n  %-8s %-7s %-5s %s  %s%s%s  temp:%s%s\n" \
+				"$f1" "$f2" "$f3" "$f4" "$id" "$sn" "$fw" "$(_disk_temp "$f1")" "$tag"
+			;;
+		P)
+			# f1=name f2=size f3=fstype f4=label f5=uuid f6=mountpoint f7=avail f8=use%
+			tag=""
+			[ "$f4" = BOOT ] && tag="  * (BOOT)"
+			[ "$f4" = MNASCFG ] && tag="  * (cfg)"
+			if [ "$f6" = "-" ]; then minfo="(not mounted)"
+			else
+				minfo="$f6"
+				[ "$f7" != "-" ] && minfo="$minfo  ($f7 free, $f8 used)"
+			fi
+			u="-"; [ "$f5" != "-" ] && u="UUID=$f5"
+			printf "    %-8s %-7s %-8s %-14s %-42s %s%s\n" \
+				"$f1" "$f2" "$f3" "$f4" "$u" "$minfo" "$tag"
+			;;
+		esac
 	done
 
 	echo
@@ -250,13 +305,18 @@ cmd_disks() {
 	# Suggested mountpoints: /mnt/nasdata first (only if not already in fstab),
 	# then /mnt/disk1, /mnt/disk2, … — never the same mountpoint twice.
 	# jq carries the parent disk name so partitions of the boot USB are skipped
-	# reliably (the old NAME==usb test compared a partition to a disk name).
+	# reliably, plus the disk's vendor/model/serial: the line ends with a comment
+	# identifying the PHYSICAL drive, so a stale fstab entry can be traced back
+	# to the disk in hand long after mkfs changed its UUID.
 	have_nd=$(awk '$1!~/^#/ && $2=="/mnt/nasdata"{f=1} END{print f+0}' /etc/fstab)
-	lines=$(lsblk -Jo NAME,TYPE,FSTYPE,LABEL,UUID 2>/dev/null \
-	| jq -r '.blockdevices[] | . as $d | .children[]?
+	lines=$(lsblk -Jo NAME,TYPE,FSTYPE,LABEL,UUID,VENDOR,MODEL,SERIAL 2>/dev/null \
+	| jq -r '
+		def s(f): (f // "-") | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end;
+		.blockdevices[] | select(.type=="disk") as $d | $d.children[]?
 		| select(.type=="part") | select(.uuid and .fstype)
-		| [$d.name, .name, .fstype, (.label // "-"), .uuid] | @tsv' \
-	| { n=1; while IFS="$TAB" read -r PK NAME FSTYPE LABEL UUID; do
+		| [$d.name, s($d.vendor), s($d.model), s($d.serial),
+		   .name, .fstype, s(.label), .uuid] | @tsv' \
+	| { n=1; while IFS="$TAB" read -r PK VEND MOD SER NAME FSTYPE LABEL UUID; do
 		case "$LABEL" in BOOT|MNASCFG) continue ;; esac
 		[ "$PK" = "$usb" ] && continue
 		# already referenced in fstab (by UUID)?
@@ -266,7 +326,11 @@ cmd_disks() {
 			while awk -v m="/mnt/disk$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
 			mp="/mnt/disk$n"; n=$((n+1))
 		fi
-		printf "  UUID=%s  %-13s %s  rw,noatime,nofail  0 2   # paste into /etc/fstab (edit mountpoint)\n" "$UUID" "$mp" "$FSTYPE"
+		phys=""
+		[ "$VEND" != "-" ] && phys="$VEND "
+		[ "$MOD" != "-" ] && phys="$phys$MOD "
+		[ "$SER" != "-" ] && phys="${phys}SN:$SER "
+		printf "  UUID=%s  %-13s %s  rw,noatime,nofail  0 2   # %s(edit mountpoint)\n" "$UUID" "$mp" "$FSTYPE" "$phys"
 	done; })
 	[ -n "$lines" ] && printf '%s\n' "$lines" \
 		|| echo "  (none — every filesystem is already in fstab, or blank/unformatted)"

@@ -79,9 +79,12 @@ LABEL=MNASCFG  /cfg  ext4  rw,noatime,nofail  0 0
 # After editing, check it before rebooting:  nas status
 EOF
 
+# drivetemp: SATA disk temperatures via hwmon (read by 'nas disks' without
+# waking drives — it checks the power state first). NVMe needs no module.
 mk root:root 0644 "$tmp/etc/modules" <<'EOF'
 fuse
 ntfs3
+drivetemp
 EOF
 
 mk root:root 0400 "$tmp/etc/doas.conf" <<'EOF'

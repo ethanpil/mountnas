@@ -122,7 +122,7 @@ The `nas` tool has been designed to help you manage the system.
 | `nas setup` | Guided first-run setup (starts automatically at first login until completed once): hostname, root password, timezone, network, then saves. |
 | `nas status` | Health + storage-config check (fast, no disk spin-up): IP, RAM, config/data mount state, key services, unsaved-change count, plus fstab checks (UUIDs resolve, `nofail` present, no data path tracked by `lbu`, share/export paths land on real mounts). |
 | `nas status --deep` | Everything `nas status` does **plus** SMART, SnapRAID status, and time-sync. Kept opt-in because SMART can wake sleeping disks and SnapRAID status is slow. (Alias: `nas checkup`.) |
-| `nas disks` | Lists every detected disk with its UUID and mount state, marks the boot USB, shows how `/etc/fstab` maps it, and prints a paste-ready fstab line for each unconfigured data partition. |
+| `nas disks` | Hardware + partition table: one header per disk (vendor, model, serial, firmware, bus, HDD/SSD, temperature — read without waking sleeping drives) with its partitions indented (size, fstype, label, UUID, mountpoint, free space). Marks the boot USB, shows how `/etc/fstab` maps everything, and prints a paste-ready fstab line for each unconfigured data partition, ending in a comment with the drive's model + serial for physical identification. |
 | `nas validate` | Alias for `nas status` (the storage-config check). |
 | `nas restart` | Re-mounts data disks and (re)starts Docker/Samba/NFS without rebooting (runs `rc-service mountnas restart`). Run it after editing `/etc/fstab`. |
 | `nas changes` | Lists exactly what `nas commit` would save (added/modified/deleted files), not just a count. Alias: `nas changed`. |
