@@ -1,0 +1,36 @@
+#!/bin/sh
+# data-watch — flip /run/mountnas/data when the system disk vanishes at runtime.
+# Run from /etc/periodic/15min (crond). The mountnas service judges storage only
+# at start, so a data disk that died while running left the state saying 'ok'
+# forever — 'nas status' and the login banner lied until the next restart. This
+# is detection only (state file + log): services are deliberately left alone,
+# both because a transient USB reset must not take Docker down and because
+# mount/placeholder handling belongs to the mountnas service ('nas restart').
+STATE=/run/mountnas
+DATA=/mnt/nasdata
+LOG=/var/log/mountnas.log
+log() { printf '%s data-watch: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
+
+[ "$(cat "$STATE/data" 2>/dev/null)" = ok ] || exit 0
+spec=$(awk '$1!~/^#/ && $2=="/mnt/nasdata"{print $1; exit}' /etc/fstab)
+[ -n "$spec" ] || exit 0
+
+# device gone (yanked, died, USB reset that never came back)?
+present=1
+case "$spec" in
+	UUID=*|LABEL=*|PARTUUID=*) findfs "$spec" >/dev/null 2>&1 || present=0 ;;
+	/dev/*) [ -b "$spec" ] || present=0 ;;
+esac
+if [ "$present" = 0 ]; then
+	echo disconnected > "$STATE/data"
+	log "$DATA device ($spec) no longer present — state set to disconnected; run: nas status"
+	exit 0
+fi
+
+# filesystem errors flip ext4/xfs to read-only in place (errors=remount-ro);
+# the mount then looks healthy to mountpoint(1) while every write fails
+if awk -v m="$DATA" '$2==m && $4 ~ /^ro(,|$)/ {f=1} END{exit !f}' /proc/mounts; then
+	echo mountfail > "$STATE/data"
+	log "$DATA is mounted read-only (filesystem errors?) — state set to mountfail; run: nas status"
+fi
+exit 0

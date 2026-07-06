@@ -1,0 +1,6 @@
+#!/bin/sh
+# Installed by mountnas-tools as /etc/periodic/15min/mountnas-datawatch (code
+# ships in the apk; lbu-excluded like the profile.d snippets). Alpine's stock
+# root crontab runs /etc/periodic/15min via run-parts. NOTE: busybox run-parts
+# skips filenames containing dots — keep this name dot-free.
+exec /usr/libexec/mountnas/data-watch

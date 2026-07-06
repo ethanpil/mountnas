@@ -225,6 +225,7 @@ etc/profile.d/nas-prompt.sh
 etc/profile.d/nas-resize.sh
 etc/issue
 etc/network/if-up.d/mountnas-issue
+etc/periodic/15min/mountnas-datawatch
 EOF
 
 # =====================  service enablement  =====================

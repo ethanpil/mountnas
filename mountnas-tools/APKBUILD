@@ -32,6 +32,8 @@ package() {
 	install -Dm755 "$startdir"/files/write-bootcfg  "$pkgdir"/usr/libexec/mountnas/write-bootcfg
 	install -Dm755 "$startdir"/files/gen-issue      "$pkgdir"/usr/libexec/mountnas/gen-issue
 	install -Dm755 "$startdir"/files/pick-nic       "$pkgdir"/usr/libexec/mountnas/pick-nic
+	install -Dm755 "$startdir"/files/data-watch     "$pkgdir"/usr/libexec/mountnas/data-watch
+	install -Dm755 "$startdir"/files/periodic-datawatch "$pkgdir"/etc/periodic/15min/mountnas-datawatch
 	install -Dm755 "$startdir"/files/issue-ifupdown "$pkgdir"/etc/network/if-up.d/mountnas-issue
 	install -Dm644 "$startdir"/files/profile-nas-welcome.sh "$pkgdir"/etc/profile.d/nas-welcome.sh
 	install -Dm644 "$startdir"/files/profile-nas-aliases.sh "$pkgdir"/etc/profile.d/nas-aliases.sh
