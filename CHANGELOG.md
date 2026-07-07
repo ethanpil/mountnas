@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased — beta-3]
+
+### Fixed
+- **lbu include/exclude never worked.** The seed overlay shipped plain `/etc/lbu/include` and `/etc/lbu/exclude` files since alpha-1 — but lbu's real mechanism is `/etc/apk/protected_paths.d/lbu.list` (`+path`/`-path`), and nothing ever read the plain files. Consequences until now: `/root`, samba passwords, crontabs, and VPN identities **did not persist across reboots**, and boot-generated files meant to be excluded (`/etc/issue`) showed as unsaved changes forever (the beta-2 report that unraveled this). The seed now ships the real list; existing boxes are migrated automatically once by the `mountnas` service (old files parked as `*.migrated` — run `nas commit` after the first boot on beta-3 to persist the migration).
+- **`nas upgrade` detects gzip by content** (magic bytes), not filename — a valid image saved as `.img.tgz` was treated as a raw disk and failed cleanly but confusingly. Boxes on beta-2 and earlier still run their installed matcher: name the file `.img.gz` there.
+- Persistent-logging honesty: `nas logs --persist status` and `nas status` now say whether the setting is committed or will be lost at reboot.
+
+### Added
+- **Disk-loss email alerts**: put an address in `/etc/mountnas/alert-email` (plus a configured `/etc/msmtprc`) and the 15-minute watcher emails once on the transition when the data disk disconnects, its mount dies, or its filesystem goes read-only — including the recovery command. Complements smartd's `-m` (SMART = disk warning it will fail; this = disk already gone).
+
+### Known / parked
+- Serial-console (`qm terminal`) full-screen layout remains wrong after the ash-compat fix; parked per maintainer decision — use SSH or noVNC for full-screen tools.
+
 ## [beta-2] — 2026-07-07
 
 Everything found in the first full live test (beta-1 on Proxmox), fixed. Two reported items were not code bugs: the `status --json` jq error came from the test sheet's own command (jq operator precedence — `|` binds looser than `,`), and the chrony "KoD RATE" log line was pool-server rate limiting caused by reboot-heavy testing (`iburst` fires on every boot; chrony backs off automatically).

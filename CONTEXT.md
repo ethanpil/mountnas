@@ -538,12 +538,34 @@ _reltag sed.
   the supervisor); recovery is umount -l + remount in mountnas start().
 - The serial resize snippet must stay ash-compatible: root's login shell is
   busybox ash, and a BASH_VERSION guard silently disabled it for everyone.
+  (Follow-up: the ash fix still did not cure `qm terminal` — PARKED per
+  maintainer decision at beta-2 testing; do not sink more time into it.
+  SSH/noVNC render full-screen apps correctly.)
 - nas howto and LUKS (cryptsetup/dmcrypt) were REMOVED at the maintainer's
   direction — do not re-add either without an explicit ask.
 - nas commit -m notes are keyed by the overlay file mtime stamp (matches the
   lbu rotation filename); rollback preserves with cp -p so notes follow.
 - On-box 'nas upgrade --check' and URL upgrades REQUIRE the GitHub repo to be
   public (unauthenticated API/asset fetches); the error now says so.
+
+**beta-3 notes (unreleased; from the beta-2 live-test round):**
+- **THE lbu landmine: `/etc/lbu/include` and `/etc/lbu/exclude` are not lbu
+  interfaces.** lbu (and apk audit) read `/etc/apk/protected_paths.d/lbu.list`
+  with `+path`/`-path` entries — the file the `lbu include`/`lbu exclude`
+  commands maintain. The plain files the seed shipped since alpha-1 did
+  nothing: includes (samba passwords, /root, crontabs, VPN identities) never
+  persisted, excludes (/etc/issue) never excluded. Fixed in the seed; the
+  mountnas service migrates old boxes once (parks the old files as
+  *.migrated). Never reference /etc/lbu/{include,exclude} again — the nas
+  safety checks now grep the `+` entries of lbu.list.
+- nas upgrade sniffs gzip via the 1f 8b magic (filenames lie — a tester's
+  browser saved the release as .img.tgz); the sniff also drives the temp-space
+  precheck, and URL downloads are re-sniffed after arrival.
+- Disk-loss alerting: data-watch mails the transition when
+  /etc/mountnas/alert-email holds an address (transition-only by construction
+  — the watcher exits early unless the previous state was ok).
+- nas status and 'nas logs --persist status' surface whether the persistence
+  setting is committed (it is /etc config — RAM-only until nas commit).
 
 **Known caveats:**
 - **Signing key — RESOLVED: `ABUILD_PRIVKEY` is set** (alpha-7 and beta-1
