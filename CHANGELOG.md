@@ -1,5 +1,28 @@
 # Changelog
 
+## [alpha-7] — 2026-07-06
+
+A `nas` CLI feature pass — safer commits, better screens, automation hooks.
+
+### Fixed
+- **Version identity.** `nas version`, `nas status`, and the login banner showed the internal apk build id (`1.0.0_git…`) instead of the release everyone knows (`alpha-7`) — release tags can't satisfy apk's version grammar, so the tag now ships separately in `/usr/share/mountnas/release` and is displayed everywhere. This also fixes `nas upgrade --check`, which compared the GitHub *tag* against the *build id* and therefore always claimed a new release existed.
+
+### Added
+- **`nas rollback [--list | <n>]`** — the config time machine. lbu already kept the last few committed overlays on `/cfg`; now they're listed (dates/sizes) and restorable with a crash-safe swap that applies at the next boot, keeping the replaced config available for rolling forward. Recovering from a bad commit no longer means pulling the stick and hand-editing tarballs.
+- **`nas changes --diff`** — unified diffs of every unsaved file against the committed overlay: review exactly what a commit would persist.
+- **`nas status --json`** and **`nas disks --json`** — machine-readable output for monitoring/dashboard integrations, built from the same code paths as the human output.
+- **Meaningful exit codes:** `nas status` exits 1 when any `[FAIL]` fired (0 otherwise) — usable directly as a cron/monitoring probe.
+- **Boot-USB guard:** `nas status` now FAILs loudly if any data fstab entry resolves to the boot USB itself — the one unrecoverable user error (formatting/mounting the running OS media).
+- **Sensors in `nas status`:** CPU temperature, fan speeds, and per-disk temperatures (standby-safe — never wakes a sleeping drive), in a compact section; VMs get a quiet "(no sensors)" line.
+- **`nas logs`** with **opt-in persistent logging**: `--persist on` moves syslog to `/mnt/nasdata/logs` with rotation, so a crash or power cut finally leaves history behind (RAM-only logs vanish exactly when you need them). Documented tradeoff: periodic writes keep that disk awake. The supervisor restarts syslogd after the data disk mounts so the target always exists.
+- **`nas howto <topic>`** — the README's recipes (disks, pool, parity, luks, mail, backup, upgrade, logs, vpn) available offline on the box.
+- **Per-command help** (`nas <cmd> --help`, `nas help <cmd>`) with examples, and **tab completion** for bash and zsh.
+- **Scripting flags:** `nas upgrade --yes`, `nas reboot|shutdown --yes|--save` — the interactive gates stay the default for humans.
+
+### Changed
+- **`nas disks` fits a terminal now:** two lines per disk (dashed header with name/size/bus/type/temp, identity beneath) and two per partition (identity/mount, then the 36-char UUID on its own line) instead of 120+-column rows. Same data.
+- `nas status` header shows `hostname.local` beside the hostname; `[ OK ]/[WARN]/[FAIL]` tags are color-coded on a terminal (plain in pipes/logs, `NO_COLOR` honored).
+
 ## [alpha-6] — 2026-07-06
 
 ### Added

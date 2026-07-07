@@ -173,20 +173,24 @@ The `nas` tool has been designed to help you manage the system.
 | Command | Description |
 | --- | --- |
 | `nas setup` | Guided first-run setup (starts automatically at first login until completed once): hostname, root password, timezone, network, then saves. |
-| `nas status` | Health + storage-config check (fast, no disk spin-up): IP, RAM, config/data mount state, key services, unsaved-change count, plus fstab checks (UUIDs resolve, `nofail` present, no data path tracked by `lbu`, share/export paths land on real mounts). |
-| `nas status --deep` | Everything `nas status` does **plus** SMART, SnapRAID status, and time-sync. Kept opt-in because SMART can wake sleeping disks and SnapRAID status is slow. (Alias: `nas checkup`.) |
-| `nas disks` | Hardware + partition table: one header per disk (vendor, model, serial, firmware, bus, HDD/SSD, temperature — read without waking sleeping drives) with its partitions indented (size, fstype, label, UUID, mountpoint, free space). Marks the boot USB, shows how `/etc/fstab` maps everything, and prints a paste-ready fstab line for each unconfigured data partition, ending in a comment with the drive's model + serial for physical identification. |
+| `nas status` | Health + storage-config check (fast, no disk spin-up): IP + `hostname.local`, RAM, sensors (CPU/disk temps, fans), config/data mount state, key services, unsaved-change count, plus fstab checks (UUIDs resolve, `nofail` present, nothing resolves to the boot USB, no data path tracked by `lbu`, share/export paths land on real mounts). **Exits 1 if any `[FAIL]` fired** — usable as a cron/monitoring probe. Tags are color-coded on a terminal. |
+| `nas status --deep` | Everything `nas status` does **plus** SMART, SnapRAID status, fstab verify, and time-sync. Kept opt-in because SMART can wake sleeping disks and SnapRAID status is slow. (Alias: `nas checkup`.) |
+| `nas status --json` | The same checks, machine-readable (state facts, per-service flags, ok/warn/fail counts and lines) for Uptime Kuma/Zabbix/Homepage integrations. Same exit-code contract. |
+| `nas disks` | Hardware + partition inventory in a compact two-line-per-item layout that fits a serial console: a dashed header per disk (name, size, bus, HDD/SSD, temperature — read without waking sleeping drives), identity beneath (vendor, model, serial, firmware), then each partition with fstype/label/mount/free space and its UUID on its own line. Marks the boot USB, shows the fstab mapping, and prints a paste-ready fstab line per unconfigured partition, ending in a comment with the drive's model + serial. `--json` emits the same inventory machine-readable. |
 | `nas validate` | Alias for `nas status` (the storage-config check). |
 | `nas restart` | Re-mounts data disks and (re)starts Docker/Samba/NFS without rebooting (runs `rc-service mountnas restart`). Run it after editing `/etc/fstab`. |
-| `nas changes` | Lists exactly what `nas commit` would save (added/modified/deleted files), not just a count. Alias: `nas changed`. |
+| `nas changes` | Lists exactly what `nas commit` would save (added/modified/deleted files); `--diff` shows the actual unified diffs against the committed overlay. Alias: `nas changed`. |
 | `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition. Alias: `nas save`. |
+| `nas rollback` | The config time machine: `--list` shows the previous committed overlays lbu keeps on `/cfg`; `nas rollback <n>` restores one (crash-safe swap, applies at the next boot, the replaced config stays available for rolling forward). |
+| `nas logs` | View the system log (`-f` follows). `nas logs --persist on` moves syslog onto `/mnt/nasdata/logs` with rotation so a crash or power cut leaves history behind — opt-in because periodic writes keep that disk awake. |
+| `nas howto` | Offline recipes on the box: `disks`, `pool`, `parity`, `luks`, `mail`, `backup`, `upgrade`, `logs`, `vpn`. |
 | `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
 | `nas upgrade` | Rewrites the OS on the USB **in place** from a release image — a local `mountnas-<tag>.img.gz` or an `https://` release URL (verified against the release's `SHA256SUMS` when present) — then reboot. Requires a `nas backup` first (see `UPGRADE.md`). `nas upgrade --check` asks GitHub whether a newer release is published and prints the exact upgrade command. |
 | `nas report` | Writes a diagnostics bundle (`/tmp/mountnas-report-*.tar.gz`) with status, logs, and storage/service config for bug reports. No secrets (no shadow, ssh keys, or samba passwords) — but review before sharing. |
-| `nas shutdown` | Powers off, warning first if you have unsaved changes. |
-| `nas reboot` | Reboots, warning first if you have unsaved changes. |
-| `nas version` | Shows the MountNAS version. |
-| `nas help` | Command overview and important paths. |
+| `nas shutdown` | Powers off, warning first if you have unsaved changes. `--save` commits first; `--yes` skips the prompt (scripted use). |
+| `nas reboot` | Reboots, with the same unsaved-changes gate and `--save`/`--yes` flags. |
+| `nas version` | Shows the MountNAS release (and the build id). |
+| `nas help` | Command overview and important paths; `nas <command> --help` gives focused usage + examples. Tab completion ships for bash and zsh. |
 
 ## Included Services
 

@@ -466,6 +466,29 @@ cryptsetup/dmcrypt, msmtp/mailx mail pipeline, restic, testdisk, f3,
 wireguard-tools, zstd/lz4/xz, xxhash, fdupes. First build with the upgrade
 smoke test BLOCKING (alpha-5 → alpha-6, green). Image 983 MB compressed.
 
+**alpha-7 notes:** `nas` CLI feature pass (full list in CHANGELOG). Landmines
+for maintainers:
+- `/usr/share/mountnas/version` MUST stay the apk pkgver — the CI upgrade test
+  reads it (`-ex $newver`) and apk needs a valid version. The user-visible tag
+  lives in `/usr/share/mountnas/release` (seded into `_reltag` by build.yml);
+  everything user-facing displays RELEASE, and `upgrade --check` compares
+  tag-to-tag (comparing against pkgver mismatched forever — the old bug).
+- `nas status` now exits 1 on any [FAIL] (bad() appends to $NAS_FAILF because
+  the checks run in pipe subshells). The supervisor CI test greps text, not
+  $?, so both stay compatible — keep it that way or update both together.
+- Status tags are colored ONLY via the C_* variables around the literal
+  [ OK ]/[WARN]/[FAIL] words — tests and greps depend on the words staying
+  intact inside the escapes.
+- bash completion ships as files/bash-nas-completion.sh with its body inside
+  eval: busybox ash sources profile.d too and PARSES function bodies eagerly,
+  so bare bash array syntax there would syntax-error every ash login. ci-lint
+  lints it with -s bash explicitly (no shebang, so discovery skips it); the
+  zsh compdef is unlintable data.
+- 'nas logs --persist on' rewrites /etc/conf.d/syslog wholesale (Alpine's
+  shipped content is just SYSLOGD_OPTS="-t"); the mountnas service restarts
+  syslogd after the data disk mounts because the boot-time syslogd starts
+  before the -O target exists.
+
 **Known caveats:**
 - **Signing key — ACTION NEEDED: the `ABUILD_PRIVKEY` repo secret is still NOT
   set.** Verified by comparing published pubkeys: alpha-4's and alpha-5's
