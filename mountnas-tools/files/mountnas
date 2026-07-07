@@ -146,6 +146,13 @@ start() {
 	fi
 	if mountpoint -q "$DATA"; then
 		mkdir -p "$DATA/docker" "$DATA/appdata" "$DATA/backups"
+		# persistent syslog (nas logs --persist on) targets $DATA/logs — the
+		# boot-time syslogd started before this disk was mounted, so kick it
+		# now that the target directory exists
+		if grep -q "$DATA/logs" /etc/conf.d/syslog 2>/dev/null; then
+			mkdir -p "$DATA/logs"
+			rc-service syslog restart >/dev/null 2>&1 || log "syslog restart for persistent logging failed"
+		fi
 		echo ok > "$STATE/data"; log "$DATA mounted; starting data services"
 		einfo "$DATA mounted — starting data services."
 		for s in $DATA_SERVICES; do

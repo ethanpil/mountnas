@@ -483,6 +483,58 @@ cmd_restart() {
 	rc-service mountnas restart
 }
 
+# nas logs — view the system log; --persist moves syslog onto the data disk.
+# RAM logs vanish at reboot, so a crash or power cut — exactly when you need
+# history — leaves nothing to read. Opt-in because periodic log writes keep
+# the data disk awake (spin-down tradeoff). The mountnas service restarts
+# syslogd after the data disk mounts at boot, so the target always exists by
+# the time it is written.
+_syslog_target() {
+	awk -F'"' '/^SYSLOGD_OPTS=/{print $2}' /etc/conf.d/syslog 2>/dev/null \
+		| sed -n 's/.*-O *\([^ ]*\).*/\1/p'
+}
+cmd_logs() {
+	case "${1:-}" in
+	--persist)
+		case "${2:-status}" in
+		on)
+			[ "$(cat "$STATE/data" 2>/dev/null)" = ok ] || { bad "data disk not mounted — persistent logs need $DATA"; return 1; }
+			mkdir -p "$DATA/logs" || { bad "cannot create $DATA/logs"; return 1; }
+			# whole-line write: Alpine's shipped default is just -t (strip
+			# client timestamps); -s = KB per file, -b = rotated copies kept
+			printf 'SYSLOGD_OPTS="-t -s 1024 -b 9 -O %s/logs/messages"\n' "$DATA" > /etc/conf.d/syslog
+			rc-service syslog restart >/dev/null 2>&1 || warn "syslog restart failed"
+			ok "persistent logging ON -> $DATA/logs/messages (1 MB x 10 files)"
+			warn "periodic writes keep the data disk awake — mind the spin-down tradeoff"
+			echo "Persist the setting: nas commit"
+			;;
+		off)
+			printf 'SYSLOGD_OPTS="-t"\n' > /etc/conf.d/syslog
+			rc-service syslog restart >/dev/null 2>&1 || warn "syslog restart failed"
+			ok "persistent logging OFF (logs live in RAM only again)"
+			echo "Persist the setting: nas commit"
+			;;
+		*)
+			t=$(_syslog_target)
+			if [ -n "$t" ]; then ok "persistent logging ON -> $t"
+			else ok "persistent logging OFF (RAM only; enable: nas logs --persist on)"; fi
+			;;
+		esac
+		;;
+	-f|--follow)
+		t=$(_syslog_target); : "${t:=/var/log/messages}"
+		exec tail -f "$t"
+		;;
+	''|-n)
+		nn=100; [ "${1:-}" = "-n" ] && nn="${2:-100}"
+		t=$(_syslog_target); : "${t:=/var/log/messages}"
+		echo "== $t (last $nn lines; follow: nas logs -f) =="
+		tail -n "$nn" "$t" 2>/dev/null || warn "no log file at $t yet"
+		;;
+	*) bad "usage: nas logs [-n N | -f | --persist on|off|status]"; return 1 ;;
+	esac
+}
+
 # nas report — diagnostics bundle for bug reports. Collects status, logs, and
 # storage/service config into one tarball in /tmp (RAM). Deliberately EXCLUDES
 # secrets: no /etc/shadow, no ssh keys, no samba password db. /var/log/messages
@@ -1142,6 +1194,7 @@ case "${1:-help}" in
 	report) cmd_report ;;
 	commit|save) cmd_commit ;;
 	rollback) shift; cmd_rollback "$@" ;;
+	logs) shift; cmd_logs "$@" ;;
 	backup) shift; cmd_backup "$@" ;;
 	shutdown) cmd_shutdown ;;
 	reboot) cmd_reboot ;;
