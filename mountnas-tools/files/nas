@@ -519,6 +519,8 @@ cmd_report() {
 
 # nas changes (alias: changed) — list WHAT 'nas commit' would save, not just a
 # count. Surfaces Alpine's own 'lbu status' (A=added M=modified D=deleted).
+# --diff additionally shows unified diffs of each file against the committed
+# overlay: review before you persist.
 cmd_changes() {
 	out=$(lbu status 2>/dev/null)
 	n=$(printf '%s' "$out" | grep -c .)
@@ -526,7 +528,28 @@ cmd_changes() {
 	if [ "${n:-0}" -eq 0 ]; then ok "no unsaved changes — nothing to commit"; return 0; fi
 	echo "$n unsaved change(s) that 'nas commit' would save (A=added M=modified D=deleted):"
 	printf '%s\n' "$out" | sed 's/^/  /'
-	echo "Save them with: nas commit"
+	if [ "${1:-}" = "--diff" ]; then
+		ovl="$CFG/$(hostname).apkovl.tar.gz"
+		d=$(mktemp -d) || { bad "mktemp failed"; return 1; }
+		if [ -f "$ovl" ]; then tar -xzf "$ovl" -C "$d" 2>/dev/null
+		else warn "no committed overlay yet ($ovl) — every tracked file shows as new"; fi
+		echo
+		echo "--- committed (last nas commit)    +++ live (in RAM now)"
+		printf '%s\n' "$out" | while read -r st path; do
+			[ -n "$path" ] || continue
+			old="$d/$path"; new="/$path"
+			# directories appear in lbu status too — nothing to diff there
+			[ -d "$new" ] && continue
+			[ -e "$old" ] || old=/dev/null
+			[ -e "$new" ] || new=/dev/null
+			echo
+			echo "== $st $path =="
+			diff -u "$old" "$new" 2>/dev/null || true
+		done
+		rm -rf "$d"
+		echo
+	fi
+	echo "Save them with: nas commit    (review first: nas changes --diff)"
 }
 
 cmd_commit() {
