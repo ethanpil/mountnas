@@ -540,6 +540,68 @@ cmd_commit() {
 	ok "saved to $CFG"
 }
 
+# nas rollback — the config time machine. lbu already keeps BACKUP_LIMIT prior
+# overlays on /cfg (named <hostname>.<YYYYMMDDHHMMSS>.tar.gz, mtime-ordered);
+# this exposes them. Restoring swaps the ACTIVE overlay
+# (<hostname>.apkovl.tar.gz), which the diskless init applies at the NEXT boot —
+# the running system is untouched until then. The pre-rollback overlay is
+# preserved under lbu's own backup naming, so a rollback can itself be rolled
+# back (roll forward). Before this existed, recovering from a bad commit meant
+# pulling the stick and hand-editing tarballs on another machine.
+_ovl_backups() {   # newest first, one path per line
+	ls -1t "$CFG/$(hostname)".[0-9]*.tar.gz 2>/dev/null
+}
+cmd_rollback() {
+	act="$CFG/$(hostname).apkovl.tar.gz"
+	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted"; return 1; }
+	if ls "$CFG"/*.apkovl.tar.gz.* >/dev/null 2>&1; then
+		bad "encrypted overlay detected — nas rollback supports plain overlays only"; return 1
+	fi
+	list=$(_ovl_backups)
+	if [ -z "${1:-}" ] || [ "$1" = "--list" ]; then
+		echo "Saved-config snapshots on $CFG (newest first; lbu keeps the last few):"
+		[ -f "$act" ] && printf '       %-20s %8s  %s\n' \
+			"$(date -r "$act" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" \
+			"$(du -k "$act" 2>/dev/null | awk '{print $1"K"}')" "ACTIVE (applies at next boot)"
+		if [ -z "$list" ]; then
+			echo "  (no snapshots yet — they appear from your second 'nas commit' on)"
+		else
+			i=1
+			printf '%s\n' "$list" | while read -r f; do
+				printf '  %-4s %-20s %8s  %s\n' "[$i]" \
+					"$(date -r "$f" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" \
+					"$(du -k "$f" 2>/dev/null | awk '{print $1"K"}')" "$(basename "$f")"
+				i=$((i+1))
+			done
+		fi
+		echo "Restore one with: nas rollback <number>   (applies at the NEXT boot)"
+		return 0
+	fi
+	case "$1" in *[!0-9]*) bad "usage: nas rollback [--list | <number>]"; return 1 ;; esac
+	sel=$(printf '%s\n' "$list" | awk -v n="$1" 'NR==n{print; exit}')
+	[ -n "$sel" ] || { bad "no snapshot number $1 — see: nas rollback --list"; return 1; }
+	[ -f "$act" ] || { bad "no active overlay at $act (hostname changed since the last commit?)"; return 1; }
+	echo "Rolling the SAVED config back to: $(basename "$sel")  ($(date -r "$sel" '+%Y-%m-%d %H:%M:%S' 2>/dev/null))"
+	echo "  - the running system is NOT changed; the restored config applies at the NEXT boot"
+	echo "  - the current saved config is kept as a snapshot (you can roll forward)"
+	echo "  - uncommitted changes stay in RAM and vanish at reboot, as always"
+	confirm "Proceed?" || { echo "Cancelled."; return 1; }
+	# preserve the current active overlay under lbu's own mtime-stamp naming
+	ts=$(date -u -r "$act" +%Y%m%d%H%M%S 2>/dev/null || date -u +%Y%m%d%H%M%S)
+	keep="$CFG/$(hostname).$ts.tar.gz"
+	[ -e "$keep" ] && keep="$CFG/$(hostname).$(date -u +%Y%m%d%H%M%S).tar.gz"
+	cp "$act" "$keep" || { bad "could not preserve the current overlay — aborting, nothing changed"; return 1; }
+	# stage + rename so a power cut cannot leave a torn active overlay
+	if cp "$sel" "$act.new" && mv "$act.new" "$act"; then
+		sync
+		ok "restored $(basename "$sel") as the active saved config"
+		echo "Reboot to apply it:  nas reboot"
+	else
+		rm -f "$act.new"
+		bad "restore failed — the active overlay is unchanged"; return 1
+	fi
+}
+
 # Full image of the WHOLE boot USB (OS + config partition) to a gzip file. This
 # is the rollback net for 'nas upgrade': restore = write the image back to a
 # USB and boot it. Reading the device while running is safe (dd/gzip only reads);
@@ -1053,9 +1115,10 @@ case "${1:-help}" in
 	validate) shift; cmd_status "$@" ;;
 	checkup) cmd_status --deep ;;
 	restart) cmd_restart ;;
-	changes|changed) cmd_changes ;;
+	changes|changed) shift; cmd_changes "$@" ;;
 	report) cmd_report ;;
 	commit|save) cmd_commit ;;
+	rollback) shift; cmd_rollback "$@" ;;
 	backup) shift; cmd_backup "$@" ;;
 	shutdown) cmd_shutdown ;;
 	reboot) cmd_reboot ;;
