@@ -210,14 +210,16 @@ latest-stable. Corrected:
 The CI **preflight** (`apk add --simulate`) excludes all four local packages
 (`mountnas-tools|snapraid|mergerfs|zerotier-one`) since they aren't upstream.
 
-Package additions after the plan (alpha-3…alpha-6: zsh/mosh, curated firmware
-set, cryptsetup/dmcrypt, msmtp/mailx, restic, testdisk, f3, wireguard-tools,
-zstd/lz4/xz, xxhash, fdupes, microcode boot addons) are tracked in
-`CHANGELOG.md`; each entry in `packages.list` carries its own rationale comment.
-Non-obvious wiring: the `dmcrypt` service ships but is NEVER `rc_add`-ed by
-default (users enable per host); `mail(1)` → msmtp glue is seed config
-(`/etc/mail.rc` sets both `sendmail=` and `mta=` because mailx flavors disagree
-on the variable name; `/etc/msmtprc` ships 0600 because it holds a password).
+Package additions after the plan (alpha-3…: zsh/mosh, curated firmware set,
+msmtp/mailx, restic, testdisk, f3, wireguard-tools, zstd/lz4/xz, xxhash,
+fdupes, microcode boot addons) are tracked in `CHANGELOG.md`; each entry in
+`packages.list` carries its own rationale comment. cryptsetup/dmcrypt (LUKS)
+shipped in alpha-6 and was REMOVED in beta-2 at the maintainer's direction —
+do not re-add without an explicit ask. Non-obvious wiring: `mail(1)` → msmtp
+glue is seed config (`/etc/mail.rc` sets both `sendmail=` and `mta=` because
+mailx flavors disagree on the variable name; `/etc/msmtprc` ships 0600 because
+it holds a password and names its single account `default` so uncommenting
+just works).
 
 ---
 

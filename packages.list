@@ -84,11 +84,6 @@ snapraid
 mergerfs
 mdadm
 lvm2
-# LUKS disk encryption. The dmcrypt boot service (unlocks before localmount)
-# ships in -openrc but is OFF until enabled per host: rc-update add dmcrypt boot
-# — see README "Encrypted data disks (LUKS)".
-cryptsetup
-cryptsetup-openrc
 
 # --- partitioning ---
 parted

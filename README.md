@@ -134,36 +134,6 @@ all included with the kernel; it's only these device-firmware blobs that are cur
 
 SnapRAID and mergerfs complement each other: SnapRAID gives you parity, mergerfs gives you a single namespace. Keep `/mnt/nasdata` (the system disk) out of both.
 
-## Encrypted data disks (LUKS)
-
-`cryptsetup` is baked in, along with the `dmcrypt` boot service that unlocks volumes *before* `localmount` runs (off by default). Keyfile-based unlock is the supported path — a passphrase prompt at boot would strand a headless box.
-
-```sh
-# one-time setup (as root); the keyfile lives in the committed overlay
-mkdir -p /etc/luks && dd if=/dev/urandom of=/etc/luks/data.key bs=64 count=1 && chmod 600 /etc/luks/data.key
-cryptsetup luksFormat /dev/sdX1 /etc/luks/data.key          # DESTROYS the partition
-cryptsetup open --key-file /etc/luks/data.key /dev/sdX1 cryptdata
-mkfs.ext4 -L cryptdata /dev/mapper/cryptdata
-```
-
-Then wire it for boot: add to `/etc/conf.d/dmcrypt`:
-
-```text
-target=cryptdata
-source='/dev/sdX1'
-key='/etc/luks/data.key'
-```
-
-enable the service and mount by mapper path (keep `nofail`):
-
-```sh
-rc-update add dmcrypt boot
-echo '/dev/mapper/cryptdata  /mnt/disk1  ext4  rw,noatime,nofail  0 2' >> /etc/fstab
-nas status && nas commit
-```
-
-**Honest threat model:** the keyfile sits in the (unencrypted) overlay on the boot USB, so this protects your *data disks* if they are stolen or RMA'd separately — it does **not** protect against someone taking the stick *and* the disks together. That is the right trade for unattended boot; if you need more, keep the key elsewhere and unlock manually.
-
 ## The MountNAS swiss army knife: `nas`
 
 The `nas` tool has been designed to help you manage the system.
@@ -326,7 +296,6 @@ __Parity / Volume Management__
 * mergerfs (Download static binary from GitHub release page)
 * mdadm
 * lvm2
-* cryptsetup + cryptsetup-openrc (LUKS; see [Encrypted data disks](#encrypted-data-disks-luks))
 
 __Disk Health / Recovery / Benchmarking__
 
