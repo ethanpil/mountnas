@@ -15,7 +15,8 @@ log() { printf '%s data-watch: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/nu
 spec=$(awk '$1!~/^#/ && $2=="/mnt/nasdata"{print $1; exit}' /etc/fstab)
 [ -n "$spec" ] || exit 0
 
-# device gone (yanked, died, USB reset that never came back)?
+# device gone (yanked, died, USB reset that never came back)? Tag specs only —
+# a bind-mount source path has no device to ask; the read probe below covers it.
 present=1
 case "$spec" in
 	UUID=*|LABEL=*|PARTUUID=*) findfs "$spec" >/dev/null 2>&1 || present=0 ;;
@@ -24,6 +25,17 @@ esac
 if [ "$present" = 0 ]; then
 	echo disconnected > "$STATE/data"
 	log "$DATA device ($spec) no longer present — state set to disconnected; run: nas status"
+	exit 0
+fi
+
+# A mountpoint can outlive its device: /proc/mounts keeps listing it rw while
+# every access returns EIO (observed with a hot-detached disk backing a bind
+# mount — the old checks all passed while touch failed). A directory read
+# catches exactly that; the system disk hosts Docker and is never spun down,
+# so the probe cannot wake anything.
+if ! ls "$DATA" >/dev/null 2>&1; then
+	echo mountfail > "$STATE/data"
+	log "$DATA is unreadable (dead mount — device detached?) — state set to mountfail; run: nas restart"
 	exit 0
 fi
 
