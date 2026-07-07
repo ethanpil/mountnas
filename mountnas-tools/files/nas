@@ -270,10 +270,17 @@ cmd_status() {
 		printf "  Tip: 'nas status --deep' adds SMART / SnapRAID / time-sync (may wake sleeping disks).\n"
 	fi
 	# exit 1 when any FAIL record fired — usable from cron/monitoring as a probe
-	src=0
 	if [ -n "$NAS_CHECKS" ]; then
+		src=0
 		grep -q "^FAIL	" "$NAS_CHECKS" 2>/dev/null && src=1
 		if [ "$_own_checks" = 1 ]; then rm -f "$NAS_CHECKS"; NAS_CHECKS=""; fi
+	else
+		# Fail CLOSED: without the records file we cannot know whether a FAIL
+		# fired — and a full RAM root (the state most worth alarming on) is
+		# exactly what makes mktemp fail. Exit 2 = "could not track checks",
+		# nonzero so probes treat it as unhealthy instead of silently green.
+		warn "check tracking unavailable (mktemp failed — RAM root full?) — exit code 2"
+		src=2
 	fi
 	return "$src"
 }
