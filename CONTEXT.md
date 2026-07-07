@@ -9,17 +9,17 @@ that will silently regress if "cleaned up" without understanding it.
 
 ---
 
-## 1. Status at a glance
+## 1. Status at a glance (as of alpha-6, 2026-07-06)
 
-- **Build: GREEN.** The GitHub Actions workflow assembles everything end-to-end:
-  builds the 4 local apks, runs `mkimage` to produce the ISO, and assembles the
-  single-slot `.img.gz`.
-- **Boot: bootloader verified, full boot pending.** Proxmox/SeaBIOS bring-up peeled
-  back three layers — hang at `Booting from Hard Disk…` (no GPT legacy-boot), then
-  `This is not a bootable disk` (no syslinux VBR), then `/sbin/init not found`
-  (repo not discovered). All addressed (§6); the box now reaches the diskless init.
-  Full boot-to-login (and the new single-slot upgrade) is unverified pending a
-  rebuild + test (§8).
+- **Build: GREEN, releases through alpha-6 published.** The workflow assembles
+  everything end-to-end: 4 local apks, `mkimage` ISO, single-slot 3.5 GiB
+  `.img.gz` (~1 GB compressed).
+- **CI-verified per release, all blocking:** boot-to-login under SeaBIOS *and*
+  OVMF; the full first-install story (wizard → data disk → docker/samba start →
+  commit → reboot persistence, via the supervisor smoke test); and a REAL
+  in-place upgrade from the previous published release (upgrade smoke test,
+  blocking since the first green alpha-4 → alpha-5 run). See §6/§8.
+- **Still manual:** boot from a real USB stick on real hardware (§8).
 - **Single deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd for a
   fresh install; the same file is what `nas upgrade` consumes). See §4.
 
@@ -29,21 +29,32 @@ that will silently regress if "cleaned up" without understanding it.
 
 ```
 mountnas/
-├── packages.list                     # world set (incl. local apks)
+├── packages.list                     # world set (incl. local apks); rationale comments per package
 ├── scripts/
-│   ├── mkimg.nas.sh                  # mkimage profile (kernel cmdline, apks)
-│   └── genapkovl-mountnas.sh         # seed overlay (world, runlevels, /etc config)
-├── mountnas-tools/                   # LOCAL apk: the nas CLI + services (noarch-ish)
+│   ├── mkimg.nas.sh                  # mkimage profile (reads cmdline.base; boot_addons = ucode)
+│   ├── genapkovl-mountnas.sh         # seed overlay (world via mkworld.sh, runlevels, /etc config)
+│   ├── mkworld.sh                    # SINGLE source of the world list (seed AND world.base)
+│   ├── cmdline.base                  # SINGLE source of the kernel cmdline (see §8 item 3)
+│   ├── ci-lint.sh                    # shellcheck (auto-discovered targets) + su-block apostrophe guard
+│   ├── ci-supervisor-test.exp        # QEMU serial: wizard/storage/services/reboot (blocking)
+│   └── ci-upgrade-test.exp           # QEMU serial: previous release -> this build (blocking)
+├── mountnas-tools/                   # LOCAL apk: the nas CLI + services (arch=x86_64, see §6)
 │   ├── APKBUILD
 │   └── files/                        # the actual scripts (NOT src/ — see §6)
-│       ├── nas, mountnas, mountnas-net,
-│       ├── mountnas-sshkey, mountnas-issue, write-bootcfg, gen-issue,
-│       ├── issue-ifupdown, profile-nas-{welcome,aliases,prompt}.sh
+│       ├── nas                       # the CLI (setup/status/disks/changes/report/backup/upgrade/…)
+│       ├── mountnas                  # storage guard + data-service supervisor (init.d)
+│       ├── mountnas-mkdirs, mountnas-net, mountnas-sshkey, mountnas-issue   # boot helpers (init.d)
+│       ├── pick-nic, gen-issue, write-bootcfg, data-watch    # /usr/libexec/mountnas
+│       ├── periodic-datawatch        # /etc/periodic/15min wrapper (lbu-excluded, dot-free name)
+│       ├── issue-ifupdown            # /etc/network/if-up.d hook
+│       ├── profile-nas-{welcome,aliases,prompt,resize}.sh    # /etc/profile.d (lbu-excluded)
+│       └── logo
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
-├── README.md  UPGRADE.md  CONTEXT.md  LICENSE
+├── .github/workflows/lint.yml        # ci-lint.sh on every push/PR
+├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  LICENSE
 ```
 
 There are **four locally-built apks**, all signed by the per-build key and served
@@ -58,9 +69,36 @@ several CI steps exist.
 - **Code in the apk, editable config in the seed overlay.** Diskless applies the
   overlay *before* packages install, so anything an apk writes to `/etc` would
   clobber user config every boot. `mountnas-tools` ships only code
-  (`/usr/sbin`, `/etc/init.d`, `/usr/libexec`, lbu-excluded `/etc/profile.d`).
-  All editable defaults (`fstab`, `sshd_config`, `smb.conf`, `inittab`, runlevels, …)
-  live in `genapkovl-mountnas.sh` and are user-owned via lbu.
+  (`/usr/sbin`, `/etc/init.d`, `/usr/libexec`, and the lbu-EXCLUDED `/etc/profile.d`
+  snippets + `/etc/periodic/15min/mountnas-datawatch` — apk-shipped files under
+  `/etc` must be added to the exclude list in genapkovl or lbu captures them).
+  All editable defaults (`fstab`, `sshd_config`, `smb.conf`, `smartd.conf`,
+  `msmtprc`, `mail.rc`, `inittab`, runlevels, …) live in `genapkovl-mountnas.sh`
+  and are user-owned via lbu.
+- **world ⊆ media repo, by construction.** `mkworld.sh` = alpine-base +
+  packages.list + mkinitfs; the mkimage profile's `$apks` = packages.list +
+  profile_standard's bases (which include alpine-base) — so every world entry is
+  always fetchable from the offline media repo. NEVER add a package to world (or
+  world.base) outside packages.list: that is exactly how bare `linux-firmware`
+  once broke apk on every upgraded box (see mkworld.sh header). linux-lts is
+  deliberately NOT in `$apks` — kernel bits live on `/boot`, never in world.
+- **Upgrade writes are staged, then renamed.** `nas upgrade` copies EVERY payload
+  to a `.new` name first (slow copies happen while the old system is intact and
+  bootable; a staging failure aborts having changed nothing), then commits with
+  back-to-back renames; `_commit_dir` restores the `.old` tree if a swap-in
+  fails so `/apks` can never end up missing. Do not "simplify" this back to
+  interleaved copy+rename — a power cut mid-modloop-copy then boots a mixed
+  kernel/modloop pair, which does not boot.
+- **Image geometry is frozen per deployed stick.** 3.5 GiB raw: BOOT 2.5 GiB +
+  MNASCFG ~1 GiB (overlay + `/cfg/cache`); fits real-world "4 GB" sticks.
+  Upgrades replace files, never partitions, so sizes only matter at image-build
+  time — watch the "BOOT size report" in every build log (currently ~1 GB used
+  of 2.5 GiB) before growing the payload.
+- **Network filesystems are never mounted by the boot path.** No `netmount`
+  service ships; the supervisor skips network fstypes when placeholdering and
+  refuses one as `/mnt/nasdata` (state `netfs`, services held) — a dead remote
+  must never stall the default runlevel, because busybox init starts the gettys
+  only after it completes (no console login otherwise).
 - **No `x-mount.mkdir` (or `X-mount.mkdir`) in fstab.** Both are util-linux (libmount)
   *userspace* options that libmount strips before the syscall — but busybox `mount`
   (which runs `localmount` at early boot) implements neither and forwards them to the
@@ -112,7 +150,7 @@ The CI publishes a **GitHub Release** (not a zip — see §6) with:
 | File | Purpose |
 |---|---|
 | `mountnas-<tag>.img.gz` | **The product — ONE image for everything.** Single-slot image (BOOT + MNASCFG). Write to USB for a fresh install, OR pass to `nas upgrade` to update in place (it loop-mounts partition 1 for the new boot files). Self-contained: the seed overlay is baked onto MNASCFG. |
-| `mountnas-<tag>.rsa.pub` | The per-build package signing key (see §7 caveat). |
+| `mountnas-<tag>.rsa.pub` | The build's package signing key (see the §8 signing-key caveat — currently rotates per release). |
 | `SHA256SUMS` | Checksums of the above. |
 
 There is **no separate `-upgrade.img`** anymore — the full `.img.gz` is the upgrade
@@ -127,10 +165,13 @@ payload too (removed the iso9660 + its xorriso `world.base` embed step).
   precheck → unpack + loop-mount the image's p1 → **`_free_modloop`** (moves ONLY the
   kernel modules to RAM — not the firmware tree, which does not fit a 4 GB box's
   tmpfs; detaches the live modloop so it's overwritable; replaced Alpine's
-  `copy-modloop`, see §8 known-bug note) → overwrite `/boot`+`/apks`+`world.base`+
-  bootloader payload (temp-name then rename = crash-safe) → reconcile `/etc/apk/world`
-  (new base ∪ user extras) → re-pin repos → `write-bootcfg` + `lbu commit` → reboot.
-  Config/data untouched. **No automatic rollback.**
+  `copy-modloop`, see §8 known-bug note) → **stage** every payload to `.new` names
+  (kernel/initramfs/modloop, `/apks`, `world.base`, `alpine.base`, bootloader
+  payload, `*-ucode.img` when present) → **commit** with back-to-back renames
+  (see the staged-writes invariant, §3) → reconcile `/etc/apk/world`
+  (new base ∪ user extras) → re-pin repos → `write-bootcfg` + `lbu commit` →
+  BOOT remounted read-only → reboot. Config/data untouched. **No automatic
+  rollback** (the full-image `nas backup` is the rollback net).
 - **`nas backup`** images the WHOLE USB (`gzip < /dev/<usb>`) to a file (default
   `/mnt/nasdata/backups`, or `--to`). It briefly remounts `/cfg` ro for a consistent
   image. This is the rollback net: recovery = write the image to another USB and boot.
@@ -168,6 +209,15 @@ latest-stable. Corrected:
 
 The CI **preflight** (`apk add --simulate`) excludes all four local packages
 (`mountnas-tools|snapraid|mergerfs|zerotier-one`) since they aren't upstream.
+
+Package additions after the plan (alpha-3…alpha-6: zsh/mosh, curated firmware
+set, cryptsetup/dmcrypt, msmtp/mailx, restic, testdisk, f3, wireguard-tools,
+zstd/lz4/xz, xxhash, fdupes, microcode boot addons) are tracked in
+`CHANGELOG.md`; each entry in `packages.list` carries its own rationale comment.
+Non-obvious wiring: the `dmcrypt` service ships but is NEVER `rc_add`-ed by
+default (users enable per host); `mail(1)` → msmtp glue is seed config
+(`/etc/mail.rc` sets both `sendmail=` and `mta=` because mailx flavors disagree
+on the variable name; `/etc/msmtprc` ships 0600 because it holds a password).
 
 ---
 
@@ -224,9 +274,16 @@ empty; the input remains as a manual override only.
 
 **Single-slot BOOT layout.** `setup-bootable` lays down the native diskless layout —
 kernel/initramfs/modloop under `/boot`, the apk repo under `/apks` (with its own
-`.boot_repository` marker). We keep it as-is and assert the three boot files +
+`.boot_repository` marker). We keep it as-is and assert the boot files (incl. the
+`*-ucode.img` microcode images that arrive via `boot_addons` in the profile;
+`write-bootcfg` prepends them to the initrd lines when present) +
 `apks/x86_64/APKINDEX.tar.gz` landed (**no `|| true`** — a `setup-bootable` layout
 change fails the build). We `touch "$M/apks/.boot_repository"` to guarantee the marker.
+Geometry: `truncate -s 3584M`, BOOT `+2560M`, MNASCFG the rest — see the frozen-
+geometry invariant (§3); the "BOOT size report" printed right after (df + top-15
+files) is the headroom gauge, and it must never be able to fail the build (its
+`sort|awk` pipeline is guarded — a `head` there once SIGPIPE'd sort and killed a
+run under the strict step shell).
 (The old build moved everything into `A/…` and embedded `world.base` into a separate
 upgrade ISO via `xorriso`; both are gone with A/B and the single-image release.)
 
@@ -279,11 +336,15 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 `permissions: contents: write` on the job.
 
 **Lint + boot gate.**
-- A host-side `shellcheck -s sh -S warning -e SC2034,SC3043,SC3045` step lints every
-  shipped script before the Alpine build — it catches the busybox-ash strictness
-  class of bugs above at CI time. The excludes are deliberate: SC2034 (openrc-run
-  vars like `description=` look unused), SC3043/SC3045 (`local` and `read -s` are
-  fine in busybox ash even though POSIX sh leaves them undefined).
+- **`scripts/ci-lint.sh`** runs before anything expensive (and again on every
+  push/PR via `.github/workflows/lint.yml`). It DISCOVERS its targets (shebang
+  grep over `mountnas-tools/files/` + profile.d globs + `scripts/*.sh`) so a new
+  script can never ship unlinted; flags are `shellcheck -s sh -S warning
+  -e SC2034,SC3043,SC3045` (excludes deliberate: SC2034 — openrc-run vars like
+  `description=` look unused; SC3043/SC3045 — `local` and `read -s` are fine in
+  busybox ash). It also guards the §6 apostrophe landmine: an awk pass flags any
+  stray apostrophe inside build.yml's `su -c '…'` block, which shellcheck cannot
+  see.
 - **QEMU boot smoke test** (after assembly, before publish): the image is booted
   under BOTH firmwares (SeaBIOS and OVMF) and must print a `login:` prompt on the
   serial console within ~7 min, else the job fails and nothing is published. The
@@ -297,15 +358,26 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
   `nas commit` + reboot + login with the new password and the storage/services
   returning by themselves. This is the only pre-publish gate that executes THIS
   build's supervisor/wizard code (the upgrade test runs the previous release's).
+- **Upgrade smoke test** (blocking; `scripts/ci-upgrade-test.exp`) — described in
+  §8: boots the PREVIOUS published release and drives a real `nas upgrade` to
+  the just-built image, then reboots and checks version + world. Exits 0 with a
+  notice when no previous release exists (first release, forks).
+- **Serial-test conventions** are documented in the header comments of both
+  `.exp` files — most importantly: sent marker strings are quote-split
+  (`echo X"-OK"`) and matched unsplit (`X-OK`) so a command's own terminal echo
+  can never satisfy the expect, and the root prompt is matched as `:~# `.
 
 **Version + signing key.**
 - `nas version`/`nas status` report mountnas-tools' `pkgver`; the workflow seds the
   release tag (leading `v` stripped) into the APKBUILD before building, falling back
   to `1.0.0_git<date>` when the tag is not a valid apk version (e.g. `dev`).
 - The signing key comes from the **`ABUILD_PRIVKEY` repo secret** when set — a
-  stable trust anchor, so the published `.rsa.pub` no longer changes every build.
-  Generate once (`abuild-keygen -an` anywhere, paste the private key into the
-  secret). Without the secret (forks, PRs) the old random per-build keygen runs.
+  stable trust anchor, so the published `.rsa.pub` stops changing every build.
+  Generate once (`abuild-keygen -an` anywhere, or plain
+  `openssl genrsa -out key.rsa 4096` — the workflow only needs a PEM RSA private
+  key and derives the pubkey itself), paste the full PEM into the secret.
+  Without the secret (forks, PRs) the random per-build keygen runs.
+  **As of alpha-6 the secret is NOT set — see the §8 caveat.**
 
 ---
 
@@ -330,34 +402,31 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 
 ## 8. What's verified vs. open
 
-**Verified:** full build assembles; all 4 local apks build & sign; mkimage produces
-a bootable ISO + apks cache; `.img` partitions/mkfs/setup-bootable/single-slot layout
-complete; Release publishing wired. On Proxmox the dual-firmware bootloader works —
-SeaBIOS gets past the earlier hang / "not a bootable disk" into the Alpine diskless
-init, which found the repo once `.boot_repository` + `alpine_repo=auto` were in place.
+**Verified (all in CI, per release):** full build assembles; all 4 local apks
+build & sign; boot-to-login under SeaBIOS and OVMF; the first-install story
+end-to-end (wizard, storage registration, docker/samba gating, commit, reboot
+persistence — supervisor smoke test); a real in-place upgrade from the previous
+published release (upgrade smoke test, blocking). Historical bring-up context:
+the Proxmox/SeaBIOS boot chain was debugged in three layers (hang → "not a
+bootable disk" → `/sbin/init not found`) — the fixes live in §6.
 
 **Open / next (in priority order):**
-1. **Boot-test to a login prompt — now automated in CI** (QEMU SeaBIOS *and* OVMF; a
-   failing boot blocks the release, see §6 "Lint + boot gate"). Still to do manually:
-   boot from a **real USB stick on real hardware**, confirm the seed overlay applies
-   (root-owned, doas works), and that `mountnas` holds then releases docker/samba/nfs
-   around `/mnt/nasdata`.
-2. **Validate the single-slot upgrade + backup (§4a).** The upgrade half is now
-   **automated in CI**: the "Upgrade smoke test" step boots the previous published
-   release in QEMU and drives a real `nas upgrade` to the freshly built image over
-   the serial console (expect script `scripts/ci-upgrade-test.exp`) — YES gate,
-   copy-modloop, in-place overwrite, world reconcile (asserts no `linux-firmware`
-   leak), reboot into the new version. It skips with a notice when no previous
-   release exists. Still manual: `nas backup` → restore drill (write the backup
-   image to a second USB and boot it), and config + user-added-package
-   preservation across a real upgrade.
-3. **Boot-module breadth (addressed, verify).** The cmdline loads
+1. **Real hardware.** Boot from a real USB stick on a real box: confirm the seed
+   overlay applies (root-owned, `doas` works), NIC pick + DHCP on real PHYs,
+   microcode actually early-loads (`dmesg | grep microcode`), and disk spin-up
+   timing under the supervisor's 15 s wait. Everything QEMU can prove is already
+   gated in CI; hardware-specific behavior is the remaining risk.
+2. **Backup restore drill (manual).** `nas backup` → write the image to a second
+   USB → boot it. The upgrade half is CI-covered (blocking); user-added-package
+   preservation across an upgrade is still only manually verified.
+3. **Boot-module breadth (addressed, verify on odd hardware).** The cmdline loads
    `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a VM
-   disk (Proxmox defaults to VirtIO SCSI) is found at boot. The cmdline now has a
+   disk (Proxmox defaults to VirtIO SCSI) is found at boot. The cmdline has a
    **single source**: `scripts/cmdline.base` — `mkimg.nas.sh` reads it (via
    `CMDLINE_FILE`), `build.yml` copies it onto BOOT, and `write-bootcfg` reads the
    on-media copy (no baked-in fallback; it fails loudly if the file is missing).
-4. The rest of the plan's "assumptions to validate on first build" (its §11).
+   eMMC/SD boot (mmc_block/sdhci) is a known gap to evaluate if such hardware
+   shows up — the `mmc` mkinitfs feature is present in the standard profile.
 
 **Known bug (ROOT CAUSE FOUND, fixed in alpha-4) — in-place upgrade failed at
 `copy-modloop`.** The CI upgrade test + a live-box diagnostic session nailed it:
@@ -381,7 +450,7 @@ hit the old path and must reflash to alpha-4. The one-time bootstrap completed:
 the alpha-4 → alpha-5 run was the **first green** upgrade test
 (`UPGRADE-TEST PASS`, run 28829367172), and the test is **blocking** since.
 
-**alpha-5 notes (this pass):** the upgrade write phase now stages ALL payloads
+**alpha-5 notes:** the upgrade write phase now stages ALL payloads
 first and only then renames back-to-back (power cut mid-copy can no longer mix
 kernel/modloop generations); the image is 3.5 GiB raw (BOOT 2.5 GiB + MNASCFG
 ~1 GiB — partition sizes are frozen per deployed stick, so headroom lives in
@@ -392,10 +461,22 @@ covers the wizard + storage/service gating that used to be manual-only. The
 upgrade smoke test went GREEN for the first time on the alpha-4 → alpha-5 pair
 (run 28829367172) and was flipped to blocking immediately after.
 
+**alpha-6 notes:** NAS-essentials package pass (see CHANGELOG + §5 wiring notes):
+cryptsetup/dmcrypt, msmtp/mailx mail pipeline, restic, testdisk, f3,
+wireguard-tools, zstd/lz4/xz, xxhash, fdupes. First build with the upgrade
+smoke test BLOCKING (alpha-5 → alpha-6, green). Image 983 MB compressed.
+
 **Known caveats:**
-- **Signing key:** set the `ABUILD_PRIVKEY` repo secret for a fixed key (stable trust
-  anchor). Without it the key is random per build (`build-<hex>.rsa.pub`, published as
-  `mountnas-<tag>.rsa.pub`) and changes every build. See §6 "Version + signing key".
+- **Signing key — ACTION NEEDED: the `ABUILD_PRIVKEY` repo secret is still NOT
+  set.** Verified by comparing published pubkeys: alpha-4's and alpha-5's
+  `mountnas-<tag>.rsa.pub` differ, so every release is still signed by a random
+  per-build key. Boots and upgrades work regardless (each image is internally
+  self-consistent — the initramfs trusts its own build's key), but the published
+  `.rsa.pub` cannot serve as a stable trust anchor until the secret exists.
+  To fix: `openssl genrsa -out mountnas-signing.rsa 4096` (keep it private,
+  back it up), then repo Settings → Secrets → Actions → new secret
+  `ABUILD_PRIVKEY` = the full PEM. The first release after that rotates the key
+  one final time. See §6 "Version + signing key".
 - `depmod: ERROR: fstatat(3, vmlinuz)` during the kernel step is **benign** (modloop
   builds/signs fine right after).
 - The `apk index` "No provider for the dependencies" warning during local-repo
@@ -413,6 +494,10 @@ set only to override), `arch=x86_64`.
 Output: a GitHub Release tagged `<release_tag>` with the files in §4.
 
 ## 10. References
-- `mountnas-dev-plan.md` — the design spec (commands, the `nas` CLI, UPGRADE model).
-- `README.md` — user-facing docs. `UPGRADE.md` — single-slot in-place upgrade + backup docs.
+- `mountnas-dev-plan.md` — the ORIGINAL design spec (historical; lived in
+  `~/Downloads/files/`, not in the repo). The shipped design has since diverged
+  where §5/§8 say so; this file + CHANGELOG.md are the living record.
+- `README.md` — user-facing docs. `UPGRADE.md` — single-slot in-place upgrade +
+  backup docs (incl. the one-time alpha-1/2/3 migration). `CHANGELOG.md` —
+  per-release history.
 - Build host base: Alpine **latest-stable (v3.24)**, `jirutka/setup-alpine`, `abuild`.
