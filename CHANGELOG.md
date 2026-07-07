@@ -1,5 +1,27 @@
 # Changelog
 
+## [beta-1] — 2026-07-07
+
+First beta. A deep multi-angle code review of the alpha-7 CLI pass surfaced 15 findings — no data-loss or boot-breaking bugs, but real contract violations and fragility. Every finding is fixed here, one commit each.
+
+### Fixed
+- **`--help` can no longer execute a command.** `nas checkup --help` used to *run* a deep status (waking sleeping disks) because the help interceptor fell through for commands without a help page; it is now closed (help or overview, never execution) and every command has a page.
+- **Flags parse in any order.** `nas validate --json` (the documented status alias) emitted colored human text into monitoring pipes; `--deep --json` combinations silently dropped a flag. status/validate/checkup now share one flag loop — and **deep JSON snapshots work** for the first time.
+- **The "MountNAS ?" banner bug**: a missing release file short-circuited gen-issue's fallback so the version file was never consulted. The release/version fallback now lives in one shared `release-string` helper used by `nas`, the banner, and the login message (it was hand-copied three slightly different ways; one copy was wrong).
+- **`nas status` fails closed**: if check tracking cannot start (mktemp failing — most plausibly a full RAM root, the exact state a probe must catch), status exits 2 instead of silently reporting healthy.
+- **`nas logs --persist` no longer clobbers user config**: it edits only its own `-O/-s/-b` tokens inside `SYSLOGD_OPTS`, preserving remote-forwarding and any other user additions; typos like `--persist onn` (or `--help`) are usage errors instead of masquerading as a status query, and `-n` validates its count.
+- **`nas rollback` survives its own crashes**: a stale `.new` file from an interrupted rollback used to trip the encrypted-overlay refusal forever; snapshot-name collisions can no longer overwrite an existing snapshot.
+- **CI validates `release_tag`** before it reaches sed — a `&` in the tag silently corrupted the stored release string; a `/` broke the build mid-command.
+- **Sub-zero sensor readings display** as signed values instead of vanishing as "no sensor".
+- `nas help <typo>` exits 1 with a clear message instead of succeeding with the generic overview.
+
+### Changed
+- **Status checks emit structured records** (`TYPE<TAB>message`); `--json` renders from the records instead of re-parsing the human text at a magic character offset — the display format is free to change without silently breaking dashboards, and the CONTEXT.md "do not touch the tags" landmine is retired.
+- **Monitoring polls are ~half the cost**: JSON mode skips the per-disk hdparm sensor probes (its data has no JSON field), one 8-service probe loop serves both output modes (the human status gains smartd/crond/chronyd lines), and `nas disks --json` reuses its single lsblk dump.
+- **One `_boot_usb_disk` helper** replaces four hand-copied resolutions of "which disk is the boot USB" (status guard, disks, disks --json, backup), and the fstab boot-USB guard uses one lsblk dump instead of one per fstab line.
+- **`nas changes --diff` reviews everything a commit persists**: mode/owner deltas (a bare chmod no longer renders as an empty section), deleted-directory contents, and an explicit note for byte-identical files.
+- **Shell completions self-maintain**: howto topics are read from the installed directory (new topics complete without touching the completion files), and the zsh command list gained the validate/checkup aliases bash already had.
+
 ## [alpha-7] — 2026-07-06
 
 A `nas` CLI feature pass — safer commits, better screens, automation hooks.

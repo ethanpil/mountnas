@@ -473,21 +473,32 @@ for maintainers:
   lives in `/usr/share/mountnas/release` (seded into `_reltag` by build.yml);
   everything user-facing displays RELEASE, and `upgrade --check` compares
   tag-to-tag (comparing against pkgver mismatched forever — the old bug).
-- `nas status` now exits 1 on any [FAIL] (bad() appends to $NAS_FAILF because
-  the checks run in pipe subshells). The supervisor CI test greps text, not
-  $?, so both stay compatible — keep it that way or update both together.
-- Status tags are colored ONLY via the C_* variables around the literal
-  [ OK ]/[WARN]/[FAIL] words — tests and greps depend on the words staying
-  intact inside the escapes.
+- `nas status` exits 1 on any FAIL, 2 when check tracking itself could not
+  start (fail-closed). Checks emit structured records — ok()/warn()/bad()
+  append TYPE<TAB>message to $NAS_CHECKS (file, not a variable: the checks
+  run in pipe subshells) and `--json` renders purely from those records
+  (beta-1; the old magic-offset parse of the human text is gone, so the
+  display format is free to change). The supervisor CI test still greps the
+  literal FAIL word in the human output — keep the tag words intact inside
+  the color escapes for that one consumer.
 - bash completion ships as files/bash-nas-completion.sh with its body inside
   eval: busybox ash sources profile.d too and PARSES function bodies eagerly,
   so bare bash array syntax there would syntax-error every ash login. ci-lint
   lints it with -s bash explicitly (no shebang, so discovery skips it); the
   zsh compdef is unlintable data.
-- 'nas logs --persist on' rewrites /etc/conf.d/syslog wholesale (Alpine's
-  shipped content is just SYSLOGD_OPTS="-t"); the mountnas service restarts
-  syslogd after the data disk mounts because the boot-time syslogd starts
-  before the -O target exists.
+- 'nas logs --persist on|off' edits ONLY the -O/-s/-b tokens inside
+  SYSLOGD_OPTS (beta-1; it used to rewrite the file wholesale and clobber
+  user tokens); the mountnas service restarts syslogd after the data disk
+  mounts because the boot-time syslogd starts before the -O target exists.
+
+**beta-1 notes:** all 15 findings from the alpha-7 code review fixed, one
+commit each (see CHANGELOG). Structural: status checks-as-records (above);
+one `release-string` helper (nas/gen-issue/welcome — never re-implement the
+release/version fallback by hand); one `_boot_usb_disk()` helper (never
+hand-roll findfs LABEL=BOOT + pkname again); the --help interceptor is
+CLOSED (help or overview, never execution — add a _cmd_help_for page for
+every new dispatcher command); release_tag is validated in CI before the
+_reltag sed; completions read howto topics from the installed dir.
 
 **Known caveats:**
 - **Signing key — ACTION NEEDED: the `ABUILD_PRIVKEY` repo secret is still NOT
