@@ -89,7 +89,13 @@ jobs:
             set -eu; export HOME=/home/build
             export PACKAGES_LIST="$HOME/repo/packages.list" ARCH="'"$ARCH"'"
             export CMDLINE_FILE="$HOME/repo/scripts/cmdline.base"
-            cd "$HOME"; git clone --depth=1 --branch "'"$APORTS_REF"'" https://gitlab.alpinelinux.org/alpine/aports.git
+            # aports comes from the GitHub mirror: gitlab.alpinelinux.org has
+            # repeated transient failures (SSL timeouts, early-EOF clones) that
+            # killed two builds in a row. Same repo, same branches. One retry
+            # covers the residual flake.
+            cd "$HOME"
+            git clone --depth=1 --branch "'"$APORTS_REF"'" https://github.com/alpinelinux/aports.git \
+              || { sleep 15; git clone --depth=1 --branch "'"$APORTS_REF"'" https://github.com/alpinelinux/aports.git; }
             echo "== preflight =="
             apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -vE "^(mountnas-tools|snapraid|mergerfs|zerotier-one)$") linux-lts
             echo "== verify every enabled service has an init script =="
