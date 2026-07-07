@@ -696,13 +696,40 @@ cmd_changes() {
 		printf '%s\n' "$out" | while read -r st path; do
 			[ -n "$path" ] || continue
 			old="$d/$path"; new="/$path"
-			# directories appear in lbu status too — nothing to diff there
-			[ -d "$new" ] && continue
-			[ -e "$old" ] || old=/dev/null
-			[ -e "$new" ] || new=/dev/null
+			# live directories: mode/owner deltas still matter, content does not
+			if [ -d "$new" ]; then
+				if [ -e "$old" ]; then
+					om=$(stat -c '%a %U:%G' "$old" 2>/dev/null)
+					nm=$(stat -c '%a %U:%G' "$new" 2>/dev/null)
+					[ "$om" != "$nm" ] && { echo; echo "== $st $path/ =="; echo "mode/owner: $om -> $nm"; }
+				else
+					echo; echo "== $st $path/ == (new directory)"
+				fi
+				continue
+			fi
+			# deleted directory: diff cannot express it — list what disappears
+			if [ ! -e "$new" ] && [ -d "$old" ]; then
+				echo; echo "== $st $path/ == (directory deleted; contents were:)"
+				( cd "$d" && find "$path" 2>/dev/null | sed 's/^/  /' )
+				continue
+			fi
 			echo
 			echo "== $st $path =="
-			diff -u "$old" "$new" 2>/dev/null || true
+			# a chmod/chown is a real committed change a content diff cannot show
+			om=""; nm=""
+			if [ -e "$old" ] && [ -e "$new" ]; then
+				om=$(stat -c '%a %U:%G' "$old" 2>/dev/null)
+				nm=$(stat -c '%a %U:%G' "$new" 2>/dev/null)
+				[ "$om" != "$nm" ] && echo "mode/owner: $om -> $nm"
+			fi
+			o="$old"; [ -e "$o" ] || o=/dev/null
+			n="$new"; [ -e "$n" ] || n=/dev/null
+			if [ "$o" != /dev/null ] && [ "$n" != /dev/null ] && cmp -s "$o" "$n"; then
+				# identical bytes: say so rather than leaving a bare header
+				[ "$om" = "$nm" ] && echo "  (no content or mode change visible — lbu may track other metadata)"
+			else
+				diff -u "$o" "$n" 2>/dev/null || true
+			fi
 		done
 		rm -rf "$d"
 		echo
