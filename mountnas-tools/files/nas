@@ -1367,6 +1367,15 @@ nas setup
 EOF
 ;;
 	howto) cmd_howto ;;
+	validate|checkup) cat <<EOF
+nas validate / nas checkup
+  Aliases: validate = nas status (fast config check), checkup = nas status
+  --deep (adds SMART / SnapRAID / time-sync — may wake sleeping disks).
+  Both accept --json like nas status.
+EOF
+;;
+	version) echo "nas version — print the MountNAS release (and build id). No flags." ;;
+	about)   echo "nas about — logo, release, and project info. No flags." ;;
 	commit|save) cat <<EOF
 nas commit   (alias: nas save)
   Save the in-RAM /etc changes to the USB config partition. Review first
@@ -1390,9 +1399,11 @@ EOF
 	return 0
 }
 
-# 'nas <cmd> --help' → focused help (falls through to the command otherwise)
+# 'nas <cmd> --help' NEVER executes the command: focused help when we have a
+# page for it, the overview otherwise. (Falling through used to RUN the
+# command — 'nas checkup --help' woke sleeping disks with a deep status.)
 case "${2:-}" in
-	--help|-h) if _cmd_help_for "${1:-}"; then exit 0; fi ;;
+	--help|-h) _cmd_help_for "${1:-}" || cmd_help; exit 0 ;;
 esac
 
 case "${1:-help}" in
