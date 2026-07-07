@@ -146,7 +146,7 @@ cmd_status() {
 		netfs)        bad "data disk is a network filesystem — unsupported for $DATA, use a local disk" ;;
 		*)            warn "data disk state unknown" ;;
 	esac
-	for s in docker samba nfs sshd avahi-daemon; do
+	for s in docker samba nfs sshd avahi-daemon smartd crond chronyd; do
 		if rc-service "$s" status >/dev/null 2>&1; then
 			ok "$s running"; _rec SVC "$s" true
 		else
@@ -165,8 +165,12 @@ cmd_status() {
 		*) ok "last backup: ${lbk#* } ($(( ( $(date +%s) - ${lbk%% *} ) / 86400 )) day(s) ago)" ;;
 	esac
 
-	echo "== sensors =="
-	_status_sensors
+	# JSON mode skips the sensors block: its data has no JSON representation,
+	# and per-disk hdparm probes on every monitoring poll would be pure waste.
+	if [ -z "${NAS_NO_SENSORS:-}" ]; then
+		echo "== sensors =="
+		_status_sensors
+	fi
 
 	echo "== storage config (fstab) =="
 	# per data mount
@@ -294,6 +298,7 @@ cmd_status() {
 cmd_status_json() {
 	dp="${1:-}"
 	NAS_CHECKS=$(mktemp) || { echo '{"error":"mktemp failed"}'; return 1; }
+	NAS_NO_SENSORS=1
 	cmd_status $dp > /dev/null 2>&1
 	jrc=$?
 	lb=$(awk 'NR==1{print $1}' /etc/mountnas/last-backup 2>/dev/null)
@@ -514,12 +519,14 @@ cmd_disks() {
 cmd_disks_json() {
 	bp=$(findfs LABEL=BOOT 2>/dev/null)
 	usb=$(lsblk -no pkname "$bp" 2>/dev/null | head -n1)
-	temps=$(for d in $(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
+	# one lsblk dump feeds both the disk-name list (for temps) and the output
+	lj=$(lsblk -Jbo 'NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT,FSAVAIL,VENDOR,MODEL,SERIAL,REV,TRAN,ROTA' 2>/dev/null)
+	temps=$(printf '%s' "$lj" | jq -r '.blockdevices[]? | select(.type=="disk") | .name' | while read -r d; do
 		t=$(_disk_temp "$d"); [ "$t" = "-" ] && continue
 		printf '{"name":"%s","temp":"%s"}\n' "$d" "$t"
 	done | jq -s 'map({(.name): .temp}) | add // {}')
 	fuuids=$(awk '$1!~/^#/ && $1~/^UUID=/{sub("UUID=","",$1); print $1}' /etc/fstab 2>/dev/null | jq -R . | jq -s .)
-	lsblk -Jbo 'NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT,FSAVAIL,VENDOR,MODEL,SERIAL,REV,TRAN,ROTA' 2>/dev/null \
+	printf '%s' "$lj" \
 	| jq --arg usb "$usb" --argjson temps "$temps" --argjson fuuids "$fuuids" '
 		def part: { name, size, fstype, label, uuid, mountpoint, fsavail,
 		            in_fstab: (.uuid != null and (($fuuids | index(.uuid)) != null)) };
