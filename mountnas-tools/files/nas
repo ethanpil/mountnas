@@ -114,6 +114,10 @@ EOF
 # and be slow, so they are opt-in.
 cmd_status() {
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
+	# Health-probe friendly: any [FAIL] line flips the exit code to 1. The
+	# checks run inside pipe subshells, so bad() appends to this file (a plain
+	# counter would be lost when the subshell exits) — see bad() at the top.
+	NAS_FAILF=$(mktemp 2>/dev/null) || NAS_FAILF=""
 
 	echo "MountNAS $RELEASE  —  $(hostname) ($(hostname).local)  —  up $(cut -d. -f1 /proc/uptime)s"
 	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')
@@ -144,6 +148,9 @@ cmd_status() {
 		*) ok "last backup: ${lbk#* } ($(( ( $(date +%s) - ${lbk%% *} ) / 86400 )) day(s) ago)" ;;
 	esac
 
+	echo "== sensors =="
+	_status_sensors
+
 	echo "== storage config (fstab) =="
 	# per data mount
 	awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $1" "$2" "$4}' /etc/fstab | while read -r spec mp opts; do
@@ -160,6 +167,22 @@ cmd_status() {
 	[ -n "$dupu" ] && bad "duplicate UUID in fstab: $dupu"
 	dupm=$(awk '$1!~/^#/ && $2 ~ /^\/(cfg|mnt)/{print $2}' /etc/fstab | sort | uniq -d)
 	[ -n "$dupm" ] && bad "duplicate mountpoint in fstab: $dupm"
+	# The one unrecoverable user error: a DATA fstab entry that resolves to the
+	# boot USB itself — formatting or mounting it destroys the running OS.
+	# /cfg (LABEL=MNASCFG) legitimately lives on the stick; only /mnt/* entries
+	# are checked.
+	busb=$(lsblk -no pkname "$(findfs LABEL=BOOT 2>/dev/null)" 2>/dev/null | head -n1)
+	[ -n "$busb" ] && awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $1}' /etc/fstab | while read -r spec; do
+		bd=""
+		case "$spec" in
+			UUID=*|LABEL=*|PARTUUID=*) bd=$(findfs "$spec" 2>/dev/null) ;;
+			/dev/*) bd=$spec ;;
+		esac
+		[ -n "$bd" ] || continue
+		pk=$(lsblk -no pkname "$bd" 2>/dev/null | head -n1)
+		[ -n "$pk" ] || pk=${bd#/dev/}
+		[ "$pk" = "$busb" ] && bad "$spec resolves to the BOOT USB ($busb) — REMOVE it from fstab (mkfs/mount there destroys the OS)"
+	done
 	# docker data-root: config points under $DATA, but only OK once the disk is mounted
 	dr=$(awk -F'"' '/data-root/{print $4}' /etc/docker/daemon.json 2>/dev/null)
 	if [ -n "$dr" ]; then
@@ -229,7 +252,13 @@ cmd_status() {
 	else
 		printf "  Tip: 'nas status --deep' adds SMART / SnapRAID / time-sync (may wake sleeping disks).\n"
 	fi
-	return 0
+	# exit 1 when any [FAIL] fired — usable from cron/monitoring as a probe
+	src=0
+	if [ -n "$NAS_FAILF" ]; then
+		[ -s "$NAS_FAILF" ] && src=1
+		rm -f "$NAS_FAILF"; NAS_FAILF=""
+	fi
+	return "$src"
 }
 
 # Disk temperature WITHOUT waking sleeping drives: hdparm -C reports the power
@@ -252,6 +281,58 @@ _disk_temp() {
 		''|*[!0-9]*) echo "-" ;;
 		*) echo "$((t / 1000))C" ;;
 	esac
+}
+
+# Compact sensors block for 'nas status': CPU package temp (max across the CPU
+# hwmon chips), fan speeds, and per-disk temperatures via _disk_temp (which is
+# standby-safe — it never wakes a sleeping drive). Pure /sys reads, instant.
+# VMs expose no hwmon chips: say so quietly instead of printing nothing.
+_status_sensors() {
+	cpu=""; fans=""
+	for h in /sys/class/hwmon/hwmon*; do
+		[ -f "$h/name" ] || continue
+		hn=$(cat "$h/name" 2>/dev/null)
+		case "$hn" in
+			coretemp|k10temp|zenpower|cpu_thermal|soc_thermal|acpitz)
+				for t in "$h"/temp*_input; do
+					[ -f "$t" ] || continue
+					v=$(cat "$t" 2>/dev/null)
+					case "$v" in ''|*[!0-9]*) continue ;; esac
+					v=$((v / 1000))
+					if [ -z "$cpu" ] || [ "$v" -gt "$cpu" ]; then cpu=$v; fi
+				done ;;
+		esac
+		for f in "$h"/fan*_input; do
+			[ -f "$f" ] || continue
+			r=$(cat "$f" 2>/dev/null)
+			case "$r" in ''|*[!0-9]*) continue ;; esac
+			[ "$r" -gt 0 ] && fans="$fans ${r}rpm"
+		done
+	done
+	disks=""
+	for d in $(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
+		t=$(_disk_temp "$d")
+		[ "$t" = "-" ] && continue
+		disks="$disks $d:$t"
+	done
+	if [ -z "$cpu" ] && [ -z "$fans" ] && [ -z "$disks" ]; then
+		echo "  (no hardware sensors exposed — typical inside a VM)"
+		return 0
+	fi
+	if [ -n "$cpu" ] || [ -n "$fans" ]; then
+		printf '  %s%s\n' "${cpu:+CPU: ${cpu}C   }" "${fans:+Fans:$fans}"
+	fi
+	# disk temps wrap at 5 per line so many-bay boxes stay narrow
+	if [ -n "$disks" ]; then
+		lbl="  Disks:"
+		# shellcheck disable=SC2086  # word-splitting the "name:temp" tokens is the point
+		set -- $disks
+		while [ $# -gt 0 ]; do
+			out="$lbl"; i=0
+			while [ $# -gt 0 ] && [ "$i" -lt 5 ]; do out="$out $1"; shift; i=$((i+1)); done
+			printf '%s\n' "$out"; lbl="        "
+		done
+	fi
 }
 
 # nas disks — one header row per physical disk (hardware identity: vendor,
