@@ -2,10 +2,9 @@
 # zsh completion for the nas CLI (installed to /usr/share/zsh/site-functions/_nas,
 # which is in zsh's default fpath — active for users running compinit).
 # Command list: keep in sync with the dispatcher in files/nas AND the bash
-# completion (files/bash-nas-completion.sh). Howto topics come from the
-# installed directory, so new topics complete without touching this file.
+# completion (files/bash-nas-completion.sh).
 local -a cmds
-cmds=(setup status disks restart changes commit save rollback backup logs howto report shutdown reboot upgrade version about help validate checkup)
+cmds=(setup status disks restart changes commit save rollback backup logs report shutdown reboot upgrade version about help validate checkup)
 if (( CURRENT == 2 )); then
 	_describe "nas command" cmds
 else
@@ -18,6 +17,5 @@ else
 		logs)            _values flag -f -n --persist ;;
 		upgrade)         _values flag --check --yes ;;
 		reboot|shutdown) _values flag --yes --save ;;
-		howto)           _values topic /usr/share/mountnas/howto/*.txt(N:t:r) ;;
 	esac
 fi

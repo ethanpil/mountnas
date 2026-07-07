@@ -12,7 +12,7 @@ _nas_complete() {
 	case "$prev" in
 	# command list: keep in sync with the dispatcher in files/nas AND the zsh
 	# compdef (files/zsh-nas-completion)
-	nas)             COMPREPLY=($(compgen -W "setup status disks restart changes commit save rollback backup logs howto report shutdown reboot upgrade version about help validate checkup" -- "$cur")) ;;
+	nas)             COMPREPLY=($(compgen -W "setup status disks restart changes commit save rollback backup logs report shutdown reboot upgrade version about help validate checkup" -- "$cur")) ;;
 	status|validate) COMPREPLY=($(compgen -W "--deep --json" -- "$cur")) ;;
 	checkup)         COMPREPLY=($(compgen -W "--json" -- "$cur")) ;;
 	disks)           COMPREPLY=($(compgen -W "--json" -- "$cur")) ;;
@@ -22,7 +22,6 @@ _nas_complete() {
 	--persist)       COMPREPLY=($(compgen -W "on off status" -- "$cur")) ;;
 	upgrade)         COMPREPLY=($(compgen -W "--check --yes" -- "$cur")) ;;
 	reboot|shutdown) COMPREPLY=($(compgen -W "--yes --save" -- "$cur")) ;;
-	howto)           COMPREPLY=($(cd /usr/share/mountnas/howto 2>/dev/null && compgen -W "$(for f in *.txt; do [ -e "$f" ] || continue; printf "%s " "${f%.txt}"; done)" -- "$cur")) ;;
 	esac
 }
 complete -F _nas_complete nas

@@ -80,7 +80,6 @@ MountNAS $RELEASE — control CLI
   nas rollback   Restore a previous committed config            [--list | <n>]
   nas backup     Full image of the boot USB to a file  (--to <dir>) — see UPGRADE.md
   nas logs       View the system log; --persist on = survive reboots on the data disk
-  nas howto      Offline recipes: disks, pool, parity, luks, mail, backup, upgrade...
   nas shutdown   Power off  [--yes|--save]
   nas reboot     Reboot     [--yes|--save]
   nas upgrade    Upgrade the OS from a release file or URL  [--check|--yes]
@@ -1368,24 +1367,6 @@ EOF
 EOF
 }
 
-# nas howto <topic> — the README's recipes, offline on the box (a NAS is
-# exactly the machine you administer while the docs website is unreachable).
-HOWTO_DIR=/usr/share/mountnas/howto
-cmd_howto() {
-	t="${1:-}"
-	if [ -z "$t" ]; then
-		echo "Offline recipes — nas howto <topic>:"
-		for f in "$HOWTO_DIR"/*.txt; do
-			[ -f "$f" ] || continue
-			printf '  %-9s %s\n' "$(basename "$f" .txt)" "$(head -n1 "$f" | sed 's/^# *//')"
-		done
-		return 0
-	fi
-	f="$HOWTO_DIR/$t.txt"
-	[ -f "$f" ] || { bad "no such topic: $t   (list them: nas howto)"; return 1; }
-	cat "$f"
-}
-
 # Per-command help: 'nas <cmd> --help' or 'nas help <cmd>'. Focused usage +
 # examples; the full overview stays on plain 'nas help'.
 _cmd_help_for() {
@@ -1431,7 +1412,7 @@ nas backup [--to <dir|file>]
   Image the WHOLE boot USB (OS + saved config) to a gzip file and verify
   it. Default target: /mnt/nasdata/backups. Copy it OFF this box.
   Restore: write it to a DIFFERENT stick (Etcher/dd) and boot that.
-  Data disks are NOT included — see: nas howto backup
+  Data disks are NOT included — back those up separately (restic is baked in).
 EOF
 ;;
 	logs) cat <<EOF
@@ -1463,7 +1444,6 @@ nas setup
   Auto-runs at first login until completed once; safe to re-run any time.
 EOF
 ;;
-	howto) cmd_howto ;;
 	validate|checkup) cat <<EOF
 nas validate / nas checkup
   Aliases: validate = nas status (fast config check), checkup = nas status
@@ -1540,7 +1520,6 @@ case "${1:-help}" in
 	shutdown) shift; cmd_shutdown "$@" ;;
 	reboot) shift; cmd_reboot "$@" ;;
 	upgrade) shift; cmd_upgrade "$@" ;;
-	howto) shift; cmd_howto "$@" ;;
 	version) cmd_version ;;
 	about) cmd_about ;;
 	help|--help|-h) shift 2>/dev/null || true

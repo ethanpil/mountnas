@@ -47,11 +47,6 @@ package() {
 	install -Dm644 "$startdir"/files/profile-nas-prompt.sh  "$pkgdir"/etc/profile.d/nas-prompt.sh
 	install -Dm644 "$startdir"/files/profile-nas-resize.sh  "$pkgdir"/etc/profile.d/nas-resize.sh
 	install -Dm644 "$startdir"/files/logo           "$pkgdir"/usr/share/mountnas/logo
-	# offline recipes for 'nas howto'
-	local h
-	for h in "$startdir"/files/howto/*.txt; do
-		install -Dm644 "$h" "$pkgdir"/usr/share/mountnas/howto/"$(basename "$h")"
-	done
 	# shell completion: bash via profile.d (lbu-excluded), zsh via site-functions
 	install -Dm644 "$startdir"/files/bash-nas-completion.sh "$pkgdir"/etc/profile.d/nas-completion.sh
 	install -Dm644 "$startdir"/files/zsh-nas-completion     "$pkgdir"/usr/share/zsh/site-functions/_nas
