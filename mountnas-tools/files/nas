@@ -261,6 +261,45 @@ cmd_status() {
 	return "$src"
 }
 
+# nas status --json — machine-readable snapshot for monitoring integrations
+# (Uptime Kuma, Homepage, Zabbix, cron). Runs the same checks as the human
+# status with colors forced off, parses the tagged lines, and adds the raw
+# state facts. Exit code matches the human mode: 1 when any check FAILed.
+cmd_status_json() {
+	C_OK=""; C_WA=""; C_FA=""; C_NO=""
+	tmpo=$(mktemp) || { echo '{"error":"mktemp failed"}'; return 1; }
+	cmd_status > "$tmpo" 2>&1
+	jrc=$?
+	svc=$(for s in docker samba nfs sshd avahi-daemon smartd crond chronyd; do
+		rc-service "$s" status >/dev/null 2>&1 && v=true || v=false
+		printf '{"name":"%s","running":%s}\n' "$s" "$v"
+	done | jq -s .)
+	lb=$(awk 'NR==1{print $1}' /etc/mountnas/last-backup 2>/dev/null)
+	case "$lb" in ''|*[!0-9]*) lb=null ;; esac
+	un=$(cat "$STATE/unsaved" 2>/dev/null); case "$un" in ''|*[!0-9]*) un=0 ;; esac
+	jq -n \
+		--arg release "$RELEASE" --arg version "$VERSION" --arg hostname "$(hostname)" \
+		--argjson uptime "$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)" \
+		--arg ips "$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')" \
+		--arg cfg "$(mountpoint -q "$CFG" && echo ok || echo fail)" \
+		--arg data "$(cat "$STATE/data" 2>/dev/null || echo unknown)" \
+		--argjson services "$svc" \
+		--argjson unsaved "$un" \
+		--argjson last_backup_epoch "$lb" \
+		--argjson failed "$([ "$jrc" -ne 0 ] && echo true || echo false)" \
+		--rawfile out "$tmpo" \
+	'def lines(tag): $out | split("\n") | map(select(startswith("  [" + tag + "]"))) | map(.[9:]);
+	 {release:$release, version:$version, hostname:$hostname, uptime_seconds:$uptime,
+	  ips: ($ips|split(" ")|map(select(length>0))),
+	  config_partition:$cfg, data_disk:$data, services:$services,
+	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch,
+	  healthy: ($failed|not),
+	  checks: { ok: (lines(" OK ")|length), warn: (lines("WARN")|length), fail: (lines("FAIL")|length) },
+	  fail_lines: lines("FAIL"), warn_lines: lines("WARN") }'
+	rm -f "$tmpo"
+	return "$jrc"
+}
+
 # Disk temperature WITHOUT waking sleeping drives: hdparm -C reports the power
 # state without spinning up — a drive in standby shows "standby" instead of a
 # reading. Temps come from hwmon: the drivetemp module (loaded via /etc/modules)
@@ -1005,7 +1044,11 @@ EOF
 
 case "${1:-help}" in
 	setup) cmd_setup ;;
-	status) shift; cmd_status "$@" ;;
+	status) shift
+		case "${1:-}" in
+			--json) cmd_status_json ;;
+			*) cmd_status "$@" ;;
+		esac ;;
 	disks) cmd_disks ;;
 	validate) shift; cmd_status "$@" ;;
 	checkup) cmd_status --deep ;;
