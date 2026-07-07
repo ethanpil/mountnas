@@ -114,7 +114,11 @@ jobs:
             echo "$V" | grep -Eq "^[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p|git)[0-9]*)*$" \
               || V="1.0.0_git$(date +%Y%m%d)"
             sed -i "s/^pkgver=.*/pkgver=$V/" "$HOME"/repo/mountnas-tools/APKBUILD
-            echo "mountnas-tools pkgver = $V"
+            # the raw tag becomes /usr/share/mountnas/release — what the tools
+            # DISPLAY (nas version, banner) and what upgrade --check compares
+            # against GitHub tags. Safe for sed: tags are [A-Za-z0-9._-].
+            sed -i "s/^_reltag=.*/_reltag='"$TAG"'/" "$HOME"/repo/mountnas-tools/APKBUILD
+            echo "mountnas-tools pkgver = $V (release tag: '"$TAG"')"
             echo "== build mountnas-tools =="
             ( cd "$HOME"/repo/mountnas-tools && abuild -r )
             echo "== build snapraid (compiled from source) =="

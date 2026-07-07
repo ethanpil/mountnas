@@ -8,9 +8,24 @@ BOOTMNT=/media/mnasboot
 WBCFG=/usr/libexec/mountnas/write-bootcfg
 REPO=ethanpil/mountnas   # canonical GitHub repo ('nas upgrade --check' + docs)
 VERSION=$(cat /usr/share/mountnas/version 2>/dev/null || echo "?")
-ok()  { printf '  [ OK ] %s\n' "$*"; }
-warn(){ printf '  [WARN] %s\n' "$*"; }
-bad() { printf '  [FAIL] %s\n' "$*"; }
+# RELEASE = the tag users know (alpha-7, ...) — what we display and compare
+# against GitHub. VERSION stays the apk pkgver (build id; CI reads that file).
+RELEASE=$(cat /usr/share/mountnas/release 2>/dev/null || echo "$VERSION")
+[ -n "$RELEASE" ] && [ "$RELEASE" != dev ] || RELEASE="$VERSION"
+# Color the status tags when stdout is a terminal (NO_COLOR honored); pipes and
+# logs get plain text. The literal [ OK ]/[WARN]/[FAIL] words stay intact inside
+# the escapes, so grep/CI match colored output too.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+	C_OK="$(printf '\033[32m')"; C_WA="$(printf '\033[33m')"; C_FA="$(printf '\033[1;31m')"; C_NO="$(printf '\033[0m')"
+else
+	C_OK=""; C_WA=""; C_FA=""; C_NO=""
+fi
+ok()  { printf '  %s[ OK ]%s %s\n' "$C_OK" "$C_NO" "$*"; }
+warn(){ printf '  %s[WARN]%s %s\n' "$C_WA" "$C_NO" "$*"; }
+# bad() also drops a marker when NAS_FAILF is set (cmd_status uses it to turn
+# any [FAIL] into a nonzero exit code — the checks run in pipe subshells, so a
+# plain counter variable would be lost; a file append survives).
+bad() { printf '  %s[FAIL]%s %s\n' "$C_FA" "$C_NO" "$*"; [ -n "${NAS_FAILF:-}" ] && { : >> "$NAS_FAILF"; } 2>/dev/null; return 0; }
 confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
 # True if $1 is covered by the read-only 'mountnas-blocked' placeholder that the
 # mountnas service mounts over failed data mounts — mountpoint -q alone reports
@@ -25,18 +40,21 @@ _refresh_unsaved() {
 	mkdir -p "$STATE"; lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || true
 }
 
-cmd_version() { echo "MountNAS $VERSION"; }
+cmd_version() {
+	if [ "$RELEASE" != "$VERSION" ]; then echo "MountNAS $RELEASE (build $VERSION)"
+	else echo "MountNAS $VERSION"; fi
+}
 
 cmd_about() {
 	[ -f /usr/share/mountnas/logo ] && cat /usr/share/mountnas/logo
-	printf '\n                      v %s\n\n' "$VERSION"
+	printf '\n                      %s\n\n' "$RELEASE"
 	printf 'Diskless Alpine based NAS that runs from RAM off a USB stick.\n\n'
 	printf 'http://mountnas.com\n'
 }
 
 cmd_help() {
 	cat <<EOF
-MountNAS $VERSION — control CLI
+MountNAS $RELEASE — control CLI
 
   nas setup      Guided first-run setup (hostname, network, password, timezone)
   nas status     Health + storage config check (fast, no disk spin-up)
@@ -97,7 +115,7 @@ EOF
 cmd_status() {
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 
-	echo "MountNAS $VERSION  —  $(hostname)  —  up $(cut -d. -f1 /proc/uptime)s"
+	echo "MountNAS $RELEASE  —  $(hostname) ($(hostname).local)  —  up $(cut -d. -f1 /proc/uptime)s"
 	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')
 	echo "  IP: ${ip:-none}    RAM: $(free -m | awk '/Mem:/{print $3"/"$2" MB"}')"
 
@@ -684,15 +702,16 @@ _upgrade_check() {
 		|| { bad "cannot reach the GitHub API (no network?)"; return 1; }
 	tag=$(printf '%s\n' "$json" | jq -r '.tag_name // empty' 2>/dev/null)
 	[ -n "$tag" ] || { bad "no release found for $REPO"; return 1; }
-	latest="${tag#v}"
-	if [ "$latest" = "$VERSION" ]; then
-		ok "up to date: MountNAS $VERSION is the latest release"; return 0
+	# compare tag-to-tag: RELEASE carries the tag this image was built from
+	# (comparing against the apk pkgver always mismatched — alpha-6 vs 1.0.0_git…)
+	if [ "$tag" = "$RELEASE" ] || [ "${tag#v}" = "$RELEASE" ]; then
+		ok "up to date: MountNAS $RELEASE is the latest release"; return 0
 	fi
-	warn "a different release is published: $latest (running: $VERSION)"
+	warn "a different release is published: $tag (running: $RELEASE)"
 	rel_url=$(printf '%s\n' "$json" | jq -r '.assets[]?.browser_download_url // empty' 2>/dev/null | grep -m1 '\.img\.gz$')
 	echo "  Upgrade with (see UPGRADE.md — run 'nas backup' FIRST):"
 	if [ -n "$rel_url" ]; then echo "    nas upgrade $rel_url"
-	else echo "    nas upgrade <mountnas-$latest.img.gz>   (release has no .img.gz asset?)"; fi
+	else echo "    nas upgrade <mountnas-$tag.img.gz>   (release has no .img.gz asset?)"; fi
 }
 
 # nas upgrade <mountnas-*.img.gz>
