@@ -76,7 +76,7 @@ MountNAS $RELEASE — control CLI
   nas disks      Every disk: identity, partitions, fstab state      [--json]
   nas restart    Re-mount disks + (re)start services (no reboot)
   nas changes    List unsaved changes; --diff shows the content (alias: nas changed)
-  nas commit     Save changes to the USB                        (alias: nas save)
+  nas commit     Save changes to the USB; label it: -m "note"   (alias: nas save)
   nas rollback   Restore a previous committed config            [--list | <n>]
   nas backup     Full image of the boot USB to a file  (--to <dir>) — see UPGRADE.md
   nas logs       View the system log; --persist on = survive reboots on the data disk
@@ -757,15 +757,37 @@ cmd_changes() {
 	echo "Save them with: nas commit    (review first: nas changes --diff)"
 }
 
+# Note for a snapshot file: looked up by the file's mtime stamp — the exact
+# identity lbu uses when it rotates the active overlay into
+# <host>.<mtime-stamp>.tar.gz, so a note attached at commit time follows the
+# snapshot automatically. Notes live in /cfg/.mountnas-notes (TS<TAB>text).
+_snap_note() {
+	sn_ts=$(date -u -r "$1" +%Y%m%d%H%M%S 2>/dev/null) || return 0
+	awk -F'\t' -v t="$sn_ts" '$1==t{print $2; exit}' "$CFG/.mountnas-notes" 2>/dev/null
+}
+
 cmd_commit() {
+	note=""
+	if [ "${1:-}" = "-m" ]; then
+		note="${2:-}"
+		[ -n "$note" ] || { bad "usage: nas commit [-m \"what you changed\"]"; return 1; }
+		# notes are one line in a tab-separated file — flatten hostile chars
+		note=$(printf '%s' "$note" | tr '\t\n' '  ')
+	elif [ -n "${1:-}" ]; then
+		bad "usage: nas commit [-m \"what you changed\"]"; return 1
+	fi
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
 	grep -qE "^(/?mnt/nasdata|/?mnt/disk|/?mnt/parity)" /etc/lbu/include 2>/dev/null \
 		&& { bad "a data path is in /etc/lbu/include — refusing (would tar your data disk)"; return 1; }
 	echo "Saving configuration..."
 	lbu commit -v || { bad "lbu commit failed"; return 1; }
+	if [ -n "$note" ]; then
+		nts=$(date -u -r "$CFG/$(hostname).apkovl.tar.gz" +%Y%m%d%H%M%S 2>/dev/null)
+		[ -n "$nts" ] && printf '%s\t%s\n' "$nts" "$note" >> "$CFG/.mountnas-notes" 2>/dev/null
+	fi
 	sz=$(du -k "$CFG"/*.apkovl.tar.gz 2>/dev/null | awk '{s+=$1}END{print s}')
 	[ "${sz:-0}" -gt 51200 ] && warn "overlay is large (${sz}KB) — a big file in a tracked path (e.g. /root)?"
-	ok "saved to $CFG"
+	ok "saved to $CFG${note:+  (note: $note)}"
 }
 
 # nas rollback — the config time machine. lbu already keeps BACKUP_LIMIT prior
@@ -792,28 +814,36 @@ cmd_rollback() {
 	list=$(_ovl_backups)
 	if [ -z "${1:-}" ] || [ "$1" = "--list" ]; then
 		echo "Saved-config snapshots on $CFG (newest first; lbu keeps the last few):"
-		[ -f "$act" ] && printf '       %-20s %8s  %s\n' \
-			"$(date -r "$act" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" \
-			"$(du -k "$act" 2>/dev/null | awk '{print $1"K"}')" "ACTIVE (applies at next boot)"
+		if [ -f "$act" ]; then
+			an=$(_snap_note "$act")
+			printf '       %-20s %8s  %s%s\n' \
+				"$(date -r "$act" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" \
+				"$(du -k "$act" 2>/dev/null | awk '{print $1"K"}')" \
+				"ACTIVE (applies at next boot)" "${an:+  — $an}"
+		fi
 		if [ -z "$list" ]; then
 			echo "  (no snapshots yet — they appear from your second 'nas commit' on)"
 		else
 			i=1
 			printf '%s\n' "$list" | while read -r f; do
-				printf '  %-4s %-20s %8s  %s\n' "[$i]" \
+				fn=$(_snap_note "$f")
+				printf '  %-4s %-20s %8s  %s%s\n' "[$i]" \
 					"$(date -r "$f" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" \
-					"$(du -k "$f" 2>/dev/null | awk '{print $1"K"}')" "$(basename "$f")"
+					"$(du -k "$f" 2>/dev/null | awk '{print $1"K"}')" \
+					"$(basename "$f")" "${fn:+  — $fn}"
 				i=$((i+1))
 			done
 		fi
 		echo "Restore one with: nas rollback <number>   (applies at the NEXT boot)"
+		echo "Label your commits so this list stays readable:  nas commit -m \"note\""
 		return 0
 	fi
 	case "$1" in *[!0-9]*) bad "usage: nas rollback [--list | <number>]"; return 1 ;; esac
 	sel=$(printf '%s\n' "$list" | awk -v n="$1" 'NR==n{print; exit}')
 	[ -n "$sel" ] || { bad "no snapshot number $1 — see: nas rollback --list"; return 1; }
 	[ -f "$act" ] || { bad "no active overlay at $act (hostname changed since the last commit?)"; return 1; }
-	echo "Rolling the SAVED config back to: $(basename "$sel")  ($(date -r "$sel" '+%Y-%m-%d %H:%M:%S' 2>/dev/null))"
+	seln=$(_snap_note "$sel")
+	echo "Rolling the SAVED config back to: $(basename "$sel")  ($(date -r "$sel" '+%Y-%m-%d %H:%M:%S' 2>/dev/null))${seln:+  — $seln}"
 	echo "  - the running system is NOT changed; the restored config applies at the NEXT boot"
 	echo "  - the current saved config is kept as a snapshot (you can roll forward)"
 	echo "  - uncommitted changes stay in RAM and vanish at reboot, as always"
@@ -828,7 +858,8 @@ cmd_rollback() {
 	while [ -e "$keep" ]; do
 		kc=$((kc+1)); keep="$CFG/$(hostname).$ts$kc.tar.gz"
 	done
-	cp "$act" "$keep" || { bad "could not preserve the current overlay — aborting, nothing changed"; return 1; }
+	# -p preserves the mtime — the note lookup keys off it
+	cp -p "$act" "$keep" || { bad "could not preserve the current overlay — aborting, nothing changed"; return 1; }
 	# stage + rename so a power cut cannot leave a torn active overlay
 	if cp "$sel" "$act.new" && mv "$act.new" "$act"; then
 		sync
@@ -1454,9 +1485,11 @@ EOF
 	version) echo "nas version — print the MountNAS release (and build id). No flags." ;;
 	about)   echo "nas about — logo, release, and project info. No flags." ;;
 	commit|save) cat <<EOF
-nas commit   (alias: nas save)
+nas commit [-m "note"]   (alias: nas save)
   Save the in-RAM /etc changes to the USB config partition. Review first
   with 'nas changes --diff'. Undo a bad commit with 'nas rollback'.
+  -m attaches a note shown by 'nas rollback --list', so snapshots stay
+  identifiable ("before enabling nfs", "smb share added", ...).
 EOF
 ;;
 	restart) cat <<EOF
@@ -1513,7 +1546,7 @@ case "${1:-help}" in
 	restart) cmd_restart ;;
 	changes|changed) shift; cmd_changes "$@" ;;
 	report) cmd_report ;;
-	commit|save) cmd_commit ;;
+	commit|save) shift; cmd_commit "$@" ;;
 	rollback) shift; cmd_rollback "$@" ;;
 	logs) shift; cmd_logs "$@" ;;
 	backup) shift; cmd_backup "$@" ;;

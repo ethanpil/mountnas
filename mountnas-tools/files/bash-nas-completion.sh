@@ -17,6 +17,7 @@ _nas_complete() {
 	checkup)         COMPREPLY=($(compgen -W "--json" -- "$cur")) ;;
 	disks)           COMPREPLY=($(compgen -W "--json" -- "$cur")) ;;
 	changes|changed) COMPREPLY=($(compgen -W "--diff" -- "$cur")) ;;
+	commit|save)     COMPREPLY=($(compgen -W "-m" -- "$cur")) ;;
 	rollback)        COMPREPLY=($(compgen -W "--list" -- "$cur")) ;;
 	logs)            COMPREPLY=($(compgen -W "-f -n --persist" -- "$cur")) ;;
 	--persist)       COMPREPLY=($(compgen -W "on off status" -- "$cur")) ;;

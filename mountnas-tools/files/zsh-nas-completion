@@ -13,6 +13,7 @@ else
 		checkup)         _values flag --json ;;
 		disks)           _values flag --json ;;
 		changes|changed) _values flag --diff ;;
+		commit|save)     _values flag -m ;;
 		rollback)        _values flag --list ;;
 		logs)            _values flag -f -n --persist ;;
 		upgrade)         _values flag --check --yes ;;
