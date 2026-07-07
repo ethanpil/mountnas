@@ -162,13 +162,12 @@ tls            on
 tls_trust_file /etc/ssl/certs/ca-certificates.crt
 logfile        /var/log/msmtp.log
 
-# account        mailbox
+# account        default
 # host           smtp.example.com
 # port           587
 # from           nas@example.com
 # user           nas@example.com
 # password       CHANGE-ME
-# account default : mailbox
 EOF
 
 # ---- sshd: reachable on a fresh, headless box (you own this file) ----
