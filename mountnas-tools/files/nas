@@ -779,21 +779,37 @@ EOF
 	fi
 }
 
-_power() { act="$1"; word="$2"
-	n=$(lbu status 2>/dev/null | grep -c .)
-	if [ "${n:-0}" -gt 0 ]; then
-		echo "You have $n unsaved change(s)."
-		printf 'Before %s: [S]ave / [D]iscard / [C]ancel: ' "$word"; read -r a
-		case "$a" in S|s) cmd_commit || return 1 ;; D|d) : ;; *) echo "Cancelled."; return 1 ;; esac
-	fi
+_power() { act="$1"; word="$2"; shift 2
+	mode=ask
+	for a in "$@"; do
+		case "$a" in
+			--yes)  mode=yes ;;    # scripted: proceed; unsaved changes are lost
+			--save) mode=save ;;   # scripted: commit first, then proceed
+			*) bad "usage: nas $word [--yes|--save]"; return 1 ;;
+		esac
+	done
+	case "$mode" in
+	save)
+		cmd_commit || return 1 ;;
+	yes)
+		n=$(lbu status 2>/dev/null | grep -c .)
+		[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) will be LOST (use --save to commit first)" ;;
+	*)
+		n=$(lbu status 2>/dev/null | grep -c .)
+		if [ "${n:-0}" -gt 0 ]; then
+			echo "You have $n unsaved change(s)."
+			printf 'Before %s: [S]ave / [D]iscard / [C]ancel: ' "$word"; read -r a
+			case "$a" in S|s) cmd_commit || return 1 ;; D|d) : ;; *) echo "Cancelled."; return 1 ;; esac
+		fi ;;
+	esac
 	# $act is always an absolute path (/sbin/poweroff|/sbin/reboot). exec of a
 	# pathname bypasses shell aliases/functions, and this script is non-interactive
 	# (never sources /etc/profile), so the reboot/poweroff aliases don't exist here
 	# anyway — no recursion back into 'nas'. Quoted for hygiene.
 	exec "$act"
 }
-cmd_shutdown() { _power "/sbin/poweroff" "shutdown"; }
-cmd_reboot()   { _power "/sbin/reboot"   "reboot"; }
+cmd_shutdown() { _power "/sbin/poweroff" "shutdown" "$@"; }
+cmd_reboot()   { _power "/sbin/reboot"   "reboot"   "$@"; }
 
 cmd_setup() {
 	echo "=== MountNAS first-run setup ==="
@@ -1012,9 +1028,16 @@ _upgrade_check() {
 # kernel modules to RAM, detaches the loopback) — after that the modloop file can
 # be rewritten safely. Config (/cfg) and data disks are never touched.
 cmd_upgrade() {
-	img="${1:-}"; url=""; dlf=""
-	[ "$img" = "--check" ] && { _upgrade_check; return $?; }
-	[ -n "$img" ] || { echo "usage: nas upgrade <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1; }
+	img=""; url=""; dlf=""; assume_yes=0
+	for a in "$@"; do
+		case "$a" in
+			--check) _upgrade_check; return $? ;;
+			--yes)   assume_yes=1 ;;   # scripted use: skip the YES gate (warning still prints)
+			-*) echo "usage: nas upgrade [--yes] <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1 ;;
+			*) img="$a" ;;
+		esac
+	done
+	[ -n "$img" ] || { echo "usage: nas upgrade [--yes] <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1; }
 	case "$img" in
 		http://*|https://*) url="$img" ;;
 		*) [ -f "$img" ] || { bad "not found: $img"; return 1; } ;;
@@ -1038,8 +1061,12 @@ EOF
 	[ -n "$lb" ] && echo "  Last 'nas backup' this session: $lb" || echo "  No 'nas backup' recorded this session."
 	plb=$(cat /etc/mountnas/last-backup 2>/dev/null || true)
 	[ -n "$plb" ] && [ -z "$lb" ] && echo "  Last recorded 'nas backup' (earlier session): ${plb#* }"
-	printf '  Type YES (uppercase) to confirm you have a backup and continue: '
-	read -r a; [ "$a" = YES ] || { echo "Aborted — no changes made."; return 1; }
+	if [ "$assume_yes" = 1 ]; then
+		echo "  --yes given: proceeding without the interactive confirmation."
+	else
+		printf '  Type YES (uppercase) to confirm you have a backup and continue: '
+		read -r a; [ "$a" = YES ] || { echo "Aborted — no changes made."; return 1; }
+	fi
 
 	_mount_boot_rw || return 1
 
@@ -1235,8 +1262,8 @@ case "${1:-help}" in
 	rollback) shift; cmd_rollback "$@" ;;
 	logs) shift; cmd_logs "$@" ;;
 	backup) shift; cmd_backup "$@" ;;
-	shutdown) cmd_shutdown ;;
-	reboot) cmd_reboot ;;
+	shutdown) shift; cmd_shutdown "$@" ;;
+	reboot) shift; cmd_reboot "$@" ;;
 	upgrade) shift; cmd_upgrade "$@" ;;
 	version) cmd_version ;;
 	about) cmd_about ;;
