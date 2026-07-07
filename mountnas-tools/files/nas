@@ -578,10 +578,14 @@ cmd_logs() {
 			ok "persistent logging OFF (logs live in RAM only again)"
 			echo "Persist the setting: nas commit"
 			;;
-		*)
+		''|status)
 			t=$(_syslog_target)
 			if [ -n "$t" ]; then ok "persistent logging ON -> $t"
 			else ok "persistent logging OFF (RAM only; enable: nas logs --persist on)"; fi
+			;;
+		*)
+			# a typo (onn, Off, --help) must not masquerade as a status query
+			bad "usage: nas logs --persist on|off|status"; return 1
 			;;
 		esac
 		;;
@@ -590,7 +594,11 @@ cmd_logs() {
 		exec tail -f "$t"
 		;;
 	''|-n)
-		nn=100; [ "${1:-}" = "-n" ] && nn="${2:-100}"
+		nn=100
+		if [ "${1:-}" = "-n" ]; then
+			nn="${2:-100}"
+			case "$nn" in ''|*[!0-9]*) bad "usage: nas logs -n <lines>"; return 1 ;; esac
+		fi
 		t=$(_syslog_target); : "${t:=/var/log/messages}"
 		echo "== $t (last $nn lines; follow: nas logs -f) =="
 		tail -n "$nn" "$t" 2>/dev/null || warn "no log file at $t yet"
