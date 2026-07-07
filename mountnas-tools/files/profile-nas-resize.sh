@@ -1,10 +1,12 @@
 # Serial consoles (qm terminal, IPMI serial-over-LAN) cannot tell the shell the
 # window size, so it defaults to 80x24 and full-screen apps (mc, btop, nano) wrap
 # wrong. Ask the terminal for its real size (cursor-position report) and apply it.
-# bash-only (needs the raw single-key read) and only on a real serial line — a
-# no-op on the VGA/noVNC console and over SSH, where the size is already known.
+# Works in busybox ash AND bash (root's login shell is ash — a bash-only guard
+# here meant the fix never ran on the serial console at all). busybox read
+# supports -r/-s/-d/-t. zsh's read flags differ; skip there. Only on a real
+# serial line — a no-op on VGA/noVNC and over SSH, where the size is known.
 case $- in *i*) ;; *) return 0 ;; esac
-[ -n "$BASH_VERSION" ] || return 0
+[ -z "${ZSH_VERSION:-}" ] || return 0
 [ -t 0 ] && [ -t 1 ] || return 0
 
 case "$(tty 2>/dev/null)" in
