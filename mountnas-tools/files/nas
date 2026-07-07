@@ -57,20 +57,21 @@ cmd_help() {
 MountNAS $RELEASE — control CLI
 
   nas setup      Guided first-run setup (hostname, network, password, timezone)
-  nas status     Health + storage config check (fast, no disk spin-up)
-  nas status --deep   …plus SMART, SnapRAID status, time-sync (may wake disks)
-  nas disks      Every disk: UUID, mount state, and a paste-ready fstab line
+  nas status     Health + storage config check; exit 1 on any FAIL  [--deep|--json]
+  nas disks      Every disk: identity, partitions, fstab state      [--json]
   nas restart    Re-mount disks + (re)start services (no reboot)
-  nas changes    List unsaved changes 'nas commit' would save (alias: nas changed)
-  nas commit     Save changes to the USB            (alias: nas save)
+  nas changes    List unsaved changes; --diff shows the content (alias: nas changed)
+  nas commit     Save changes to the USB                        (alias: nas save)
+  nas rollback   Restore a previous committed config            [--list | <n>]
   nas backup     Full image of the boot USB to a file  (--to <dir>) — see UPGRADE.md
-  nas shutdown   Power off (warns on unsaved changes)
-  nas reboot     Reboot   (warns on unsaved changes)
-  nas upgrade    Upgrade the OS from a release file or URL — see UPGRADE.md
-  nas upgrade --check   Ask GitHub whether a newer release is published
+  nas logs       View the system log; --persist on = survive reboots on the data disk
+  nas howto      Offline recipes: disks, pool, parity, luks, mail, backup, upgrade...
+  nas shutdown   Power off  [--yes|--save]
+  nas reboot     Reboot     [--yes|--save]
+  nas upgrade    Upgrade the OS from a release file or URL  [--check|--yes]
   nas report     Diagnostics bundle (status+logs, no secrets) for bug reports
   nas about      Logo, version, and project info
-  nas help / version
+  nas help [<command>] / version      ('nas <command> --help' works too)
   (nas validate = nas status ; nas checkup = nas status --deep)
 
 Important files & paths (edit, then: nas commit):
@@ -1241,6 +1242,130 @@ EOF
 EOF
 }
 
+# nas howto <topic> — the README's recipes, offline on the box (a NAS is
+# exactly the machine you administer while the docs website is unreachable).
+HOWTO_DIR=/usr/share/mountnas/howto
+cmd_howto() {
+	t="${1:-}"
+	if [ -z "$t" ]; then
+		echo "Offline recipes — nas howto <topic>:"
+		for f in "$HOWTO_DIR"/*.txt; do
+			[ -f "$f" ] || continue
+			printf '  %-9s %s\n' "$(basename "$f" .txt)" "$(head -n1 "$f" | sed 's/^# *//')"
+		done
+		return 0
+	fi
+	f="$HOWTO_DIR/$t.txt"
+	[ -f "$f" ] || { bad "no such topic: $t   (list them: nas howto)"; return 1; }
+	cat "$f"
+}
+
+# Per-command help: 'nas <cmd> --help' or 'nas help <cmd>'. Focused usage +
+# examples; the full overview stays on plain 'nas help'.
+_cmd_help_for() {
+	case "${1:-}" in
+	status) cat <<EOF
+nas status [--deep|--json]
+  Health + storage-config check. Fast mode never wakes sleeping disks.
+  Exit code: 0 = no [FAIL] lines, 1 = at least one (cron/monitor friendly).
+  --deep   adds SMART, SnapRAID status, fstab verify, time-sync (may wake disks)
+  --json   machine-readable snapshot (same checks, same exit code)
+Examples:
+  nas status --json | jq .healthy
+  nas status || mail -s "NAS unhealthy" you@example.com < /dev/null
+EOF
+;;
+	disks) cat <<EOF
+nas disks [--json]
+  Every disk with identity (model/serial/bus/temp), partitions (fstype,
+  label, UUID, mountpoint, free space), fstab state, and a paste-ready
+  fstab line per unconfigured partition. Never wakes sleeping disks.
+  --json   same inventory, machine-readable (byte sizes)
+EOF
+;;
+	changes|changed) cat <<EOF
+nas changes [--diff]
+  List what 'nas commit' would save (A=added M=modified D=deleted).
+  --diff   unified diffs of every file against the last committed overlay
+EOF
+;;
+	rollback) cat <<EOF
+nas rollback [--list | <number>]
+  Restore a previous committed config. lbu keeps the last few overlays on
+  /cfg automatically; --list shows them, <number> swaps one in as the
+  active config (crash-safe). Applies at the NEXT boot; the replaced
+  config is kept as a snapshot, so you can roll forward again.
+Examples:
+  nas rollback --list
+  nas rollback 1 && nas reboot
+EOF
+;;
+	backup) cat <<EOF
+nas backup [--to <dir|file>]
+  Image the WHOLE boot USB (OS + saved config) to a gzip file and verify
+  it. Default target: /mnt/nasdata/backups. Copy it OFF this box.
+  Restore: write it to a DIFFERENT stick (Etcher/dd) and boot that.
+  Data disks are NOT included — see: nas howto backup
+EOF
+;;
+	logs) cat <<EOF
+nas logs [-n N | -f | --persist on|off|status]
+  View the system log (RAM by default). --persist on moves syslog to
+  /mnt/nasdata/logs with rotation so a crash leaves history behind —
+  tradeoff: periodic writes keep the data disk awake.
+EOF
+;;
+	upgrade) cat <<EOF
+nas upgrade [--yes] <img.gz | URL>   |   nas upgrade --check
+  Rewrite the OS on the boot USB in place (config/data untouched), then
+  reboot. URLs are checksum-verified against the release SHA256SUMS.
+  --check  ask GitHub whether a newer release exists
+  --yes    skip the interactive confirmation (scripted use)
+  Run 'nas backup' FIRST — there is no automatic rollback. See UPGRADE.md.
+EOF
+;;
+	shutdown|reboot) cat <<EOF
+nas $1 [--yes|--save]
+  Power off / reboot. Interactive default warns about unsaved changes.
+  --save   commit first, then proceed (fails if the commit fails)
+  --yes    proceed without asking; unsaved changes are LOST
+EOF
+;;
+	setup) cat <<EOF
+nas setup
+  Guided first-run wizard: hostname, root password, timezone, network.
+  Auto-runs at first login until completed once; safe to re-run any time.
+EOF
+;;
+	howto) cmd_howto ;;
+	commit|save) cat <<EOF
+nas commit   (alias: nas save)
+  Save the in-RAM /etc changes to the USB config partition. Review first
+  with 'nas changes --diff'. Undo a bad commit with 'nas rollback'.
+EOF
+;;
+	restart) cat <<EOF
+nas restart
+  Re-run the storage supervisor: mounts fstab data disks and (re)starts
+  Docker/Samba/NFS without a reboot. Use after editing /etc/fstab.
+EOF
+;;
+	report) cat <<EOF
+nas report
+  Secrets-free diagnostics bundle (status, logs, storage + service
+  config) written to /tmp for attaching to bug reports.
+EOF
+;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+# 'nas <cmd> --help' → focused help (falls through to the command otherwise)
+case "${2:-}" in
+	--help|-h) if _cmd_help_for "${1:-}"; then exit 0; fi ;;
+esac
+
 case "${1:-help}" in
 	setup) cmd_setup ;;
 	status) shift
@@ -1265,9 +1390,11 @@ case "${1:-help}" in
 	shutdown) shift; cmd_shutdown "$@" ;;
 	reboot) shift; cmd_reboot "$@" ;;
 	upgrade) shift; cmd_upgrade "$@" ;;
+	howto) shift; cmd_howto "$@" ;;
 	version) cmd_version ;;
 	about) cmd_about ;;
-	help|--help|-h) cmd_help ;;
+	help|--help|-h) shift 2>/dev/null || true
+		if [ -n "${1:-}" ] && _cmd_help_for "$1"; then :; else cmd_help; fi ;;
 	*) echo "unknown command: $1"; echo; cmd_help; exit 1 ;;
 esac
 rc=$?

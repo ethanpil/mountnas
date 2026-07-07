@@ -1,0 +1,15 @@
+# Upgrade MountNAS in place (single USB, no reflash)
+0) REQUIRED first:  nas backup   — and copy the image OFF this box.
+1) Check what is published:  nas upgrade --check
+2) Upgrade straight from the release URL (checksum-verified):
+     nas upgrade https://github.com/ethanpil/mountnas/releases/download/<tag>/mountnas-<tag>.img.gz
+   or from a local file:  nas upgrade /mnt/nasdata/mountnas-<tag>.img.gz
+   (scripted: add --yes to skip the confirmation gate)
+3) nas reboot
+
+Facts worth knowing:
+- Config (/cfg) and data disks are never touched; user-installed packages
+  are preserved across the version bump.
+- Temp space: ~3.75 GB needed (defaults to the data disk; override TMPDIR).
+- There is NO automatic rollback — recovery is your step-0 backup written
+  to a DIFFERENT stick. Full details: UPGRADE.md in the repo.

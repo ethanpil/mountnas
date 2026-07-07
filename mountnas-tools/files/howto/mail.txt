@@ -1,0 +1,21 @@
+# Email alerts (smartd, SnapRAID, cron) via msmtp
+mail(1) is pre-wired to msmtp; you only supply the SMTP relay.
+
+1) Edit /etc/msmtprc (template ships; keep it mode 0600 — holds a password):
+     account        mailbox
+     host           smtp.example.com
+     port           587
+     from           nas@example.com
+     user           nas@example.com
+     password       ...
+     account default : mailbox
+2) Test:
+     echo test | mail -s "MountNAS test" you@example.com
+3) Disk-failure alerts — /etc/smartd.conf:
+     DEVICESCAN -n standby,q -m you@example.com
+   then:  rc-service smartd restart
+   (append -M test once to get an immediate test mail at smartd startup)
+4) nas commit
+
+Any cron job can mail its output the same way:
+     some-command 2>&1 | mail -s "subject" you@example.com

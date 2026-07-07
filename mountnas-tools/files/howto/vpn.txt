@@ -1,0 +1,17 @@
+# Remote access VPNs (all OFF by default)
+Tailscale:
+  rc-update add tailscale default && rc-service tailscale start
+  tailscale up          (prints a login URL)
+  nas commit            (state in /var/lib/tailscale persists)
+
+ZeroTier:
+  rc-update add zerotier-one default && rc-service zerotier-one start
+  zerotier-cli join <network-id>
+  nas commit            (identity in /var/lib/zerotier-one persists)
+
+Plain WireGuard (wg + wg-quick; kernel module already present):
+  create /etc/wireguard/wg0.conf, then:  wg-quick up wg0
+  bring it up at boot via /etc/local.d (local service is enabled) or cron
+  @reboot, then:  nas commit
+
+Only enable one overlay you actually use; each keeps a daemon running.

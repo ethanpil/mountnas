@@ -1,0 +1,19 @@
+# Backups: the boot USB, your config, and your data
+THREE different things — know which one you mean:
+
+1) Boot USB image (OS + saved config):  nas backup
+   Writes mountnas-backup-<host>-<date>.img.gz (default /mnt/nasdata/backups,
+   or --to <dir|file>). COPY IT OFF THIS BOX. Restore = write it to another
+   USB stick (Etcher/dd) and boot — never with two MountNAS sticks attached.
+   Required before every nas upgrade.
+
+2) Config snapshots (automatic):  nas rollback --list
+   Every nas commit keeps the previous overlay on /cfg. Restore one with
+   nas rollback <n> — applies at the next boot. This undoes a bad commit
+   without touching the OS or your data.
+
+3) Your DATA — neither of the above covers it. restic is baked in:
+     restic init --repo sftp:user@host:/backups/nas
+     restic backup --repo ... /mnt/disk1 /mnt/nasdata/appdata
+   (works with local dirs, SFTP, S3, or any rclone remote; encrypted and
+   deduplicated. Schedule it in cron and mail the summary — nas howto mail.)

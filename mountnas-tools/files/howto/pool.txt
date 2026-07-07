@@ -1,0 +1,12 @@
+# Pool several data disks into one mount (mergerfs)
+Add one fstab line AFTER the member disks (order matters):
+
+  /mnt/disk1:/mnt/disk2  /mnt/pool  fuse.mergerfs  nofail,allow_other,use_ino,category.create=mfs  0 0
+
+Then:  nas status && nas restart && nas commit
+
+Notes:
+- mergerfs gives one namespace; SnapRAID (nas howto parity) gives parity —
+  they complement each other. Keep /mnt/nasdata out of BOTH.
+- category.create=mfs writes new files to the member with the most free space.
+- Existing files stay on whichever member already holds them.

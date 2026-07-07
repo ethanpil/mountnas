@@ -17,7 +17,11 @@ files=$(grep -rlE '^#!/(bin/sh|sbin/openrc-run)' mountnas-tools/files)
 # shellcheck disable=SC2086  # $files is a newline list of repo paths (no spaces)
 shellcheck -s sh -S warning -e SC2034,SC3043,SC3045 \
 	$files mountnas-tools/files/profile-*.sh scripts/*.sh
-echo "shellcheck: all shipped scripts pass ($(printf '%s\n' $files | wc -l | tr -d ' ') shebang scripts + profile.d + scripts/)"
+# bash-only, sourced (no shebang, so discovery skips it): lint as bash. The
+# zsh completion (files/zsh-nas-completion) is zsh syntax — shellcheck cannot
+# lint zsh; it ships as data.
+shellcheck -s bash -S warning -e SC2034 mountnas-tools/files/bash-nas-completion.sh
+echo "shellcheck: all shipped scripts pass ($(printf '%s\n' $files | wc -l | tr -d ' ') shebang scripts + profile.d + completion + scripts/)"
 
 # Guard the CONTEXT.md §6 landmine (which shellcheck cannot see — it lives
 # inside workflow YAML): the big build step runs inside a single-quoted

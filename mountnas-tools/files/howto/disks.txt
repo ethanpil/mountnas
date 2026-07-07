@@ -1,0 +1,19 @@
+# Add a data disk (fstab is the interface)
+1) nas disks                      find the disk; copy its paste-ready fstab line
+2) blank disk? create a filesystem first:
+     mkfs.ext4 -L nasdata /dev/sdX          (the system disk)
+     mkfs.ext4 -L disk1   /dev/sdY          (additional data disks)
+3) edit /etc/fstab — the system disk is REQUIRED for Docker/Samba/NFS:
+     UUID=<uuid>  /mnt/nasdata  ext4  rw,noatime,nofail  0 2
+   ALWAYS include nofail. Mountpoints are created for you; never use
+   x-mount.mkdir (busybox mount rejects it at boot).
+4) nas status                     validates the config (exit 1 on any FAIL)
+5) nas restart                    mounts + starts services, no reboot
+6) nas commit                     persist it
+
+Notes:
+- /mnt/disk1, /mnt/parity1 are naming conventions only.
+- nasdata can be a subdirectory via a bind mount (list the real disk first):
+    UUID=<uuid>          /mnt/disk1    ext4  rw,noatime,nofail  0 2
+    /mnt/disk1/nasdata   /mnt/nasdata  none  bind,nofail        0 0
+- Network filesystems (NFS/CIFS) in fstab are NOT mounted at boot by design.

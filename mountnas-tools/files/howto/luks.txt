@@ -1,0 +1,22 @@
+# Encrypted data disk (LUKS) with unattended boot unlock
+The keyfile lives in the committed overlay on the boot USB, so the box can
+unlock at boot with no console attached. Threat model: protects the DATA
+DISKS if they are stolen/RMAd separately; does NOT protect against someone
+taking the boot stick AND the disks together.
+
+1) One-time key:
+     mkdir -p /etc/luks
+     dd if=/dev/urandom of=/etc/luks/data.key bs=64 count=1
+     chmod 600 /etc/luks/data.key
+2) Format + open + mkfs (DESTROYS the partition):
+     cryptsetup luksFormat /dev/sdX1 /etc/luks/data.key
+     cryptsetup open --key-file /etc/luks/data.key /dev/sdX1 cryptdata
+     mkfs.ext4 -L cryptdata /dev/mapper/cryptdata
+3) Boot-time unlock — append to /etc/conf.d/dmcrypt:
+     target=cryptdata
+     source='/dev/sdX1'
+     key='/etc/luks/data.key'
+   then:  rc-update add dmcrypt boot
+4) Mount by mapper path in /etc/fstab (keep nofail):
+     /dev/mapper/cryptdata  /mnt/disk1  ext4  rw,noatime,nofail  0 2
+5) nas status && nas commit && nas reboot     (verify it comes back mounted)
