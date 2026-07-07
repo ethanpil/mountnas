@@ -406,29 +406,36 @@ cmd_disks() {
 		case "$k" in
 		D)
 			# f1=name f2=size f3=tran f4=HDD/SSD f5=vendor f6=model f7=serial f8=rev
-			tag=""; [ "$f1" = "$usb" ] && tag="   *"
+			# Two lines per disk under a dashed rule — everything stays inside
+			# ~76 columns (the old single-line format overflowed serial consoles).
+			tag=""; [ "$f1" = "$usb" ] && tag="  *BOOT USB*"
+			bus=""; [ "$f3" != "-" ] && bus="$f3 "
+			hdr="$f1  $f2  $bus$f4  temp:$(_disk_temp "$f1")$tag"
+			pad=$((70 - ${#hdr})); [ "$pad" -gt 0 ] || pad=4
+			printf -- '\n---- %s %s\n' "$hdr" "$(printf '%*s' "$pad" '' | tr ' ' '-')"
 			id=""
 			[ "$f5" != "-" ] && id="$f5 "
 			[ "$f6" != "-" ] && id="$id$f6"
 			[ -n "$id" ] || id="(unknown model)"
 			sn=""; [ "$f7" != "-" ] && sn="  SN:$f7"
 			fw=""; [ "$f8" != "-" ] && fw="  fw:$f8"
-			printf "\n  %-8s %-7s %-5s %s  %s%s%s  temp:%s%s\n" \
-				"$f1" "$f2" "$f3" "$f4" "$id" "$sn" "$fw" "$(_disk_temp "$f1")" "$tag"
+			printf '     %s%s%s\n' "$id" "$sn" "$fw"
 			;;
 		P)
 			# f1=name f2=size f3=fstype f4=label f5=uuid f6=mountpoint f7=avail f8=use%
+			# Two lines per partition: identity/mount first, the 36-char UUID on
+			# its own line beneath (the UUID is what forced 120+ columns before).
 			tag=""
 			[ "$f4" = BOOT ] && tag="  * (BOOT)"
 			[ "$f4" = MNASCFG ] && tag="  * (cfg)"
+			lbl=""; [ "$f4" != "-" ] && lbl="  $f4"
 			if [ "$f6" = "-" ]; then minfo="(not mounted)"
 			else
 				minfo="$f6"
 				[ "$f7" != "-" ] && minfo="$minfo  ($f7 free, $f8 used)"
 			fi
-			u="-"; [ "$f5" != "-" ] && u="UUID=$f5"
-			printf "    %-8s %-7s %-8s %-14s %-42s %s%s\n" \
-				"$f1" "$f2" "$f3" "$f4" "$u" "$minfo" "$tag"
+			printf '     %-6s %6s  %-8s%s  -> %s%s\n' "$f1" "$f2" "$f3" "$lbl" "$minfo" "$tag"
+			[ "$f5" != "-" ] && printf '            UUID=%s\n' "$f5"
 			;;
 		esac
 	done
@@ -475,6 +482,34 @@ cmd_disks() {
 		|| echo "  (none — every filesystem is already in fstab, or blank/unformatted)"
 	echo "  Tip: the system disk uses /mnt/nasdata; extra data/parity disks use any path"
 	echo "       you like (the /mnt/disk1, /mnt/parity1 names are just a convention)."
+}
+
+# nas disks --json — the same inventory, machine-readable. Sizes are BYTES
+# (lsblk -b); temp is the standby-safe reading ("standby" for sleeping drives,
+# null when no sensor exists); in_fstab marks partitions already referenced by
+# UUID in /etc/fstab.
+cmd_disks_json() {
+	bp=$(findfs LABEL=BOOT 2>/dev/null)
+	usb=$(lsblk -no pkname "$bp" 2>/dev/null | head -n1)
+	temps=$(for d in $(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
+		t=$(_disk_temp "$d"); [ "$t" = "-" ] && continue
+		printf '{"name":"%s","temp":"%s"}\n' "$d" "$t"
+	done | jq -s 'map({(.name): .temp}) | add // {}')
+	fuuids=$(awk '$1!~/^#/ && $1~/^UUID=/{sub("UUID=","",$1); print $1}' /etc/fstab 2>/dev/null | jq -R . | jq -s .)
+	lsblk -Jbo 'NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT,FSAVAIL,VENDOR,MODEL,SERIAL,REV,TRAN,ROTA' 2>/dev/null \
+	| jq --arg usb "$usb" --argjson temps "$temps" --argjson fuuids "$fuuids" '
+		def part: { name, size, fstype, label, uuid, mountpoint, fsavail,
+		            in_fstab: (.uuid != null and (($fuuids | index(.uuid)) != null)) };
+		{ boot_usb: (if ($usb | length) > 0 then $usb else null end),
+		  disks: [ .blockdevices[] | select(.type=="disk") | {
+			name, size,
+			bus: .tran, rotational: .rota,
+			vendor, model, serial, firmware: .rev,
+			temp: ($temps[.name] // null),
+			boot_usb: (.name == $usb),
+			partitions: ( [ .children[]? | select(.type=="part") | part ]
+			              + (if .fstype != null then [ part ] else [] end) )
+		  } ] }'
 }
 
 cmd_restart() {
@@ -1186,7 +1221,11 @@ case "${1:-help}" in
 			--json) cmd_status_json ;;
 			*) cmd_status "$@" ;;
 		esac ;;
-	disks) cmd_disks ;;
+	disks) shift
+		case "${1:-}" in
+			--json) cmd_disks_json ;;
+			*) cmd_disks ;;
+		esac ;;
 	validate) shift; cmd_status "$@" ;;
 	checkup) cmd_status --deep ;;
 	restart) cmd_restart ;;
