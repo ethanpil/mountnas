@@ -722,6 +722,10 @@ _ovl_backups() {   # newest first, one path per line
 cmd_rollback() {
 	act="$CFG/$(hostname).apkovl.tar.gz"
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted"; return 1; }
+	# a power cut between cp and mv in a previous rollback can leave a stale
+	# .new behind — clear it, or the encrypted-overlay glob below matches it
+	# and locks rollback out forever with a misleading error
+	rm -f "$act.new"
 	if ls "$CFG"/*.apkovl.tar.gz.* >/dev/null 2>&1; then
 		bad "encrypted overlay detected — nas rollback supports plain overlays only"; return 1
 	fi
@@ -757,7 +761,13 @@ cmd_rollback() {
 	# preserve the current active overlay under lbu's own mtime-stamp naming
 	ts=$(date -u -r "$act" +%Y%m%d%H%M%S 2>/dev/null || date -u +%Y%m%d%H%M%S)
 	keep="$CFG/$(hostname).$ts.tar.gz"
-	[ -e "$keep" ] && keep="$CFG/$(hostname).$(date -u +%Y%m%d%H%M%S).tar.gz"
+	# loop (not a single retry) so no amount of collisions can silently
+	# overwrite an existing snapshot; the digit suffix keeps the name inside
+	# the pattern lbu rotates and _ovl_backups lists
+	kc=0
+	while [ -e "$keep" ]; do
+		kc=$((kc+1)); keep="$CFG/$(hostname).$ts$kc.tar.gz"
+	done
 	cp "$act" "$keep" || { bad "could not preserve the current overlay — aborting, nothing changed"; return 1; }
 	# stage + rename so a power cut cannot leave a torn active overlay
 	if cp "$sel" "$act.new" && mv "$act.new" "$act"; then
