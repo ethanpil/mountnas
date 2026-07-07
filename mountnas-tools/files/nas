@@ -20,12 +20,20 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
 else
 	C_OK=""; C_WA=""; C_FA=""; C_NO=""
 fi
-ok()  { printf '  %s[ OK ]%s %s\n' "$C_OK" "$C_NO" "$*"; }
-warn(){ printf '  %s[WARN]%s %s\n' "$C_WA" "$C_NO" "$*"; }
-# bad() also drops a marker when NAS_FAILF is set (cmd_status uses it to turn
-# any [FAIL] into a nonzero exit code — the checks run in pipe subshells, so a
-# plain counter variable would be lost; a file append survives).
-bad() { printf '  %s[FAIL]%s %s\n' "$C_FA" "$C_NO" "$*"; [ -n "${NAS_FAILF:-}" ] && { : >> "$NAS_FAILF"; } 2>/dev/null; return 0; }
+# Structured check records: when NAS_CHECKS names a file, every ok/warn/bad
+# also appends "TYPE<TAB>message" to it. cmd_status uses the records for its
+# exit code and cmd_status_json renders JSON from them — the human text is
+# presentation only, so its format is free to change. The checks run in pipe
+# subshells, so a file append (not a shell variable) is what survives.
+_rec() {
+	[ -n "${NAS_CHECKS:-}" ] || return 0
+	# join all args with tabs ("$*" joins on the first char of IFS)
+	{ _oifs=$IFS; IFS=$(printf '\t'); printf '%s\n' "$*" >> "$NAS_CHECKS"; IFS=$_oifs; } 2>/dev/null
+	return 0
+}
+ok()  { printf '  %s[ OK ]%s %s\n' "$C_OK" "$C_NO" "$*"; _rec OK "$*"; }
+warn(){ printf '  %s[WARN]%s %s\n' "$C_WA" "$C_NO" "$*"; _rec WARN "$*"; }
+bad() { printf '  %s[FAIL]%s %s\n' "$C_FA" "$C_NO" "$*"; _rec FAIL "$*"; }
 confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
 # True if $1 is covered by the read-only 'mountnas-blocked' placeholder that the
 # mountnas service mounts over failed data mounts — mountpoint -q alone reports
@@ -115,10 +123,14 @@ EOF
 # and be slow, so they are opt-in.
 cmd_status() {
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
-	# Health-probe friendly: any [FAIL] line flips the exit code to 1. The
-	# checks run inside pipe subshells, so bad() appends to this file (a plain
-	# counter would be lost when the subshell exits) — see bad() at the top.
-	NAS_FAILF=$(mktemp 2>/dev/null) || NAS_FAILF=""
+	# Health-probe friendly: any FAIL record flips the exit code to 1. The
+	# records file may already be provided by cmd_status_json; otherwise
+	# create a private one here (see _rec at the top).
+	_own_checks=0
+	if [ -z "${NAS_CHECKS:-}" ]; then
+		NAS_CHECKS=$(mktemp 2>/dev/null) || NAS_CHECKS=""
+		_own_checks=1
+	fi
 
 	echo "MountNAS $RELEASE  —  $(hostname) ($(hostname).local)  —  up $(cut -d. -f1 /proc/uptime)s"
 	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')
@@ -135,7 +147,11 @@ cmd_status() {
 		*)            warn "data disk state unknown" ;;
 	esac
 	for s in docker samba nfs sshd avahi-daemon; do
-		rc-service "$s" status >/dev/null 2>&1 && ok "$s running" || warn "$s not running"
+		if rc-service "$s" status >/dev/null 2>&1; then
+			ok "$s running"; _rec SVC "$s" true
+		else
+			warn "$s not running"; _rec SVC "$s" false
+		fi
 	done
 	n=$(lbu status 2>/dev/null | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
@@ -253,51 +269,50 @@ cmd_status() {
 	else
 		printf "  Tip: 'nas status --deep' adds SMART / SnapRAID / time-sync (may wake sleeping disks).\n"
 	fi
-	# exit 1 when any [FAIL] fired — usable from cron/monitoring as a probe
+	# exit 1 when any FAIL record fired — usable from cron/monitoring as a probe
 	src=0
-	if [ -n "$NAS_FAILF" ]; then
-		[ -s "$NAS_FAILF" ] && src=1
-		rm -f "$NAS_FAILF"; NAS_FAILF=""
+	if [ -n "$NAS_CHECKS" ]; then
+		grep -q "^FAIL	" "$NAS_CHECKS" 2>/dev/null && src=1
+		if [ "$_own_checks" = 1 ]; then rm -f "$NAS_CHECKS"; NAS_CHECKS=""; fi
 	fi
 	return "$src"
 }
 
 # nas status --json — machine-readable snapshot for monitoring integrations
-# (Uptime Kuma, Homepage, Zabbix, cron). Runs the same checks as the human
-# status with colors forced off, parses the tagged lines, and adds the raw
-# state facts. Exit code matches the human mode: 1 when any check FAILed.
+# (Uptime Kuma, Homepage, Zabbix, cron). The checks emit structured records
+# (see _rec) and the JSON is rendered from those — NOT by parsing the human
+# text, so the display format is free to change without breaking consumers.
+# Exit code matches the human mode: 1 when any check FAILed.
+# shellcheck disable=SC2120  # --deep arrives via the dispatcher flag parser
 cmd_status_json() {
-	C_OK=""; C_WA=""; C_FA=""; C_NO=""
-	tmpo=$(mktemp) || { echo '{"error":"mktemp failed"}'; return 1; }
-	cmd_status > "$tmpo" 2>&1
+	dp="${1:-}"
+	NAS_CHECKS=$(mktemp) || { echo '{"error":"mktemp failed"}'; return 1; }
+	cmd_status $dp > /dev/null 2>&1
 	jrc=$?
-	svc=$(for s in docker samba nfs sshd avahi-daemon smartd crond chronyd; do
-		rc-service "$s" status >/dev/null 2>&1 && v=true || v=false
-		printf '{"name":"%s","running":%s}\n' "$s" "$v"
-	done | jq -s .)
 	lb=$(awk 'NR==1{print $1}' /etc/mountnas/last-backup 2>/dev/null)
 	case "$lb" in ''|*[!0-9]*) lb=null ;; esac
 	un=$(cat "$STATE/unsaved" 2>/dev/null); case "$un" in ''|*[!0-9]*) un=0 ;; esac
-	jq -n \
+	jq -Rn \
 		--arg release "$RELEASE" --arg version "$VERSION" --arg hostname "$(hostname)" \
 		--argjson uptime "$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)" \
 		--arg ips "$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')" \
 		--arg cfg "$(mountpoint -q "$CFG" && echo ok || echo fail)" \
 		--arg data "$(cat "$STATE/data" 2>/dev/null || echo unknown)" \
-		--argjson services "$svc" \
 		--argjson unsaved "$un" \
 		--argjson last_backup_epoch "$lb" \
+		--argjson deep "$([ "$dp" = "--deep" ] && echo true || echo false)" \
 		--argjson failed "$([ "$jrc" -ne 0 ] && echo true || echo false)" \
-		--rawfile out "$tmpo" \
-	'def lines(tag): $out | split("\n") | map(select(startswith("  [" + tag + "]"))) | map(.[9:]);
+	'[inputs | split("\t")] as $r |
+	 def msgs(t): [$r[] | select(.[0]==t) | .[1]];
 	 {release:$release, version:$version, hostname:$hostname, uptime_seconds:$uptime,
 	  ips: ($ips|split(" ")|map(select(length>0))),
-	  config_partition:$cfg, data_disk:$data, services:$services,
-	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch,
+	  config_partition:$cfg, data_disk:$data,
+	  services: [$r[] | select(.[0]=="SVC") | {name:.[1], running:(.[2]=="true")}],
+	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch, deep:$deep,
 	  healthy: ($failed|not),
-	  checks: { ok: (lines(" OK ")|length), warn: (lines("WARN")|length), fail: (lines("FAIL")|length) },
-	  fail_lines: lines("FAIL"), warn_lines: lines("WARN") }'
-	rm -f "$tmpo"
+	  checks: {ok: (msgs("OK")|length), warn: (msgs("WARN")|length), fail: (msgs("FAIL")|length)},
+	  fail_lines: msgs("FAIL"), warn_lines: msgs("WARN")}' < "$NAS_CHECKS"
+	rm -f "$NAS_CHECKS"; NAS_CHECKS=""
 	return "$jrc"
 }
 
