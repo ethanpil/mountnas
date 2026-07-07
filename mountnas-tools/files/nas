@@ -1262,10 +1262,22 @@ EOF
 	# Work in KiB with df -Pk so this holds under both busybox and coreutils df.
 	tmp="${TMPDIR:-}"
 	[ -n "$tmp" ] || { mountpoint -q "$DATA" && tmp="$DATA" || { bad "no temp space: data disk not mounted. Mount it or set TMPDIR=<disk dir>."; return 1; }; }
-	case "$img" in
-		*.gz) need_kb=3932160 ;;   # ~3.75 GiB: image is 3.5 GiB raw (gzip -l is unreliable >4 GiB)
-		*)    need_kb=$(( ( $(stat -c %s "$img" 2>/dev/null || echo 3758096384) / 1024 ) + 262144 )) ;;
-	esac
+	# gzip is detected by CONTENT (the 1f 8b magic), never by filename: a
+	# beta-2 tester fed a correctly-gzipped image saved as .img.tgz and the
+	# old *.gz match treated the compressed bytes as a raw disk image
+	# (losetup garbage, unmountable p1). URLs are assumed compressed until
+	# downloaded (releases ship .img.gz), then re-sniffed.
+	img_gz=0
+	if [ -n "$url" ]; then
+		img_gz=1
+	elif [ "$(od -An -tx1 -N2 "$img" 2>/dev/null | tr -d ' \t\n')" = "1f8b" ]; then
+		img_gz=1
+	fi
+	if [ "$img_gz" = 1 ]; then
+		need_kb=3932160   # ~3.75 GiB: image is 3.5 GiB raw (gzip -l is unreliable >4 GiB)
+	else
+		need_kb=$(( ( $(stat -c %s "$img" 2>/dev/null || echo 3758096384) / 1024 ) + 262144 ))
+	fi
 	[ -n "$url" ] && need_kb=$((need_kb + 2097152))   # + ~2 GiB for the downloaded .img.gz
 	avail_kb=$(df -Pk "$tmp" 2>/dev/null | awk 'NR==2{print $4}')
 	if [ -z "$avail_kb" ] || [ "$avail_kb" -lt "$need_kb" ]; then
@@ -1293,24 +1305,30 @@ EOF
 			warn "no SHA256SUMS found next to the URL — skipping checksum verification"
 		fi
 		img="$dlf"
+		# re-sniff the actual downloaded bytes (a URL could serve either form)
+		if [ "$(od -An -tx1 -N2 "$img" 2>/dev/null | tr -d ' \t\n')" = "1f8b" ]; then
+			img_gz=1
+		else
+			img_gz=0
+		fi
 	fi
 
 	# ---- unpack + loop-mount the image's BOOT partition (p1) ----
 	raw="$tmp/.nas-upgrade.$$.img"; m=$(mktemp -d)
 	echo "Unpacking image into $tmp ..."
-	case "$img" in
-		*.gz)
-			# pv shows unpack progress when available; gzip -dc itself still
-			# detects a truncated/corrupt stream, so no extra status capture.
-			if command -v pv >/dev/null 2>&1; then pv "$img" | gzip -dc > "$raw"
-			else gzip -dc "$img" > "$raw"; fi \
-				|| { bad "decompress failed"; _cleanup; return 1; } ;;
-		*)    cp "$img" "$raw" || { bad "copy failed"; _cleanup; return 1; } ;;
-	esac
+	if [ "$img_gz" = 1 ]; then
+		# pv shows unpack progress when available; gzip -dc itself still
+		# detects a truncated/corrupt stream, so no extra status capture.
+		if command -v pv >/dev/null 2>&1; then pv "$img" | gzip -dc > "$raw"
+		else gzip -dc "$img" > "$raw"; fi \
+			|| { bad "decompress failed"; _cleanup; return 1; }
+	else
+		cp "$img" "$raw" || { bad "copy failed"; _cleanup; return 1; }
+	fi
 	# the downloaded .gz is no longer needed once unpacked — free the space now
 	[ -n "$dlf" ] && { rm -f "$dlf"; dlf=""; }
 	loop=$(losetup -fP --show "$raw") || { bad "losetup failed"; _cleanup; return 1; }
-	mount -o ro "${loop}p1" "$m" 2>/dev/null || { bad "cannot mount the image's BOOT partition"; _cleanup; return 1; }
+	mount -o ro "${loop}p1" "$m" 2>/dev/null || { bad "cannot mount the image's BOOT partition — is this really a MountNAS release image (mountnas-<tag>.img.gz)?"; _cleanup; return 1; }
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
 		[ -f "$m/$f" ] || { bad "image is missing $f — not a MountNAS image?"; _cleanup; return 1; }
 	done
