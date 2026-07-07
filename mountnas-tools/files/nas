@@ -1162,9 +1162,23 @@ _free_modloop() {
 _upgrade_check() {
 	echo "Checking the latest release of $REPO ..."
 	api="https://api.github.com/repos/$REPO/releases/latest"
-	json=$( { command -v curl >/dev/null 2>&1 && curl -fsL "$api" \
-		|| wget -qO- "$api"; } 2>/dev/null) \
-		|| { bad "cannot reach the GitHub API (no network?)"; return 1; }
+	# capture the HTTP status: a 404 (private repo, or no releases) used to be
+	# reported as "no network" even while the box was fully online (beta-1
+	# test 16 — the repo was private). curl is baked in; wget is the coarse
+	# fallback.
+	if command -v curl >/dev/null 2>&1; then
+		hc=$(curl -sL -o "/tmp/.nas-check.$$" -w '%{http_code}' "$api" 2>/dev/null) || hc=000
+		json=$(cat "/tmp/.nas-check.$$" 2>/dev/null); rm -f "/tmp/.nas-check.$$"
+	else
+		json=$(wget -qO- "$api" 2>/dev/null) && hc=200 || hc=000
+	fi
+	case "$hc" in
+		200) : ;;
+		000) bad "cannot reach the GitHub API — check network/DNS"; return 1 ;;
+		404) bad "no release info at github.com/$REPO — the repository is PRIVATE or has no releases (on-box checks need a public repo)"; return 1 ;;
+		403|429) bad "GitHub API rate limit — try again in a few minutes"; return 1 ;;
+		*) bad "GitHub API returned HTTP $hc"; return 1 ;;
+	esac
 	tag=$(printf '%s\n' "$json" | jq -r '.tag_name // empty' 2>/dev/null)
 	[ -n "$tag" ] || { bad "no release found for $REPO"; return 1; }
 	# compare tag-to-tag: RELEASE carries the tag this image was built from
