@@ -558,6 +558,25 @@ _syslog_target() {
 	awk -F'"' '/^SYSLOGD_OPTS=/{print $2}' /etc/conf.d/syslog 2>/dev/null \
 		| sed -n 's/.*-O *\([^ ]*\).*/\1/p'
 }
+# Rewrite ONLY the persistence tokens (-O/-s/-b) inside SYSLOGD_OPTS,
+# preserving every other user token (remote forwarding -R, mark intervals, …)
+# and every other line of the file — this appliance is built on hand-edited
+# config, so a toggle must never clobber someone's additions. $1 = tokens to
+# append after stripping ("" removes persistence). Values pass through the
+# environment (not awk -v) so backslashes are never escape-processed.
+_syslog_set_persist() {
+	f=/etc/conf.d/syslog
+	[ -f "$f" ] || : > "$f"
+	cur=$(sed -n 's/^SYSLOGD_OPTS="\(.*\)"[[:space:]]*$/\1/p' "$f" 2>/dev/null | head -n1)
+	[ -n "$cur" ] || cur="-t"
+	cleaned=$(printf '%s\n' "$cur" | awk '{o=""; for(i=1;i<=NF;i++){ if($i=="-O"||$i=="-s"||$i=="-b"){i++;continue} o=o (o==""?"":" ") $i } print o}')
+	tmpf=$(mktemp) || return 1
+	NV="$cleaned${1:+ $1}" awk 'BEGIN{done=0}
+		/^SYSLOGD_OPTS=/{ printf "SYSLOGD_OPTS=\"%s\"\n", ENVIRON["NV"]; done=1; next }
+		{print}
+		END{ if(!done) printf "SYSLOGD_OPTS=\"%s\"\n", ENVIRON["NV"] }' "$f" > "$tmpf" || { rm -f "$tmpf"; return 1; }
+	cat "$tmpf" > "$f" && rm -f "$tmpf"
+}
 cmd_logs() {
 	case "${1:-}" in
 	--persist)
@@ -565,16 +584,17 @@ cmd_logs() {
 		on)
 			[ "$(cat "$STATE/data" 2>/dev/null)" = ok ] || { bad "data disk not mounted — persistent logs need $DATA"; return 1; }
 			mkdir -p "$DATA/logs" || { bad "cannot create $DATA/logs"; return 1; }
-			# whole-line write: Alpine's shipped default is just -t (strip
-			# client timestamps); -s = KB per file, -b = rotated copies kept
-			printf 'SYSLOGD_OPTS="-t -s 1024 -b 9 -O %s/logs/messages"\n' "$DATA" > /etc/conf.d/syslog
+			# -s = KB per file, -b = rotated copies kept; user tokens preserved
+			_syslog_set_persist "-s 1024 -b 9 -O $DATA/logs/messages" \
+				|| { bad "could not update /etc/conf.d/syslog"; return 1; }
 			rc-service syslog restart >/dev/null 2>&1 || warn "syslog restart failed"
 			ok "persistent logging ON -> $DATA/logs/messages (1 MB x 10 files)"
 			warn "periodic writes keep the data disk awake — mind the spin-down tradeoff"
 			echo "Persist the setting: nas commit"
 			;;
 		off)
-			printf 'SYSLOGD_OPTS="-t"\n' > /etc/conf.d/syslog
+			_syslog_set_persist "" \
+				|| { bad "could not update /etc/conf.d/syslog"; return 1; }
 			rc-service syslog restart >/dev/null 2>&1 || warn "syslog restart failed"
 			ok "persistent logging OFF (logs live in RAM only again)"
 			echo "Persist the setting: nas commit"
