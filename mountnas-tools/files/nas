@@ -1446,7 +1446,13 @@ case "${1:-help}" in
 	version) cmd_version ;;
 	about) cmd_about ;;
 	help|--help|-h) shift 2>/dev/null || true
-		if [ -n "${1:-}" ] && _cmd_help_for "$1"; then :; else cmd_help; fi ;;
+		if [ -n "${1:-}" ]; then
+			# a typo'd topic must not look like success (matches the
+			# unknown-command behavior of the dispatcher below)
+			_cmd_help_for "$1" || { echo "no help for '$1' — commands:"; echo; cmd_help; exit 1; }
+		else
+			cmd_help
+		fi ;;
 	*) echo "unknown command: $1"; echo; cmd_help; exit 1 ;;
 esac
 rc=$?
