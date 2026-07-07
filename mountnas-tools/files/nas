@@ -444,12 +444,16 @@ cmd_disks() {
 		    s($d.vendor), s($d.model), s($d.serial), s($d.rev) ] | @tsv ),
 		( $d | select(.fstype != null) | prow ),
 		( $d.children[]? | select(.type=="part") | prow )' \
-	| while IFS="$TAB" read -r k f1 f2 f3 f4 f5 f6 f7 f8; do
+	| { blank_pending=0; blank_dev=""
+	while IFS="$TAB" read -r k f1 f2 f3 f4 f5 f6 f7 f8; do
 		case "$k" in
 		D)
 			# f1=name f2=size f3=tran f4=HDD/SSD f5=vendor f6=model f7=serial f8=rev
 			# Two lines per disk under a dashed rule — everything stays inside
 			# ~76 columns (the old single-line format overflowed serial consoles).
+			if [ "$blank_pending" = 1 ]; then
+				printf '     (blank — no filesystem; create one first, e.g. mkfs.ext4 -L data1 /dev/%s)\n' "$blank_dev"
+			fi
 			tag=""; [ "$f1" = "$usb" ] && tag="  *BOOT USB*"
 			bus=""; [ "$f3" != "-" ] && bus="$f3 "
 			hdr="$f1  $f2  $bus$f4  temp:$(_disk_temp "$f1")$tag"
@@ -462,11 +466,13 @@ cmd_disks() {
 			sn=""; [ "$f7" != "-" ] && sn="  SN:$f7"
 			fw=""; [ "$f8" != "-" ] && fw="  fw:$f8"
 			printf '     %s%s%s\n' "$id" "$sn" "$fw"
+			blank_pending=1; blank_dev="$f1"
 			;;
 		P)
 			# f1=name f2=size f3=fstype f4=label f5=uuid f6=mountpoint f7=avail f8=use%
 			# Two lines per partition: identity/mount first, the 36-char UUID on
 			# its own line beneath (the UUID is what forced 120+ columns before).
+			blank_pending=0
 			tag=""
 			[ "$f4" = BOOT ] && tag="  * (BOOT)"
 			[ "$f4" = MNASCFG ] && tag="  * (cfg)"
@@ -481,6 +487,9 @@ cmd_disks() {
 			;;
 		esac
 	done
+	if [ "$blank_pending" = 1 ]; then
+		printf '     (blank — no filesystem; create one first, e.g. mkfs.ext4 -L data1 /dev/%s)\n' "$blank_dev"
+	fi; }
 
 	echo
 	echo "Configured in /etc/fstab:"
@@ -541,8 +550,12 @@ cmd_disks_json() {
 	fuuids=$(awk '$1!~/^#/ && $1~/^UUID=/{sub("UUID=","",$1); print $1}' /etc/fstab 2>/dev/null | jq -R . | jq -s .)
 	printf '%s' "$lj" \
 	| jq --arg usb "$usb" --argjson temps "$temps" --argjson fuuids "$fuuids" '
-		def part: { name, size, fstype, label, uuid, mountpoint, fsavail,
-		            in_fstab: (.uuid != null and (($fuuids | index(.uuid)) != null)) };
+		# bind the uuid BEFORE piping into index(): inside index(f) the filter f
+		# is evaluated against the piped-in array, so a bare .uuid there indexed
+		# the ARRAY and crashed ("Cannot index array with string uuid")
+		def part: (.uuid // "") as $u |
+		          { name, size, fstype, label, uuid, mountpoint, fsavail,
+		            in_fstab: ($u != "" and (($fuuids | index($u)) != null)) };
 		{ boot_usb: (if ($usb | length) > 0 then $usb else null end),
 		  disks: [ .blockdevices[] | select(.type=="disk") | {
 			name, size,
