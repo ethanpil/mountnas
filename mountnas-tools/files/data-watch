@@ -10,6 +10,18 @@ STATE=/run/mountnas
 DATA=/mnt/nasdata
 LOG=/var/log/mountnas.log
 log() { printf '%s data-watch: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
+# Email the alert when /etc/mountnas/alert-email holds an address (and msmtp
+# is configured — see the msmtprc template). Fires only on the ok->bad
+# TRANSITION: this script exits early unless the state is 'ok', so a flip
+# here can never repeat-spam on later runs.
+_alert() {
+	to=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /etc/mountnas/alert-email 2>/dev/null | head -n1)
+	[ -n "$to" ] || return 0
+	command -v mail >/dev/null 2>&1 || return 0
+	printf '%s\n\nHost: %s\nTime: %s\n\nCheck it:  nas status\nRecover:   nas restart\n' \
+		"$1" "$(hostname)" "$(date '+%F %T')" \
+		| mail -s "[$(hostname)] MountNAS ALERT: $1" "$to" 2>>"$LOG" || log "alert mail failed"
+}
 
 [ "$(cat "$STATE/data" 2>/dev/null)" = ok ] || exit 0
 spec=$(awk '$1!~/^#/ && $2=="/mnt/nasdata"{print $1; exit}' /etc/fstab)
@@ -25,6 +37,7 @@ esac
 if [ "$present" = 0 ]; then
 	echo disconnected > "$STATE/data"
 	log "$DATA device ($spec) no longer present — state set to disconnected; run: nas status"
+	_alert "data disk DISCONNECTED ($spec no longer present)"
 	exit 0
 fi
 
@@ -36,6 +49,7 @@ fi
 if ! ls "$DATA" >/dev/null 2>&1; then
 	echo mountfail > "$STATE/data"
 	log "$DATA is unreadable (dead mount — device detached?) — state set to mountfail; run: nas restart"
+	_alert "data disk UNREADABLE (dead mount — device detached?)"
 	exit 0
 fi
 
@@ -44,5 +58,6 @@ fi
 if awk -v m="$DATA" '$2==m && $4 ~ /^ro(,|$)/ {f=1} END{exit !f}' /proc/mounts; then
 	echo mountfail > "$STATE/data"
 	log "$DATA is mounted read-only (filesystem errors?) — state set to mountfail; run: nas status"
+	_alert "data disk mounted READ-ONLY (filesystem errors?)"
 fi
 exit 0

@@ -150,6 +150,17 @@ set sendmail=/usr/bin/msmtp
 set mta=/usr/bin/msmtp
 EOF
 
+# Disk-loss alert recipient: when this file holds an address (and msmtprc is
+# configured), the 15-minute data-watch emails on data-disk disconnect/dead
+# mount/read-only transitions. SMART pre-failure alerts are separate: the -m
+# address in /etc/smartd.conf.
+mk root:root 0644 "$tmp/etc/mountnas/alert-email" <<'EOF'
+# MountNAS disk-loss alerts — you own this file (edit, then: nas commit).
+# Put ONE email address on a line by itself to enable alert mails from the
+# data-disk watcher (requires /etc/msmtprc to be configured first).
+# you@example.com
+EOF
+
 # msmtprc holds an SMTP password once configured -> mode 0600, root-owned.
 mk root:root 0600 "$tmp/etc/msmtprc" <<'EOF'
 # MountNAS outbound mail (msmtp) — you own this file (edit, then: nas commit).

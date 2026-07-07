@@ -198,6 +198,8 @@ MountNAS is a *diskless, run-from-RAM* Alpine system: every boot the OS is rebui
 3. Add your address to `/etc/smartd.conf`: `DEVICESCAN -n standby,q -m you@example.com`
 4. `rc-service smartd restart && nas commit`
 
+**Disk-loss alerts** (detachment, dead mount, filesystem gone read-only): put your address in `/etc/mountnas/alert-email` (one line) and `nas commit` — the 15-minute watcher then emails you on the transition, once, and tells you the recovery command. SMART covers a disk *warning* it will fail; this covers a disk that already *vanished*.
+
 The same `mail` command works from cron — pipe your SnapRAID sync/scrub output through it.
 
 **UPS:** nut is installed; configure `/etc/nut/*`, enable nut-upsd + nut-upsmon, set `SHUTDOWNCMD "/sbin/poweroff"`, then `nas commit`.
