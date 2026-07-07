@@ -110,7 +110,15 @@ start() {
 	awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $2}' /etc/fstab | while read -r mp; do
 		[ "$mp" = "$DATA" ] && continue
 		ft=$(_fstype "$mp"); _is_network_fs "$ft" && continue
-		if mountpoint -q "$mp"; then continue; fi
+		if mountpoint -q "$mp"; then
+			# A mountpoint can outlive a detached device: /proc/mounts still
+			# lists it while every access returns EIO. Clear the dead mount so
+			# the retry below can bring a reattached disk back — without this,
+			# recovery needed a full reboot (beta-1 test 13 note B).
+			if ls "$mp" >/dev/null 2>&1; then continue; fi
+			log "$mp is a dead mount (EIO) — clearing with umount -l"
+			umount -l "$mp" 2>>"$LOG" || true
+		fi
 		mkdir -p "$mp"
 		# localmount ran before this service, so a disk that only appeared in
 		# the wait window above is still unmounted — try its fstab entry once
@@ -138,6 +146,13 @@ start() {
 		echo netfs > "$STATE/data"; log "$DATA declared as network fs ($ft) — unsupported, services held"
 		eerror "$DATA is a network filesystem ($ft) — unsupported for the system disk; use a local disk. Services held."
 		return 0
+	fi
+	# clear a dead mount left by a detached device before retrying (same EIO
+	# case as the loop above — a bind-mounted nasdata whose backing disk was
+	# reattached could otherwise only recover via reboot)
+	if mountpoint -q "$DATA" && ! ls "$DATA" >/dev/null 2>&1; then
+		log "$DATA is a dead mount (EIO) — clearing with umount -l"
+		umount -l "$DATA" 2>>"$LOG" || true
 	fi
 	# retry /mnt/nasdata once (local disk; safe, no hang). No placeholder exists
 	# here — the loop above skipped it and stop() clears placeholders on restart.
