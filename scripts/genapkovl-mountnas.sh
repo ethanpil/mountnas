@@ -253,24 +253,29 @@ DEFAULT_CIPHER=aes-256-cbc
 # ENCRYPTION=$DEFAULT_CIPHER
 EOF
 
-mk root:root 0644 "$tmp/etc/lbu/include" <<'EOF'
-usr/local/bin
-root
-var/lib/samba
-var/lib/zerotier-one
-var/lib/tailscale
-var/spool/cron/crontabs
-EOF
-
-mk root:root 0644 "$tmp/etc/lbu/exclude" <<'EOF'
-etc/profile.d/nas-welcome.sh
-etc/profile.d/nas-aliases.sh
-etc/profile.d/nas-prompt.sh
-etc/profile.d/nas-resize.sh
-etc/profile.d/nas-completion.sh
-etc/issue
-etc/network/if-up.d/mountnas-issue
-etc/periodic/15min/mountnas-datawatch
+# ---- lbu include/exclude: the REAL mechanism ----
+# lbu reads /etc/apk/protected_paths.d/lbu.list ("+path" = include in the
+# committed overlay, "-path" = exclude/unprotect) — the same file 'lbu
+# include'/'lbu exclude' maintain and apk audit honors natively. The plain
+# /etc/lbu/{include,exclude} files shipped from alpha-1 through beta-2 were
+# NEVER read by anything: /root, samba passwords, crontabs and VPN identities
+# silently did not persist, and the excluded boot-generated files (/etc/issue)
+# showed as unsaved changes forever. The mountnas service migrates old boxes.
+mk root:root 0644 "$tmp/etc/apk/protected_paths.d/lbu.list" <<'EOF'
++usr/local/bin
++root
++var/lib/samba
++var/lib/zerotier-one
++var/lib/tailscale
++var/spool/cron/crontabs
+-etc/profile.d/nas-welcome.sh
+-etc/profile.d/nas-aliases.sh
+-etc/profile.d/nas-prompt.sh
+-etc/profile.d/nas-resize.sh
+-etc/profile.d/nas-completion.sh
+-etc/issue
+-etc/network/if-up.d/mountnas-issue
+-etc/periodic/15min/mountnas-datawatch
 EOF
 
 # =====================  service enablement  =====================

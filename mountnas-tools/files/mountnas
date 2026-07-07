@@ -30,6 +30,24 @@ start() {
 	mkdir -p "$STATE"; : > "$LOG" 2>/dev/null || true
 	log "storage check starting"
 
+	# One-time migration: /etc/lbu/{include,exclude} were plain files nothing
+	# ever read — lbu's real list is /etc/apk/protected_paths.d/lbu.list — so
+	# includes (samba passwords, /root, crontabs, VPN identities) silently did
+	# not persist on boxes seeded before beta-3. Convert once, park the old
+	# files, and let the next commit persist the converted list.
+	if [ -f /etc/lbu/include ] || [ -f /etc/lbu/exclude ]; then
+		mkdir -p /etc/apk/protected_paths.d
+		{
+			cat /etc/apk/protected_paths.d/lbu.list 2>/dev/null
+			[ -f /etc/lbu/include ] && sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's,^/*,+,' /etc/lbu/include
+			[ -f /etc/lbu/exclude ] && sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's,^/*,-,' /etc/lbu/exclude
+		} | sort -u > /etc/apk/protected_paths.d/lbu.list.new \
+			&& mv /etc/apk/protected_paths.d/lbu.list.new /etc/apk/protected_paths.d/lbu.list
+		mv /etc/lbu/include /etc/lbu/include.migrated 2>/dev/null
+		mv /etc/lbu/exclude /etc/lbu/exclude.migrated 2>/dev/null
+		log "migrated /etc/lbu/include+exclude into protected_paths.d/lbu.list (the old files were never read); commit to persist"
+	fi
+
 	# Seed the prompt's unsaved-count cache. The PS1 indicator only READS this
 	# file (never runs lbu itself), so the interactive prompt stays instant.
 	lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || echo 0 > "$STATE/unsaved"

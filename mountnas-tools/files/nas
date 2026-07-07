@@ -224,9 +224,10 @@ cmd_status() {
 				|| warn "Docker data-root configured for $DATA (disk not mounted yet)"
 		else bad "Docker data-root ($dr) NOT under $DATA"; fi
 	fi
-	# no data path tracked
-	grep -qE "^(/?mnt/nasdata|/?mnt/disk|/?mnt/parity)" /etc/lbu/include 2>/dev/null \
-		&& bad "a data path is in /etc/lbu/include (commit would copy your disk!)" \
+	# no data path tracked (lbu's real list is protected_paths.d/lbu.list;
+	# '+path' entries are what a commit archives)
+	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
+		&& bad "a data path is in the lbu include list (commit would copy your disk!) — remove with: lbu exclude <path>" \
 		|| ok "lbu include has no data paths"
 	# share paths must be live mountpoints
 	# NB: the walk always ends at a mountpoint — "/" itself is one (the RAM root),
@@ -777,8 +778,8 @@ cmd_commit() {
 		bad "usage: nas commit [-m \"what you changed\"]"; return 1
 	fi
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
-	grep -qE "^(/?mnt/nasdata|/?mnt/disk|/?mnt/parity)" /etc/lbu/include 2>/dev/null \
-		&& { bad "a data path is in /etc/lbu/include — refusing (would tar your data disk)"; return 1; }
+	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
+		&& { bad "a data path is in the lbu include list — refusing (would tar your data disk)"; return 1; }
 	echo "Saving configuration..."
 	lbu commit -v || { bad "lbu commit failed"; return 1; }
 	if [ -n "$note" ]; then
