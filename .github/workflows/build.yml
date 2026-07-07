@@ -107,6 +107,12 @@ jobs:
             done
             [ -z "$miss" ] || { echo "MISSING init scripts for:$miss — add the right -openrc package(s)"; exit 1; }
             echo "== wire the release tag into mountnas-tools pkgver =="
+            # The raw tag reaches a sed replacement (below) and every release
+            # filename: a / would break the sed parse and an ampersand would
+            # SILENTLY corrupt the stored tag (sed replacement metachar).
+            # Enforce the character set the _reltag comment assumes.
+            echo "'"$TAG"'" | grep -Eq "^[A-Za-z0-9._-]+$" \
+              || { echo "ERROR: release_tag must match [A-Za-z0-9._-]+ (got: '"$TAG"')"; exit 1; }
             # nas version / nas status report /usr/share/mountnas/version, which is
             # pkgver — without this it would say 1.0.0 forever regardless of release.
             # Tags that are not a valid apk version (e.g. "dev") fall back to a dated one.
