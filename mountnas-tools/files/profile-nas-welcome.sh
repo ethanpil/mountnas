@@ -1,6 +1,6 @@
 [ -t 1 ] || return 0
-ver=$(cat /usr/share/mountnas/release 2>/dev/null || cat /usr/share/mountnas/version 2>/dev/null || echo "?")
-[ -n "$ver" ] && [ "$ver" != dev ] || ver=$(cat /usr/share/mountnas/version 2>/dev/null || echo "?")
+ver=$(/usr/libexec/mountnas/release-string 2>/dev/null || echo "?")
+[ -n "$ver" ] || ver="?"
 printf '\n  MountNAS %s — changes live in RAM until: nas commit\n' "$ver"
 case "$(cat /run/mountnas/data 2>/dev/null)" in
 	fresh)        printf '  >> No data disk yet. Add it to /etc/fstab, then: nas commit\n' ;;

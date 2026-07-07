@@ -1,0 +1,13 @@
+#!/bin/sh
+# release-string — THE single source for the user-visible MountNAS version.
+# Prints the release tag (/usr/share/mountnas/release) unless it is missing,
+# empty, or the "dev" placeholder, in which case the apk pkgver
+# (/usr/share/mountnas/version) is printed; "?" only when neither is readable.
+# nas, gen-issue, and the login welcome snippet all call this — the fallback
+# logic used to be hand-copied in each (with one copy subtly wrong: a missing
+# release file short-circuited to "?" without ever trying the version file).
+r=$(cat /usr/share/mountnas/release 2>/dev/null)
+case "$r" in
+	""|dev) r=$(cat /usr/share/mountnas/version 2>/dev/null) ;;
+esac
+printf '%s\n' "${r:-?}"

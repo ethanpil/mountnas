@@ -10,8 +10,9 @@ REPO=ethanpil/mountnas   # canonical GitHub repo ('nas upgrade --check' + docs)
 VERSION=$(cat /usr/share/mountnas/version 2>/dev/null || echo "?")
 # RELEASE = the tag users know (alpha-7, ...) — what we display and compare
 # against GitHub. VERSION stays the apk pkgver (build id; CI reads that file).
-RELEASE=$(cat /usr/share/mountnas/release 2>/dev/null || echo "$VERSION")
-[ -n "$RELEASE" ] && [ "$RELEASE" != dev ] || RELEASE="$VERSION"
+# The fallback logic lives in ONE place: /usr/libexec/mountnas/release-string.
+RELEASE=$(/usr/libexec/mountnas/release-string 2>/dev/null)
+[ -n "$RELEASE" ] && [ "$RELEASE" != "?" ] || RELEASE="$VERSION"
 # Color the status tags when stdout is a terminal (NO_COLOR honored); pipes and
 # logs get plain text. The literal [ OK ]/[WARN]/[FAIL] words stay intact inside
 # the escapes, so grep/CI match colored output too.
