@@ -369,6 +369,10 @@ _disk_temp() {
 # standby-safe — it never wakes a sleeping drive). Pure /sys reads, instant.
 # VMs expose no hwmon chips: say so quietly instead of printing nothing.
 _status_sensors() {
+	# local everything: this helper runs NESTED inside cmd_status, which is
+	# itself nested by cmd_report/cmd_status_json — generic names leaking up
+	# is exactly what broke nas report
+	local cpu fans disks h hn t v r f d lbl out i
 	cpu=""; fans=""
 	for h in /sys/class/hwmon/hwmon*; do
 		[ -f "$h/name" ] || continue
@@ -660,31 +664,35 @@ cmd_logs() {
 # is included because most bugs need it — the closing note tells the user to
 # review before sharing.
 cmd_report() {
-	out="/tmp/mountnas-report-$(hostname)-$(date +%Y%m%d-%H%M%S).tar.gz"
-	d=$(mktemp -d) || { bad "mktemp failed"; return 1; }
+	# rpt_-prefixed names on purpose: this function NESTS cmd_status --deep,
+	# whose loops assign generic names (d, s, out, ...) — a plain 'd' here was
+	# clobbered to the last disk name and the whole bundle wrote into a
+	# directory literally called "sdd" (beta-1 test D).
+	rpt_f="/tmp/mountnas-report-$(hostname)-$(date +%Y%m%d-%H%M%S).tar.gz"
+	rpt_d=$(mktemp -d) || { bad "mktemp failed"; return 1; }
 	echo "Collecting diagnostics (runs 'nas status --deep' — may wake sleeping disks) ..."
-	cmd_status --deep > "$d/nas-status.txt" 2>&1 || true
-	{ echo "MountNAS $VERSION"; uname -a; uptime; } > "$d/system.txt" 2>&1 || true
-	dmesg > "$d/dmesg.txt" 2>/dev/null || true
-	cp /var/log/mountnas.log "$d/mountnas.log" 2>/dev/null || true
-	cp /var/log/messages "$d/messages" 2>/dev/null || true
-	cp /etc/fstab "$d/fstab" 2>/dev/null || true
-	cat /proc/mounts > "$d/mounts.txt" 2>/dev/null || true
-	lsblk -o NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT > "$d/lsblk.txt" 2>/dev/null || true
-	df -h > "$d/df.txt" 2>/dev/null || true
-	cp /etc/apk/world "$d/world" 2>/dev/null || true
-	rc-status -a > "$d/rc-status.txt" 2>/dev/null || true
+	cmd_status --deep > "$rpt_d/nas-status.txt" 2>&1 || true
+	{ echo "MountNAS $RELEASE (build $VERSION)"; uname -a; uptime; } > "$rpt_d/system.txt" 2>&1 || true
+	dmesg > "$rpt_d/dmesg.txt" 2>/dev/null || true
+	cp /var/log/mountnas.log "$rpt_d/mountnas.log" 2>/dev/null || true
+	cp /var/log/messages "$rpt_d/messages" 2>/dev/null || true
+	cp /etc/fstab "$rpt_d/fstab" 2>/dev/null || true
+	cat /proc/mounts > "$rpt_d/mounts.txt" 2>/dev/null || true
+	lsblk -o NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT > "$rpt_d/lsblk.txt" 2>/dev/null || true
+	df -h > "$rpt_d/df.txt" 2>/dev/null || true
+	cp /etc/apk/world "$rpt_d/world" 2>/dev/null || true
+	rc-status -a > "$rpt_d/rc-status.txt" 2>/dev/null || true
 	for f in /etc/snapraid.conf /etc/exports /etc/docker/daemon.json /etc/samba/smb.conf; do
-		[ -f "$f" ] && cp "$f" "$d/$(basename "$f")" 2>/dev/null
+		[ -f "$f" ] && cp "$f" "$rpt_d/$(basename "$f")" 2>/dev/null
 	done
-	if tar -czf "$out" -C "$d" .; then
-		rm -rf "$d"
-		ok "diagnostics bundle written: $out"
+	if tar -czf "$rpt_f" -C "$rpt_d" .; then
+		rm -rf "$rpt_d"
+		ok "diagnostics bundle written: $rpt_f"
 		echo "  Attach it to your bug report: https://github.com/$REPO/issues"
 		echo "  No secrets are included (no shadow/ssh keys/samba passwords), but the"
 		echo "  system log is — review the contents before sharing."
 	else
-		rm -rf "$d"; bad "could not write $out"; return 1
+		rm -rf "$rpt_d"; bad "could not write $rpt_f"; return 1
 	fi
 }
 
