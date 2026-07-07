@@ -9,17 +9,22 @@ that will silently regress if "cleaned up" without understanding it.
 
 ---
 
-## 1. Status at a glance (as of alpha-6, 2026-07-06)
+## 1. Status at a glance (as of beta-2, 2026-07-07)
 
-- **Build: GREEN, releases through alpha-6 published.** The workflow assembles
+- **Build: GREEN, releases through beta-2 published.** The workflow assembles
   everything end-to-end: 4 local apks, `mkimage` ISO, single-slot 3.5 GiB
-  `.img.gz` (~1 GB compressed).
+  `.img.gz` (~1 GB compressed). Signing key is a fixed secret since alpha-7
+  (§6) — the published `.rsa.pub` is a stable trust anchor now.
 - **CI-verified per release, all blocking:** boot-to-login under SeaBIOS *and*
   OVMF; the full first-install story (wizard → data disk → docker/samba start →
   commit → reboot persistence, via the supervisor smoke test); and a REAL
   in-place upgrade from the previous published release (upgrade smoke test,
   blocking since the first green alpha-4 → alpha-5 run). See §6/§8.
-- **Still manual:** boot from a real USB stick on real hardware (§8).
+- **Manually verified at beta-1:** a full live-test pass on a Proxmox VM
+  (consoles, wizard, doas/overlay, mail end-to-end, samba from a desktop,
+  docker + reboot persistence, apk persistence, disk-loss recovery — see §8);
+  every defect it surfaced was fixed in beta-2.
+- **Still manual:** real USB stick on real hardware; backup restore drill (§8).
 - **Single deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd for a
   fresh install; the same file is what `nas upgrade` consumes). See §4.
 
@@ -44,10 +49,12 @@ mountnas/
 │       ├── nas                       # the CLI (setup/status/disks/changes/report/backup/upgrade/…)
 │       ├── mountnas                  # storage guard + data-service supervisor (init.d)
 │       ├── mountnas-mkdirs, mountnas-net, mountnas-sshkey, mountnas-issue   # boot helpers (init.d)
-│       ├── pick-nic, gen-issue, write-bootcfg, data-watch    # /usr/libexec/mountnas
+│       ├── pick-nic, gen-issue, write-bootcfg, data-watch, release-string   # /usr/libexec/mountnas
 │       ├── periodic-datawatch        # /etc/periodic/15min wrapper (lbu-excluded, dot-free name)
 │       ├── issue-ifupdown            # /etc/network/if-up.d hook
 │       ├── profile-nas-{welcome,aliases,prompt,resize}.sh    # /etc/profile.d (lbu-excluded)
+│       ├── bash-nas-completion.sh    # /etc/profile.d (lbu-excluded; ash-safe eval wrapper, §8)
+│       ├── zsh-nas-completion        # /usr/share/zsh/site-functions/_nas (data, unlintable)
 │       └── logo
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
@@ -234,6 +241,12 @@ installed apk-tools. The workflow now **auto-derives** the ref from the installe
 `/etc/alpine-release` (`3.24` → `3.24-stable`) when the `aports_ref` input is left
 empty; the input remains as a manual override only.
 
+**aports comes from the GitHub mirror** (`github.com/alpinelinux/aports`), NOT
+gitlab.alpinelinux.org: Alpine's GitLab has repeated transient failures (an SSL
+timeout on apk.static, then an early-EOF mid-clone — two beta-1 builds died on
+it in one morning). Same repo, same branch names, plus one retry. setup-alpine
+keeps its pinned gitlab apk.static URL (small, checksummed, retry-tolerant).
+
 **Non-root build user + GitHub runner restrictions** (the big class of failures):
 - **Unprivileged userns is blocked on ubuntu-24.04 runners** → apk's package-script
   sandbox (`unshare`) fails with `Operation not permitted`. Fixed by a host step:
@@ -373,13 +386,13 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 - `nas version`/`nas status` report mountnas-tools' `pkgver`; the workflow seds the
   release tag (leading `v` stripped) into the APKBUILD before building, falling back
   to `1.0.0_git<date>` when the tag is not a valid apk version (e.g. `dev`).
-- The signing key comes from the **`ABUILD_PRIVKEY` repo secret** when set — a
-  stable trust anchor, so the published `.rsa.pub` stops changing every build.
-  Generate once (`abuild-keygen -an` anywhere, or plain
-  `openssl genrsa -out key.rsa 4096` — the workflow only needs a PEM RSA private
-  key and derives the pubkey itself), paste the full PEM into the secret.
-  Without the secret (forks, PRs) the random per-build keygen runs.
-  **As of alpha-6 the secret is NOT set — see the §8 caveat.**
+- The signing key comes from the **`ABUILD_PRIVKEY` repo secret** — a stable
+  trust anchor, so the published `.rsa.pub` stops changing every build.
+  **SET since alpha-7** (verified: alpha-7 and beta-1 publish byte-identical
+  pubkeys; alpha-4 through alpha-6 each carried a random per-build key).
+  Without the secret (forks, PRs) the random per-build keygen still runs.
+  If the key must ever be rotated: `openssl genrsa -out key.rsa 4096`, paste
+  the full PEM into the secret — the workflow derives the pubkey itself.
 
 ---
 
@@ -411,6 +424,17 @@ persistence — supervisor smoke test); a real in-place upgrade from the previou
 published release (upgrade smoke test, blocking). Historical bring-up context:
 the Proxmox/SeaBIOS boot chain was debugged in three layers (hang → "not a
 bootable disk" → `/sbin/init not found`) — the fixes live in §6.
+
+**Verified manually (beta-1 full live test, Proxmox VM, 2026-07-07):** both
+consoles + banner; wizard incl. immediate mDNS rename and the
+PermitEmptyPasswords flip; overlay ownership + doas from a wheel user; the
+add-a-disk flow + boot-USB fstab guard; changes --diff + rollback across a
+reboot; the mail pipeline end-to-end against a real SMTP relay (incl. smartd
+test mail); persistent logging + custom-token survival; hot-detach/reattach
+disk-loss handling; samba from a Windows desktop; docker compose + reboot
+persistence; apk persistence; power gates. The defects it surfaced (serial
+resize, disks --json, nas report, data-watch/bind mounts, dead-mount recovery,
+--check vs private repo) were all fixed in beta-2 — see the beta-2 notes.
 
 **Open / next (in priority order):**
 1. **Real hardware.** Boot from a real USB stick on a real box: confirm the seed
@@ -522,16 +546,15 @@ _reltag sed.
   public (unauthenticated API/asset fetches); the error now says so.
 
 **Known caveats:**
-- **Signing key — ACTION NEEDED: the `ABUILD_PRIVKEY` repo secret is still NOT
-  set.** Verified by comparing published pubkeys: alpha-4's and alpha-5's
-  `mountnas-<tag>.rsa.pub` differ, so every release is still signed by a random
-  per-build key. Boots and upgrades work regardless (each image is internally
-  self-consistent — the initramfs trusts its own build's key), but the published
-  `.rsa.pub` cannot serve as a stable trust anchor until the secret exists.
-  To fix: `openssl genrsa -out mountnas-signing.rsa 4096` (keep it private,
-  back it up), then repo Settings → Secrets → Actions → new secret
-  `ABUILD_PRIVKEY` = the full PEM. The first release after that rotates the key
-  one final time. See §6 "Version + signing key".
+- **Signing key — RESOLVED: `ABUILD_PRIVKEY` is set** (alpha-7 and beta-1
+  publish byte-identical `.rsa.pub`; earlier releases each carried a random
+  per-build key, which is why alpha-4 vs alpha-5 differ). Keep the private key
+  backed up — losing it just rotates the anchor once more, but leaking it means
+  someone can sign packages the images trust. See §6 "Version + signing key".
+- **On-box release checks need the repo PUBLIC** — `nas upgrade --check` and
+  URL upgrades use unauthenticated API/asset fetches (beta-1 test 16 found the
+  repo private → 404, now reported distinctly). Maintainer intent is to make
+  the repo public.
 - `depmod: ERROR: fstatat(3, vmlinuz)` during the kernel step is **benign** (modloop
   builds/signs fine right after).
 - The `apk index` "No provider for the dependencies" warning during local-repo
