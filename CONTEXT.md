@@ -500,7 +500,26 @@ release/version fallback by hand); one `_boot_usb_disk()` helper (never
 hand-roll findfs LABEL=BOOT + pkname again); the --help interceptor is
 CLOSED (help or overview, never execution — add a _cmd_help_for page for
 every new dispatcher command); release_tag is validated in CI before the
-_reltag sed; completions read howto topics from the installed dir.
+_reltag sed.
+
+**beta-2 notes (first full live-test feedback, all fixed same day):**
+- Variable hygiene is load-bearing: cmd_report NESTS cmd_status --deep, and
+  generic names (d, out) leaking from the nested loops sent the whole report
+  bundle into a directory named after the last disk. Rule: any function that
+  nests another uses prefixed names or local — _status_sensors is fully local
+  now.
+- Dead mounts are a first-class state: a detached device leaves its mount in
+  /proc/mounts (rw!) while all I/O returns EIO — mountpoint(1), findfs, and
+  ro-flag checks ALL pass. Detection is a directory read probe (data-watch and
+  the supervisor); recovery is umount -l + remount in mountnas start().
+- The serial resize snippet must stay ash-compatible: root's login shell is
+  busybox ash, and a BASH_VERSION guard silently disabled it for everyone.
+- nas howto and LUKS (cryptsetup/dmcrypt) were REMOVED at the maintainer's
+  direction — do not re-add either without an explicit ask.
+- nas commit -m notes are keyed by the overlay file mtime stamp (matches the
+  lbu rotation filename); rollback preserves with cp -p so notes follow.
+- On-box 'nas upgrade --check' and URL upgrades REQUIRE the GitHub repo to be
+  public (unauthenticated API/asset fetches); the error now says so.
 
 **Known caveats:**
 - **Signing key — ACTION NEEDED: the `ABUILD_PRIVKEY` repo secret is still NOT

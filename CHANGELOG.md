@@ -1,5 +1,28 @@
 # Changelog
 
+## [beta-2] — 2026-07-07
+
+Everything found in the first full live test (beta-1 on Proxmox), fixed. Two reported items were not code bugs: the `status --json` jq error came from the test sheet's own command (jq operator precedence — `|` binds looser than `,`), and the chrony "KoD RATE" log line was pool-server rate limiting caused by reboot-heavy testing (`iburst` fires on every boot; chrony backs off automatically).
+
+### Fixed
+- **Serial-console resize never ran** — the snippet was guarded on bash, but root's login shell is busybox ash, so `qm terminal`/IPMI sessions stayed at a wrong 80x24 (btop/mc/nano garbled). Now runs under ash and bash.
+- **`nas disks --json` crashed** ("Cannot index array") — a jq scoping bug in the `in_fstab` computation. Blank disks in the human view also now say "(blank — no filesystem; …)" with the mkfs first step instead of showing nothing.
+- **Runtime disk-loss detection missed dead-but-listed mounts**: a hot-detached disk backing a bind-mounted nasdata passed every check (path spec, mountpoint present, /proc/mounts still `rw`) while all I/O returned EIO. `data-watch` now read-probes the mountpoint and flips the state to `mountfail`.
+- **Reattached disks recover without a reboot**: the supervisor now detects dead mounts (EIO on read), lazy-unmounts them, and remounts fresh — `nas restart` used to start services against the dead mount.
+- **`nas report` was completely broken** — it nests `nas status --deep`, whose loops clobbered the report's generic variable names, sending the bundle into a directory literally named after the last disk. Report variables are now prefixed and the sensors helper declares everything local.
+- **`nas upgrade --check` misreported a private repo as "no network"** — HTTP status is now captured and reported distinctly (network/DNS vs private-or-no-releases vs rate limit). On-box checks and URL upgrades require the repository to be public.
+- **msmtprc template friction**: the single example account is now named `default`, so uncomment-and-fill works without the `account default : name` alias line.
+
+### Added
+- **`nas commit -m "note"`** — label a commit; the note appears beside the matching snapshot in `nas rollback --list` and on the rollback confirmation. Notes follow snapshots automatically (keyed by the overlay mtime lbu embeds in rotated filenames).
+
+### Removed
+- **`nas howto`** — removed entirely (command, topic files, completions, docs).
+- **LUKS** (`cryptsetup` + `dmcrypt`) — removed entirely per maintainer direction.
+
+### Docs
+- Persistent-log rotation made explicit: automatic, 1 MB × 10 files via busybox syslogd (`-s 1024 -b 9`) — nothing to manage.
+
 ## [beta-1] — 2026-07-07
 
 First beta. A deep multi-angle code review of the alpha-7 CLI pass surfaced 15 findings — no data-loss or boot-breaking bugs, but real contract violations and fragility. Every finding is fixed here, one commit each.
