@@ -294,7 +294,6 @@ cmd_status() {
 # (see _rec) and the JSON is rendered from those — NOT by parsing the human
 # text, so the display format is free to change without breaking consumers.
 # Exit code matches the human mode: 1 when any check FAILed.
-# shellcheck disable=SC2120  # --deep arrives via the dispatcher flag parser
 cmd_status_json() {
 	dp="${1:-}"
 	NAS_CHECKS=$(mktemp) || { echo '{"error":"mktemp failed"}'; return 1; }
@@ -1408,18 +1407,31 @@ esac
 
 case "${1:-help}" in
 	setup) cmd_setup ;;
-	status) shift
-		case "${1:-}" in
-			--json) cmd_status_json ;;
-			*) cmd_status "$@" ;;
-		esac ;;
+	# status + its aliases share one order-independent flag parser: validate
+	# is plain status, checkup pre-sets --deep, and --json/--deep combine in
+	# any order (positional matching used to silently drop one of them, and
+	# 'nas validate --json' emitted human text into monitoring pipes).
+	status|validate|checkup)
+		sc="$1"; shift
+		js=0; dp=0; [ "$sc" = checkup ] && dp=1
+		for a in "$@"; do
+			case "$a" in
+				--json) js=1 ;;
+				--deep) dp=1 ;;
+				*) echo "usage: nas $sc [--deep] [--json]"; exit 1 ;;
+			esac
+		done
+		if [ "$js" = 1 ]; then
+			if [ "$dp" = 1 ]; then cmd_status_json --deep; else cmd_status_json; fi
+		else
+			if [ "$dp" = 1 ]; then cmd_status --deep; else cmd_status; fi
+		fi
+		;;
 	disks) shift
 		case "${1:-}" in
 			--json) cmd_disks_json ;;
 			*) cmd_disks ;;
 		esac ;;
-	validate) shift; cmd_status "$@" ;;
-	checkup) cmd_status --deep ;;
 	restart) cmd_restart ;;
 	changes|changed) shift; cmd_changes "$@" ;;
 	report) cmd_report ;;
