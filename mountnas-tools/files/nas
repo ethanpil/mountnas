@@ -159,10 +159,21 @@ cmd_status() {
 			warn "$s not running"; _rec SVC "$s" false
 		fi
 	done
-	n=$(lbu status 2>/dev/null | grep -c .)
+	lbu_out=$(lbu status 2>/dev/null)
+	n=$(printf '%s' "$lbu_out" | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
 	# reuse this count for the prompt cache instead of running lbu again on exit
 	mkdir -p "$STATE"; printf '%s\n' "${n:-0}" > "$STATE/unsaved" 2>/dev/null || true; UNSAVED_FRESH=1
+	# persistent logging (line shown only when enabled; the setting itself is
+	# /etc config, so it survives reboots only once committed)
+	plt=$(_syslog_target)
+	if [ -n "$plt" ]; then
+		if printf '%s' "$lbu_out" | grep -q "etc/conf.d/syslog"; then
+			warn "persistent logging -> $plt (NOT committed — lost at reboot)"
+		else
+			ok "persistent logging -> $plt"
+		fi
+	fi
 	# last-backup recency (persisted by nas backup: "<epoch> <YYYY-mm-dd HH:MM>")
 	lbk=$(cat /etc/mountnas/last-backup 2>/dev/null || true)
 	case "${lbk%% *}" in
@@ -631,8 +642,16 @@ cmd_logs() {
 			;;
 		''|status)
 			t=$(_syslog_target)
-			if [ -n "$t" ]; then ok "persistent logging ON -> $t"
-			else ok "persistent logging OFF (RAM only; enable: nas logs --persist on)"; fi
+			unc=""
+			lbu status 2>/dev/null | grep -q "etc/conf.d/syslog" \
+				&& unc=" — setting NOT saved, lost at reboot unless: nas commit"
+			if [ -n "$t" ]; then
+				if [ -n "$unc" ]; then warn "persistent logging ON -> $t$unc"
+				else ok "persistent logging ON -> $t (saved)"; fi
+			else
+				if [ -n "$unc" ]; then warn "persistent logging OFF$unc"
+				else ok "persistent logging OFF (RAM only; enable: nas logs --persist on)"; fi
+			fi
 			;;
 		*)
 			# a typo (onn, Off, --help) must not masquerade as a status query
