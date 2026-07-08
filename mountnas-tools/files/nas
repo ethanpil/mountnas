@@ -179,6 +179,10 @@ cmd_help() {
 # --deep adds SMART, SnapRAID status and time-sync — those can wake sleeping disks
 # and be slow, so they are opt-in.
 cmd_status() {
+	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
+	# functions must not leak generic names into their callers); scope the
+	# presentation vars this pass added so they can't clobber a caller.
+	local svc_up rlv rl_ok vc vok vwa vfa
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
