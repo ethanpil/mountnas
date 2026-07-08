@@ -114,7 +114,7 @@ expect {
 expect -re {:~# }
 
 # --- nas status must be [FAIL]-free (warnings are fine on a fresh box) ---
-send {nas status > /tmp/ns.out 2>&1; grep -q "FAIL" /tmp/ns.out && echo STATUS"-BAD" || echo STATUS"-OK"; cat /tmp/ns.out}
+send {nas status > /tmp/ns.out 2>&1; grep -qF "[FAIL]" /tmp/ns.out && echo STATUS"-BAD" || echo STATUS"-OK"; cat /tmp/ns.out}
 send "\r"
 expect {
     "STATUS-BAD" { die "nas status reported a FAIL line (dumped above)" }

@@ -383,7 +383,8 @@ cmd_status() {
 	fi
 	# exit 1 when any FAIL record fired — usable from cron/monitoring as a probe.
 	# Human runs (_own_checks=1) also render a verdict footer from the records.
-	# Verdict wording stays lowercase: CI greps healthy output for "FAIL".
+	# (CI checks a healthy box is free of the literal [FAIL] tag, not the word
+	# "fail", so verdict/message wording is unconstrained.)
 	if [ -n "$NAS_CHECKS" ]; then
 		if [ "$_own_checks" = 1 ]; then
 			# one read of the records: awk counts drive both the footer and the
