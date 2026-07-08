@@ -787,7 +787,12 @@ cmd_report() {
 	rpt_f="/tmp/mountnas-report-$(hostname)-$(date +%Y%m%d-%H%M%S).tar.gz"
 	rpt_d=$(mktemp -d) || { bad "mktemp failed"; return 1; }
 	echo "Collecting diagnostics (runs 'nas status --deep' — may wake sleeping disks) ..."
-	cmd_status --deep > "$rpt_d/nas-status.txt" 2>&1 || true
+	# Colors are decided once at startup from the script's own stdout, so a
+	# report run from a terminal would embed ANSI escapes in the bundle. Blank
+	# the palette inside a subshell so the captured file is plain text; the
+	# parent's colors are untouched.
+	( C_OK=""; C_WA=""; C_FA=""; C_NO=""; C_HD=""; C_B=""; C_D=""
+	  cmd_status --deep ) > "$rpt_d/nas-status.txt" 2>&1 || true
 	{ echo "MountNAS $RELEASE (build $VERSION)"; uname -a; uptime; } > "$rpt_d/system.txt" 2>&1 || true
 	dmesg > "$rpt_d/dmesg.txt" 2>/dev/null || true
 	cp /var/log/mountnas.log "$rpt_d/mountnas.log" 2>/dev/null || true
