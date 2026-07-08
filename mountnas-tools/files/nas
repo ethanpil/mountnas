@@ -13,13 +13,14 @@ VERSION=$(cat /usr/share/mountnas/version 2>/dev/null || echo "?")
 # The fallback logic lives in ONE place: /usr/libexec/mountnas/release-string.
 RELEASE=$(/usr/libexec/mountnas/release-string 2>/dev/null)
 [ -n "$RELEASE" ] && [ "$RELEASE" != "?" ] || RELEASE="$VERSION"
-# Color the status tags when stdout is a terminal (NO_COLOR honored); pipes and
-# logs get plain text. The literal [ OK ]/[WARN]/[FAIL] words stay intact inside
-# the escapes, so grep/CI match colored output too.
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+# Color the status tags when stdout is a terminal (NO_COLOR honored, TERM=dumb
+# excluded); pipes and logs get plain text. The literal [ OK ]/[WARN]/[FAIL]
+# words stay intact inside the escapes, so grep/CI match colored output too.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
 	C_OK="$(printf '\033[32m')"; C_WA="$(printf '\033[33m')"; C_FA="$(printf '\033[1;31m')"; C_NO="$(printf '\033[0m')"
+	C_HD="$(printf '\033[1;36m')"; C_B="$(printf '\033[1m')"; C_D="$(printf '\033[2m')"
 else
-	C_OK=""; C_WA=""; C_FA=""; C_NO=""
+	C_OK=""; C_WA=""; C_FA=""; C_NO=""; C_HD=""; C_B=""; C_D=""
 fi
 # Structured check records: when NAS_CHECKS names a file, every ok/warn/bad
 # also appends "TYPE<TAB>message" to it. cmd_status uses the records for its
@@ -36,6 +37,35 @@ ok()  { printf '  %s[ OK ]%s %s\n' "$C_OK" "$C_NO" "$*"; _rec OK "$*"; }
 warn(){ printf '  %s[WARN]%s %s\n' "$C_WA" "$C_NO" "$*"; _rec WARN "$*"; }
 bad() { printf '  %s[FAIL]%s %s\n' "$C_FA" "$C_NO" "$*"; _rec FAIL "$*"; }
 confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
+# ---------- shared UI kit (presentation only — never writes check records) ----
+# One visual grammar for every screen, ASCII-only so serial consoles render it:
+#   hdr   level-1 section header  '== title ====…'  filled to column 68
+#   sub   level-2 item rule       '-- text ------…' filled to column 68
+#   hint  dim guidance/next-step line (commands in hints stay copy-pasteable)
+#   usage uniform usage error on stderr (callers add their own return/exit)
+# Titles must stay ASCII: ${#} counts bytes, so UTF-8 would shorten the fill.
+_fill() { printf '%*s' "$1" '' | tr ' ' "$2"; }
+hdr() {
+	local p
+	p=$((64 - ${#1})); [ "$p" -gt 0 ] || p=2
+	printf '\n%s== %s %s%s\n' "$C_HD" "$1" "$(_fill "$p" '=')" "$C_NO"
+}
+sub() {
+	local p
+	p=$((64 - ${#1})); [ "$p" -gt 0 ] || p=2
+	printf -- '\n-- %s%s%s %s\n' "$C_B" "$1" "$C_NO" "$(_fill "$p" '-')"
+}
+hint() { printf '  %s%s%s\n' "$C_D" "$*" "$C_NO"; }
+usage() { printf 'usage: %s\n' "$*" >&2; return 1; }
+# seconds -> "3d 4h" / "4h 12m" / "12m" / "45s" (status header)
+_uptime_h() {
+	local s
+	s=${1:-0}; case "$s" in ''|*[!0-9]*) s=0 ;; esac
+	if [ "$s" -ge 86400 ]; then printf '%dd %dh' "$((s / 86400))" "$((s % 86400 / 3600))"
+	elif [ "$s" -ge 3600 ]; then printf '%dh %dm' "$((s / 3600))" "$((s % 3600 / 60))"
+	elif [ "$s" -ge 60 ]; then printf '%dm' "$((s / 60))"
+	else printf '%ds' "$s"; fi
+}
 # True if $1 is covered by the read-only 'mountnas-blocked' placeholder that the
 # mountnas service mounts over failed data mounts — mountpoint -q alone reports
 # that placeholder as a healthy mount.
@@ -67,60 +97,74 @@ cmd_about() {
 	printf 'http://mountnas.com\n'
 }
 
-cmd_help() {
+# nas help — two pages, each fitting an 80x24 serial console. Page 1: the
+# commands, grouped by task. Page 2: the files you edit + recipes. On an
+# interactive tty a 'more'-style any-key pause sits between them (q skips);
+# pipes/CI get both pages flat so nothing ever hangs on a keypress.
+_help_page1() {
 	cat <<EOF
-MountNAS $RELEASE — control CLI
+${C_B}MountNAS $RELEASE — control CLI${C_NO}
+Subcommands — run as:  ${C_B}nas <command>${C_NO}      (e.g. nas status, nas disks)
 
-  nas setup      Guided first-run setup (hostname, network, password, timezone)
-  nas status     Health + storage config check; exit 1 on any FAIL  [--deep|--json]
-  nas disks      Every disk: identity, partitions, fstab state      [--json]
-  nas restart    Re-mount disks + (re)start services (no reboot)
-  nas changes    List unsaved changes; --diff shows the content (alias: nas changed)
-  nas commit     Save changes to the USB; label it: -m "note"   (alias: nas save)
-  nas rollback   Restore a previous committed config            [--list | <n>]
-  nas backup     Full image of the boot USB to a file  (--to <dir>) — see UPGRADE.md
-  nas logs       View the system log; --persist on = survive reboots on the data disk
-  nas shutdown   Power off  [--yes|--save]
-  nas reboot     Reboot     [--yes|--save]
-  nas upgrade    Upgrade the OS from a release file or URL  [--check|--yes]
-  nas report     Diagnostics bundle (status+logs, no secrets) for bug reports
-  nas about      Logo, version, and project info
-  nas help [<command>] / version      ('nas <command> --help' works too)
-  (nas validate = nas status ; nas checkup = nas status --deep)
+${C_HD}Everyday${C_NO}
+  ${C_B}status${C_NO}    Health + storage checks; exit 1 on failure   [--deep|--json]
+  ${C_B}disks${C_NO}     Every disk: identity, partitions, fstab state       [--json]
+  ${C_B}changes${C_NO}   List unsaved changes; --diff shows content  (alias: changed)
+  ${C_B}commit${C_NO}    Save changes to the USB; label: -m "note"     (alias: save)
+  ${C_B}logs${C_NO}      View the system log  [-n N | -f | --persist on|off|status]
 
-Important files & paths (edit, then: nas commit):
-  /etc/fstab               WHERE YOU CONFIGURE DISKS (add data disks here)
-  /mnt/*                   Your data-disk mountpoints ($DATA = system disk)
-  /cfg                     Config partition — your saved overlay lives here
-  /etc/snapraid.conf       SnapRAID parity array
-  mergerfs pool            configured in /etc/fstab (mount options); no separate file
-  /etc/samba/smb.conf      Samba shares       (add users: smbpasswd -a <user>)
-  /etc/exports             NFS exports
-  /etc/docker/daemon.json  Docker             (data-root = $DATA/docker)
-  /etc/nut/                UPS: nut.conf, ups.conf, upsd.conf, upsmon.conf
-  /etc/smartd.conf         SMART disk-health monitoring + alerts
-  /etc/chrony/chrony.conf  Time sync (NTP)
-  /etc/ssh/sshd_config     SSH server;  /root/.ssh/authorized_keys = your keys
-  /var/lib/zerotier-one    ZeroTier identity + config
-  /var/lib/tailscale       Tailscale state
-  crontab -e               Scheduled jobs (e.g. SnapRAID sync/scrub)
-  Note: /mnt/disk*, /mnt/parity* are CONVENTIONAL names only — SnapRAID cares about
-        the paths in snapraid.conf, not these names.
+${C_HD}Recover${C_NO}
+  ${C_B}rollback${C_NO}  Restore a previous committed config          [--list | <n>]
+  ${C_B}backup${C_NO}    Image the boot USB to a file (see UPGRADE.md)  [--to <dir>]
+  ${C_B}restart${C_NO}   Re-mount disks + (re)start services (no reboot)
 
-Add a disk:
-  1) nas disks                     find the disk + its UUID (copy the fstab line)
-  2) edit /etc/fstab, e.g. the system disk (Docker/appdata/backups):
-       UUID=<uuid>  $DATA  ext4  rw,noatime,nofail  0 2
-  3) nas status                    check the config
-  4) nas restart                   mount + start services (no reboot)
-  5) nas commit                    persist it
+${C_HD}Maintain${C_NO}
+  ${C_B}upgrade${C_NO}   Upgrade the OS from a release file/URL      [--check|--yes]
+  ${C_B}report${C_NO}    Diagnostics bundle for bug reports (status+logs, no secrets)
+  ${C_B}setup${C_NO}     Guided setup (hostname, network, password, timezone)
 
-Install extra packages:  apk add <pkg>   then: nas commit
-  (Alpine main+community repos are enabled; downloads are cached on the config
-   partition and reinstall automatically at every boot, even offline.)
-To grant a new user admin rights:  adduser <user> wheel   (then: nas commit)
-Nothing persists across reboot until you run 'nas commit'.
+${C_HD}Power${C_NO}  ${C_B}shutdown${C_NO} / ${C_B}reboot${C_NO} [--yes|--save]    ${C_HD}Info${C_NO}  ${C_B}about${C_NO} / ${C_B}version${C_NO} / ${C_B}help${C_NO}
+${C_D}Per-command help:  nas <command> --help     (or: nas help <command>)${C_NO}
+${C_WA}Nothing persists across reboot until: nas commit${C_NO}
 EOF
+}
+_help_page2() {
+	cat <<EOF
+${C_HD}Important files & paths${C_NO} (edit, then: nas commit)
+  ${C_B}/etc/fstab${C_NO}               WHERE YOU CONFIGURE DISKS (add data disks here)
+  ${C_B}/mnt/*${C_NO}                   Data-disk mountpoints ($DATA = system)
+  ${C_B}/cfg${C_NO}                     Config partition — saved overlays live here
+  ${C_B}/etc/samba/smb.conf${C_NO}      Samba shares    (add users: smbpasswd -a <user>)
+  ${C_B}/etc/exports${C_NO}             NFS exports
+  ${C_B}/etc/snapraid.conf${C_NO}       SnapRAID parity; mergerfs = fstab mount options
+  ${C_B}/etc/docker/daemon.json${C_NO}  Docker   (data-root = $DATA/docker)
+  ${C_B}/etc/nut/${C_NO}                UPS: nut.conf, ups.conf, upsd.conf, upsmon.conf
+  ${C_B}/etc/smartd.conf${C_NO}         SMART alerts;  /etc/chrony/chrony.conf time sync
+  ${C_B}/etc/ssh/sshd_config${C_NO}     SSH;  /root/.ssh/authorized_keys = your keys
+  ${C_B}/var/lib/zerotier-one${C_NO}    ZeroTier;  /var/lib/tailscale  Tailscale state
+  ${C_B}crontab -e${C_NO}               Scheduled jobs (e.g. SnapRAID sync/scrub)
+
+${C_HD}Add a disk${C_NO}  (disk/parity names are a convention; snapraid.conf decides)
+  1) nas disks             find the disk + copy its paste-ready fstab line
+  2) edit /etc/fstab: UUID=<uuid> $DATA ext4 rw,noatime,nofail 0 2
+  3) nas status   check it      4) nas restart   mount + start (no reboot)
+  5) nas commit   persist it
+
+  Install packages: apk add <pkg>   (cached; reinstalls at boot, offline)
+  Grant admin rights: adduser <user> wheel        (then: nas commit)
+${C_D}Aliases:  nas validate = nas status,   nas checkup = nas status --deep${C_NO}
+EOF
+}
+cmd_help() {
+	_help_page1
+	if [ -t 0 ] && [ -t 1 ]; then
+		printf '%s-- More: any key for files & guides (q to quit) --%s' "$C_D" "$C_NO"
+		k=""; read -r -n 1 k 2>/dev/null || k=""
+		# blank the pause line so page 2 starts clean on the same row
+		printf '\r%*s\r' 60 ''
+		case "$k" in q|Q) return 0 ;; esac
+	fi
+	_help_page2
 }
 
 # nas status [--deep]
@@ -138,11 +182,13 @@ cmd_status() {
 		_own_checks=1
 	fi
 
-	echo "MountNAS $RELEASE  —  $(hostname) ($(hostname).local)  —  up $(cut -d. -f1 /proc/uptime)s"
+	printf '%sMountNAS %s  —  %s (%s.local)  —  up %s%s\n' \
+		"$C_B" "$RELEASE" "$(hostname)" "$(hostname)" \
+		"$(_uptime_h "$(cut -d. -f1 /proc/uptime)")" "$C_NO"
 	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')
 	echo "  IP: ${ip:-none}    RAM: $(free -m | awk '/Mem:/{print $3"/"$2" MB"}')"
 
-	echo "== system =="
+	hdr "system"
 	mountpoint -q "$CFG" && ok "config partition mounted ($CFG)" || bad "config partition NOT mounted — saves will be lost"
 	case "$(cat $STATE/data 2>/dev/null)" in
 		ok)           ok "data disk mounted ($DATA)" ;;
@@ -152,13 +198,18 @@ cmd_status() {
 		netfs)        bad "data disk is a network filesystem — unsupported for $DATA, use a local disk" ;;
 		*)            warn "data disk state unknown" ;;
 	esac
+	# quiet success, loud failure: running services share ONE ok line (the
+	# per-service SVC records still feed --json); a stopped one stays its own
+	# warn line so it can't hide in a wall of green
+	svc_up=""
 	for s in docker samba nfs sshd avahi-daemon smartd crond chronyd; do
 		if rc-service "$s" status >/dev/null 2>&1; then
-			ok "$s running"; _rec SVC "$s" true
+			svc_up="$svc_up $s"; _rec SVC "$s" true
 		else
 			warn "$s not running"; _rec SVC "$s" false
 		fi
 	done
+	[ -n "$svc_up" ] && ok "services:$svc_up"
 	lbu_out=$(lbu status 2>/dev/null)
 	n=$(printf '%s' "$lbu_out" | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
@@ -185,20 +236,39 @@ cmd_status() {
 	# JSON mode skips the sensors block: its data has no JSON representation,
 	# and per-disk hdparm probes on every monitoring poll would be pure waste.
 	if [ -z "${NAS_NO_SENSORS:-}" ]; then
-		echo "== sensors =="
+		hdr "sensors"
 		_status_sensors
 	fi
 
-	echo "== storage config (fstab) =="
-	# per data mount
+	hdr "storage config (fstab)"
+	# per data mount — the trio (resolves/nofail/mounted) compacts to ONE ok
+	# line when everything passes; any problem re-expands to the original
+	# per-check lines so the failing one stays loud
 	awk '$1!~/^#/ && $2 ~ /^\/mnt\//{print $1" "$2" "$4}' /etc/fstab | while read -r spec mp opts; do
+		res=ok
 		case "$spec" in UUID=*|LABEL=*)
-			findfs "$spec" >/dev/null 2>&1 && ok "$mp: $spec resolves" || bad "$mp: $spec NOT FOUND" ;;
+			findfs "$spec" >/dev/null 2>&1 || res=bad ;;
 		esac
-		echo "$opts" | grep -q nofail && ok "$mp: nofail present" || warn "$mp: missing nofail (a missing disk could hang boot)"
-		if _blocked "$mp"; then bad "$mp: BLOCKED (disk missing/failed — ro placeholder mounted)"
-		elif mountpoint -q "$mp"; then ok "$mp: mounted"
-		else warn "$mp: declared but not mounted"; fi
+		nf=ok; echo "$opts" | grep -q nofail || nf=warn
+		mt=ok
+		if _blocked "$mp"; then mt=bad
+		elif ! mountpoint -q "$mp"; then mt=warn; fi
+		if [ "$res$nf$mt" = okokok ]; then
+			case "$spec" in
+				UUID=*|LABEL=*) ok "$mp: resolves, nofail, mounted" ;;
+				*)              ok "$mp: nofail, mounted" ;;
+			esac
+			continue
+		fi
+		case "$spec" in UUID=*|LABEL=*)
+			[ "$res" = ok ] && ok "$mp: $spec resolves" || bad "$mp: $spec NOT FOUND" ;;
+		esac
+		[ "$nf" = ok ] && ok "$mp: nofail present" || warn "$mp: missing nofail (a missing disk could hang boot)"
+		case "$mt" in
+			bad)  bad "$mp: BLOCKED (disk missing/failed — ro placeholder mounted)" ;;
+			warn) warn "$mp: declared but not mounted" ;;
+			*)    ok "$mp: mounted" ;;
+		esac
 	done
 	# duplicates
 	dupu=$(awk '$1~/^UUID=/ && $2!~/^#/{print $1}' /etc/fstab | sort | uniq -d)
@@ -266,14 +336,18 @@ cmd_status() {
 	fi
 	# data services must NOT be in a runlevel — mountnas owns them. A user who runs
 	# 'rc-update add docker default' would start Docker before the disk mounts.
+	# One rc-update dump; clean services share one ok line, offenders stay loud.
+	rlv=$(rc-update show 2>/dev/null)
+	rl_ok=""
 	for s in docker samba nfs; do
-		if rc-update show 2>/dev/null | grep -qE "^\s*$s\b"; then
+		if printf '%s\n' "$rlv" | grep -qE "^\s*$s\b"; then
 			bad "$s is in a runlevel — mountnas must own it. Remove: rc-update del $s default"
-		else ok "$s not in a runlevel (managed by mountnas)"; fi
+		else rl_ok="$rl_ok${rl_ok:+/}$s"; fi
 	done
+	[ -n "$rl_ok" ] && ok "$rl_ok not in a runlevel (managed by mountnas)"
 
 	if [ "$deep" = 1 ]; then
-		echo "== deep: hardware / runtime =="
+		hdr "deep: hardware / runtime"
 		df -h / 2>/dev/null | awk 'NR==2{print "  root (RAM) used: "$5}'
 		# fstab syntax/option validation from util-linux — catches classes the
 		# hand-rolled checks above don't (typo'd options, unknown fs types).
@@ -294,13 +368,29 @@ cmd_status() {
 			snapraid status 2>/dev/null | grep -iE 'days|sync|scrub' | sed 's/^/  /'
 		chronyc tracking >/dev/null 2>&1 && ok "time sync active" || warn "time not synced"
 	else
-		printf "  Tip: 'nas status --deep' adds SMART / SnapRAID / time-sync (may wake sleeping disks).\n"
+		hint "Tip: 'nas status --deep' adds SMART/SnapRAID/time-sync (may wake disks)"
 	fi
-	# exit 1 when any FAIL record fired — usable from cron/monitoring as a probe
+	# exit 1 when any FAIL record fired — usable from cron/monitoring as a probe.
+	# Human runs (_own_checks=1) also render a verdict footer from the records.
+	# Verdict wording stays lowercase: CI greps healthy output for "FAIL".
 	if [ -n "$NAS_CHECKS" ]; then
 		src=0
 		grep -q "^FAIL	" "$NAS_CHECKS" 2>/dev/null && src=1
-		if [ "$_own_checks" = 1 ]; then rm -f "$NAS_CHECKS"; NAS_CHECKS=""; fi
+		if [ "$_own_checks" = 1 ]; then
+			vc=$(awk -F'\t' '{c[$1]++} END{printf "%d %d %d", c["OK"]+0, c["WARN"]+0, c["FAIL"]+0}' "$NAS_CHECKS" 2>/dev/null)
+			[ -n "$vc" ] || vc="0 0 0"
+			vok=${vc%% *}; vfa=${vc##* }
+			vwa=${vc#* }; vwa=${vwa% *}
+			printf '%s%s%s\n' "$C_D" "$(_fill 68 '-')" "$C_NO"
+			if [ "$vfa" -gt 0 ]; then
+				printf '  %s%s check(s) failed, %s warning(s) — details above%s\n' "$C_FA" "$vfa" "$vwa" "$C_NO"
+			elif [ "$vwa" -gt 0 ]; then
+				printf '  %s%s checks passed, %s warning(s)%s\n' "$C_WA" "$vok" "$vwa" "$C_NO"
+			else
+				printf '  %sall %s checks passed%s\n' "$C_OK" "$vok" "$C_NO"
+			fi
+			rm -f "$NAS_CHECKS"; NAS_CHECKS=""
+		fi
 	else
 		# Fail CLOSED: without the records file we cannot know whether a FAIL
 		# fired — and a full RAM root (the state most worth alarming on) is
@@ -441,7 +531,8 @@ cmd_disks() {
 	usb=$(_boot_usb_disk)
 	TAB=$(printf '\t')
 
-	echo "Detected disks (* = MountNAS boot USB — do NOT add to fstab):"
+	hdr "Detected disks"
+	hint "* = MountNAS boot USB — do NOT add to fstab"
 	# JSON + jq (not 'eval' of lsblk pairs): a filesystem label is arbitrary user
 	# data — under eval a label like '$(...)' would run as root, and quotes or
 	# spaces would garble parsing. jq emits TSV with '-' placeholders for empty
@@ -467,13 +558,16 @@ cmd_disks() {
 			# Two lines per disk under a dashed rule — everything stays inside
 			# ~76 columns (the old single-line format overflowed serial consoles).
 			if [ "$blank_pending" = 1 ]; then
-				printf '     (blank — no filesystem; create one first, e.g. mkfs.ext4 -L data1 /dev/%s)\n' "$blank_dev"
+				printf '     %s(blank — no filesystem; create one first, e.g. mkfs.ext4 -L data1 /dev/%s)%s\n' "$C_WA" "$blank_dev" "$C_NO"
 			fi
 			tag=""; [ "$f1" = "$usb" ] && tag="  *BOOT USB*"
 			bus=""; [ "$f3" != "-" ] && bus="$f3 "
-			hdr="$f1  $f2  $bus$f4  temp:$(_disk_temp "$f1")$tag"
-			pad=$((70 - ${#hdr})); [ "$pad" -gt 0 ] || pad=4
-			printf -- '\n---- %s %s\n' "$hdr" "$(printf '%*s' "$pad" '' | tr ' ' '-')"
+			dtp=$(_disk_temp "$f1")
+			# width math on the UNCOLORED text; escapes would inflate ${#}
+			drow="$f1  $f2  $bus$f4  temp:$dtp$tag"
+			ctag="$tag"; [ -n "$tag" ] && ctag="  $C_FA*BOOT USB*$C_NO"
+			pad=$((64 - ${#drow})); [ "$pad" -gt 0 ] || pad=2
+			printf -- '\n-- %s %s\n' "$C_B$f1$C_NO  $f2  $bus$f4  temp:$dtp$ctag" "$(_fill "$pad" '-')"
 			id=""
 			[ "$f5" != "-" ] && id="$f5 "
 			[ "$f6" != "-" ] && id="$id$f6"
@@ -488,13 +582,15 @@ cmd_disks() {
 			# Two lines per partition: identity/mount first, the 36-char UUID on
 			# its own line beneath (the UUID is what forced 120+ columns before).
 			blank_pending=0
+			# minfo/tag are trailing %s fields (no width specs), so the color
+			# escapes cannot skew the column alignment
 			tag=""
-			[ "$f4" = BOOT ] && tag="  * (BOOT)"
-			[ "$f4" = MNASCFG ] && tag="  * (cfg)"
+			[ "$f4" = BOOT ] && tag="  $C_FA* (BOOT)$C_NO"
+			[ "$f4" = MNASCFG ] && tag="  $C_FA* (cfg)$C_NO"
 			lbl=""; [ "$f4" != "-" ] && lbl="  $f4"
-			if [ "$f6" = "-" ]; then minfo="(not mounted)"
+			if [ "$f6" = "-" ]; then minfo="$C_D(not mounted)$C_NO"
 			else
-				minfo="$f6"
+				minfo="$C_OK$f6$C_NO"
 				[ "$f7" != "-" ] && minfo="$minfo  ($f7 free, $f8 used)"
 			fi
 			printf '     %-6s %6s  %-8s%s  -> %s%s\n' "$f1" "$f2" "$f3" "$lbl" "$minfo" "$tag"
@@ -503,15 +599,13 @@ cmd_disks() {
 		esac
 	done
 	if [ "$blank_pending" = 1 ]; then
-		printf '     (blank — no filesystem; create one first, e.g. mkfs.ext4 -L data1 /dev/%s)\n' "$blank_dev"
+		printf '     %s(blank — no filesystem; create one first, e.g. mkfs.ext4 -L data1 /dev/%s)%s\n' "$C_WA" "$blank_dev" "$C_NO"
 	fi; }
 
-	echo
-	echo "Configured in /etc/fstab:"
+	hdr "Configured in /etc/fstab"
 	awk '$1!~/^#/ && $2 ~ /^(\/cfg|\/mnt\/)/ {printf "  %-14s %s\n",$2,$1}' /etc/fstab
 
-	echo
-	echo "Paste-ready fstab line(s) for unconfigured data partitions:"
+	hdr "Paste-ready fstab line(s) for unconfigured data partitions"
 	# Build in a subshell-captured var: the while loop below runs in a pipe subshell,
 	# so a flag set inside it would not survive — check the captured output instead.
 	# Suggested mountpoints: /mnt/nasdata first (only if not already in fstab),
@@ -546,8 +640,8 @@ cmd_disks() {
 	done; })
 	[ -n "$lines" ] && printf '%s\n' "$lines" \
 		|| echo "  (none — every filesystem is already in fstab, or blank/unformatted)"
-	echo "  Tip: the system disk uses /mnt/nasdata; extra data/parity disks use any path"
-	echo "       you like (the /mnt/disk1, /mnt/parity1 names are just a convention)."
+	hint "Tip: the system disk uses /mnt/nasdata; extra data/parity disks use any path"
+	hint "     you like (the /mnt/disk1, /mnt/parity1 names are just a convention)."
 }
 
 # nas disks --json — the same inventory, machine-readable. Sizes are BYTES
@@ -631,14 +725,14 @@ cmd_logs() {
 			rc-service syslog restart >/dev/null 2>&1 || warn "syslog restart failed"
 			ok "persistent logging ON -> $DATA/logs/messages (1 MB x 10 files)"
 			warn "periodic writes keep the data disk awake — mind the spin-down tradeoff"
-			echo "Persist the setting: nas commit"
+			hint "Persist the setting: nas commit"
 			;;
 		off)
 			_syslog_set_persist "" \
 				|| { bad "could not update /etc/conf.d/syslog"; return 1; }
 			rc-service syslog restart >/dev/null 2>&1 || warn "syslog restart failed"
 			ok "persistent logging OFF (logs live in RAM only again)"
-			echo "Persist the setting: nas commit"
+			hint "Persist the setting: nas commit"
 			;;
 		''|status)
 			t=$(_syslog_target)
@@ -655,7 +749,7 @@ cmd_logs() {
 			;;
 		*)
 			# a typo (onn, Off, --help) must not masquerade as a status query
-			bad "usage: nas logs --persist on|off|status"; return 1
+			usage "nas logs --persist on|off|status"; return 1
 			;;
 		esac
 		;;
@@ -667,13 +761,14 @@ cmd_logs() {
 		nn=100
 		if [ "${1:-}" = "-n" ]; then
 			nn="${2:-100}"
-			case "$nn" in ''|*[!0-9]*) bad "usage: nas logs -n <lines>"; return 1 ;; esac
+			case "$nn" in ''|*[!0-9]*) usage "nas logs -n <lines>"; return 1 ;; esac
 		fi
 		t=$(_syslog_target); : "${t:=/var/log/messages}"
-		echo "== $t (last $nn lines; follow: nas logs -f) =="
+		hdr "$t (last $nn lines)"
+		hint "follow: nas logs -f"
 		tail -n "$nn" "$t" 2>/dev/null || warn "no log file at $t yet"
 		;;
-	*) bad "usage: nas logs [-n N | -f | --persist on|off|status]"; return 1 ;;
+	*) usage "nas logs [-n N | -f | --persist on|off|status]"; return 1 ;;
 	esac
 }
 
@@ -707,9 +802,9 @@ cmd_report() {
 	if tar -czf "$rpt_f" -C "$rpt_d" .; then
 		rm -rf "$rpt_d"
 		ok "diagnostics bundle written: $rpt_f"
-		echo "  Attach it to your bug report: https://github.com/$REPO/issues"
-		echo "  No secrets are included (no shadow/ssh keys/samba passwords), but the"
-		echo "  system log is — review the contents before sharing."
+		hint "Attach it to your bug report: https://github.com/$REPO/issues"
+		hint "No secrets are included (no shadow/ssh keys/samba passwords), but the"
+		hint "system log is — review the contents before sharing."
 	else
 		rm -rf "$rpt_d"; bad "could not write $rpt_f"; return 1
 	fi
@@ -732,7 +827,7 @@ cmd_changes() {
 		if [ -f "$ovl" ]; then tar -xzf "$ovl" -C "$d" 2>/dev/null
 		else warn "no committed overlay yet ($ovl) — every tracked file shows as new"; fi
 		echo
-		echo "--- committed (last nas commit)    +++ live (in RAM now)"
+		hint "--- committed (last nas commit)    +++ live (in RAM now)"
 		printf '%s\n' "$out" | while read -r st path; do
 			[ -n "$path" ] || continue
 			old="$d/$path"; new="/$path"
@@ -741,20 +836,19 @@ cmd_changes() {
 				if [ -e "$old" ]; then
 					om=$(stat -c '%a %U:%G' "$old" 2>/dev/null)
 					nm=$(stat -c '%a %U:%G' "$new" 2>/dev/null)
-					[ "$om" != "$nm" ] && { echo; echo "== $st $path/ =="; echo "mode/owner: $om -> $nm"; }
+					[ "$om" != "$nm" ] && { sub "$st $path/"; echo "mode/owner: $om -> $nm"; }
 				else
-					echo; echo "== $st $path/ == (new directory)"
+					sub "$st $path/ (new directory)"
 				fi
 				continue
 			fi
 			# deleted directory: diff cannot express it — list what disappears
 			if [ ! -e "$new" ] && [ -d "$old" ]; then
-				echo; echo "== $st $path/ == (directory deleted; contents were:)"
+				sub "$st $path/ (directory deleted; contents were:)"
 				( cd "$d" && find "$path" 2>/dev/null | sed 's/^/  /' )
 				continue
 			fi
-			echo
-			echo "== $st $path =="
+			sub "$st $path"
 			# a chmod/chown is a real committed change a content diff cannot show
 			om=""; nm=""
 			if [ -e "$old" ] && [ -e "$new" ]; then
@@ -767,6 +861,16 @@ cmd_changes() {
 			if [ "$o" != /dev/null ] && [ "$n" != /dev/null ] && cmp -s "$o" "$n"; then
 				# identical bytes: say so rather than leaving a bare header
 				[ "$om" = "$nm" ] && echo "  (no content or mode change visible — lbu may track other metadata)"
+			elif [ -n "$C_OK" ]; then
+				# tty: tint the diff (file headers/hunks cyan, adds green,
+				# removals red). Raw ESC bytes ride through awk -v untouched
+				# (no backslashes, so no escape processing). Piped output takes
+				# the plain branch and stays patch-clean.
+				diff -u "$o" "$n" 2>/dev/null | awk -v G="$C_OK" -v R="$C_FA" -v H="$C_HD" -v N="$C_NO" '
+					/^(\+\+\+|---|@@)/ {print H $0 N; next}
+					/^\+/ {print G $0 N; next}
+					/^-/  {print R $0 N; next}
+					{print}'
 			else
 				diff -u "$o" "$n" 2>/dev/null || true
 			fi
@@ -774,7 +878,7 @@ cmd_changes() {
 		rm -rf "$d"
 		echo
 	fi
-	echo "Save them with: nas commit    (review first: nas changes --diff)"
+	hint "Save them with: nas commit    (review first: nas changes --diff)"
 }
 
 # Note for a snapshot file: looked up by the file's mtime stamp — the exact
@@ -790,11 +894,11 @@ cmd_commit() {
 	note=""
 	if [ "${1:-}" = "-m" ]; then
 		note="${2:-}"
-		[ -n "$note" ] || { bad "usage: nas commit [-m \"what you changed\"]"; return 1; }
+		[ -n "$note" ] || { usage "nas commit [-m \"what you changed\"]"; return 1; }
 		# notes are one line in a tab-separated file — flatten hostile chars
 		note=$(printf '%s' "$note" | tr '\t\n' '  ')
 	elif [ -n "${1:-}" ]; then
-		bad "usage: nas commit [-m \"what you changed\"]"; return 1
+		usage "nas commit [-m \"what you changed\"]"; return 1
 	fi
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
 	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
@@ -833,13 +937,14 @@ cmd_rollback() {
 	fi
 	list=$(_ovl_backups)
 	if [ -z "${1:-}" ] || [ "$1" = "--list" ]; then
-		echo "Saved-config snapshots on $CFG (newest first; lbu keeps the last few):"
+		hdr "Saved-config snapshots on $CFG"
+		hint "newest first; lbu keeps the last few"
 		if [ -f "$act" ]; then
 			an=$(_snap_note "$act")
 			printf '       %-20s %8s  %s%s\n' \
 				"$(date -r "$act" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" \
 				"$(du -k "$act" 2>/dev/null | awk '{print $1"K"}')" \
-				"ACTIVE (applies at next boot)" "${an:+  — $an}"
+				"${C_B}ACTIVE (applies at next boot)${C_NO}" "${an:+  — $an}"
 		fi
 		if [ -z "$list" ]; then
 			echo "  (no snapshots yet — they appear from your second 'nas commit' on)"
@@ -854,11 +959,11 @@ cmd_rollback() {
 				i=$((i+1))
 			done
 		fi
-		echo "Restore one with: nas rollback <number>   (applies at the NEXT boot)"
-		echo "Label your commits so this list stays readable:  nas commit -m \"note\""
+		hint "Restore one with: nas rollback <number>   (applies at the NEXT boot)"
+		hint "Label your commits so this list stays readable:  nas commit -m \"note\""
 		return 0
 	fi
-	case "$1" in *[!0-9]*) bad "usage: nas rollback [--list | <number>]"; return 1 ;; esac
+	case "$1" in *[!0-9]*) usage "nas rollback [--list | <number>]"; return 1 ;; esac
 	sel=$(printf '%s\n' "$list" | awk -v n="$1" 'NR==n{print; exit}')
 	[ -n "$sel" ] || { bad "no snapshot number $1 — see: nas rollback --list"; return 1; }
 	[ -f "$act" ] || { bad "no active overlay at $act (hostname changed since the last commit?)"; return 1; }
@@ -884,7 +989,7 @@ cmd_rollback() {
 	if cp "$sel" "$act.new" && mv "$act.new" "$act"; then
 		sync
 		ok "restored $(basename "$sel") as the active saved config"
-		echo "Reboot to apply it:  nas reboot"
+		hint "Reboot to apply it:  nas reboot"
 	else
 		rm -f "$act.new"
 		bad "restore failed — the active overlay is unchanged"; return 1
@@ -962,7 +1067,7 @@ _power() { act="$1"; word="$2"; shift 2
 		case "$a" in
 			--yes)  mode=yes ;;    # scripted: proceed; unsaved changes are lost
 			--save) mode=save ;;   # scripted: commit first, then proceed
-			*) bad "usage: nas $word [--yes|--save]"; return 1 ;;
+			*) usage "nas $word [--yes|--save]"; return 1 ;;
 		esac
 	done
 	case "$mode" in
@@ -989,10 +1094,12 @@ cmd_shutdown() { _power "/sbin/poweroff" "shutdown" "$@"; }
 cmd_reboot()   { _power "/sbin/reboot"   "reboot"   "$@"; }
 
 cmd_setup() {
-	echo "=== MountNAS first-run setup ==="
+	hdr "MountNAS first-run setup"
 
 	cur=$(hostname 2>/dev/null || echo mountnas)
-	printf '[1/5] Hostname [%s]: ' "$cur"; read -r hn
+	# bold wraps ONLY the [n/5] markers: the CI wizard drives a real tty, and
+	# its expect patterns (Hostname [ / Timezone / HCP) must stay contiguous
+	printf '%s[1/5]%s Hostname [%s]: ' "$C_B" "$C_NO" "$cur"; read -r hn
 	[ -n "$hn" ] || hn="$cur"
 	case "$hn" in
 		*[!A-Za-z0-9-]*|-*|*-) warn "invalid hostname '$hn' (letters/digits/hyphens, no leading or trailing hyphen) — kept $cur"; hn="$cur" ;;
@@ -1003,13 +1110,13 @@ cmd_setup() {
 	rc-service --ifexists avahi-daemon restart >/dev/null 2>&1 || true
 	/usr/libexec/mountnas/gen-issue 2>/dev/null || true
 
-	echo "[2/5] Root password"
+	printf '%s[2/5]%s Root password\n' "$C_B" "$C_NO"
 	pw_ok=0; passwd && pw_ok=1
 	# Set the timezone directly from the baked-in tzdata. We deliberately do NOT use
 	# setup-timezone: it runs 'apk add tzdata', which fails offline (this appliance
 	# has no internet repo and the on-media repo is not always mounted). tzdata ships
 	# in the image, so /usr/share/zoneinfo/<tz> already exists.
-	printf '[3/5] Timezone (e.g. America/New_York), blank to skip: '; read -r tz
+	printf '%s[3/5]%s Timezone (e.g. America/New_York), blank to skip: ' "$C_B" "$C_NO"; read -r tz
 	if [ -n "$tz" ]; then
 		if [ -f "/usr/share/zoneinfo/$tz" ]; then
 			cp "/usr/share/zoneinfo/$tz" /etc/localtime && printf '%s\n' "$tz" > /etc/timezone
@@ -1021,7 +1128,7 @@ cmd_setup() {
 	# Network: DHCP (default) leaves the mountnas-net first-boot handler to configure
 	# the wired NIC. Static rewrites /etc/network/interfaces (lo + a static stanza),
 	# which makes mountnas-net stand down (it only acts when no non-lo iface exists).
-	printf '[4/5] Network: [D]HCP (default) / [S]tatic: '; read -r net
+	printf '%s[4/5]%s Network: [D]HCP (default) / [S]tatic: ' "$C_B" "$C_NO"; read -r net
 	case "$net" in
 		S|s)
 			# shared wired-NIC picker (same selection mountnas-net uses at boot)
@@ -1075,10 +1182,11 @@ cmd_setup() {
 	mkdir -p /etc/mountnas
 	date '+%Y-%m-%d %H:%M' > /etc/mountnas/setup-done
 
-	echo "[5/5] Saving..."; cmd_commit
+	printf '%s[5/5]%s Saving...\n' "$C_B" "$C_NO"; cmd_commit
+	# "Setup complete" stays a contiguous literal (CI expects it)
+	hdr "Setup complete"
 	cat <<EOF
-
-Setup complete. NEXT: add your data disk(s).
+NEXT: add your data disk(s).
   1) nas disks                              (find your disk + its UUID)
   2) (blank disk?) mkfs.ext4 -L nasdata /dev/sdX
   3) edit /etc/fstab, add the system disk:
@@ -1180,7 +1288,7 @@ _free_modloop() {
 # nas upgrade --check — one GitHub API call: is a different release published?
 # No auto-update, no scheduling; prints the exact command to run when one is.
 _upgrade_check() {
-	echo "Checking the latest release of $REPO ..."
+	printf '%sChecking the latest release of %s ...%s\n' "$C_B" "$REPO" "$C_NO"
 	api="https://api.github.com/repos/$REPO/releases/latest"
 	# capture the HTTP status: a 404 (private repo, or no releases) used to be
 	# reported as "no network" even while the box was fully online (beta-1
@@ -1224,11 +1332,11 @@ cmd_upgrade() {
 		case "$a" in
 			--check) _upgrade_check; return $? ;;
 			--yes)   assume_yes=1 ;;   # scripted use: skip the YES gate (warning still prints)
-			-*) echo "usage: nas upgrade [--yes] <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1 ;;
+			-*) usage "nas upgrade [--yes] <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1 ;;
 			*) img="$a" ;;
 		esac
 	done
-	[ -n "$img" ] || { echo "usage: nas upgrade [--yes] <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1; }
+	[ -n "$img" ] || { usage "nas upgrade [--yes] <mountnas-*.img.gz | https://.../mountnas-*.img.gz | --check>   (see UPGRADE.md)"; return 1; }
 	case "$img" in
 		http://*|https://*) url="$img" ;;
 		*) [ -f "$img" ] || { bad "not found: $img"; return 1; } ;;
@@ -1237,7 +1345,7 @@ cmd_upgrade() {
 	# ---- warning + backup gate ----
 	cat <<EOF
 
-  ========================= UPGRADE WARNING =========================
+${C_FA}  ========================= UPGRADE WARNING =========================${C_NO}
   This rewrites the OS on the boot USB. If it fails, this box may not
   boot again.
     * FIRST run:  nas backup   — it images this USB to a file. COPY that
@@ -1246,7 +1354,7 @@ cmd_upgrade() {
       and booting from it.
     * NEVER boot with two MountNAS USB drives attached at once
       (duplicate disk labels will collide).
-  ===================================================================
+${C_FA}  ===================================================================${C_NO}
 EOF
 	lb=$(cat "$STATE/last-backup" 2>/dev/null || true)
 	[ -n "$lb" ] && echo "  Last 'nas backup' this session: $lb" || echo "  No 'nas backup' recorded this session."
@@ -1309,7 +1417,7 @@ EOF
 	# ---- URL: download into temp space, verify against SHA256SUMS if published ----
 	if [ -n "$url" ]; then
 		dlf="$tmp/.nas-upgrade.$$.${url##*/}"
-		echo "Downloading $url ..."
+		printf '%sDownloading %s ...%s\n' "$C_B" "$url" "$C_NO"
 		if command -v curl >/dev/null 2>&1; then curl -fL -o "$dlf" "$url"
 		else wget -O "$dlf" "$url"; fi \
 			|| { bad "download failed"; rm -f "$dlf"; return 1; }
@@ -1335,7 +1443,7 @@ EOF
 
 	# ---- unpack + loop-mount the image's BOOT partition (p1) ----
 	raw="$tmp/.nas-upgrade.$$.img"; m=$(mktemp -d)
-	echo "Unpacking image into $tmp ..."
+	printf '%sUnpacking image into %s ...%s\n' "$C_B" "$tmp" "$C_NO"
 	if [ "$img_gz" = 1 ]; then
 		# pv shows unpack progress when available; gzip -dc itself still
 		# detects a truncated/corrupt stream, so no extra status capture.
@@ -1357,12 +1465,12 @@ EOF
 	# _free_modloop copies ONLY the kernel modules to RAM (not the firmware
 	# tree) and does its own headroom pre-check — fits comfortably on 4 GB
 	# boxes, unlike Alpine's copy-modloop (see the function comment).
-	echo "Freeing the live modloop (copying kernel modules to RAM) ..."
+	printf '%sFreeing the live modloop (copying kernel modules to RAM) ...%s\n' "$C_B" "$C_NO"
 	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks
 	_free_modloop || { bad "could not free the modloop — aborting (nothing on the USB was changed yet)"; _cleanup; return 1; }
 
 	# ---- overwrite boot files in place, crash-safe (stage all, then rename) ----
-	echo "Writing the new system to the USB ..."
+	printf '%sWriting the new system to the USB ...%s\n' "$C_B" "$C_NO"
 	cp "$BOOTMNT/world.base" "$STATE/old.world.base" 2>/dev/null || true
 	# Phase 1 — stage: every payload is copied to a .new name first. All the
 	# slow USB writes happen here while the old system is still complete and
@@ -1441,13 +1549,13 @@ EOF
 	"$WBCFG" "$BOOTMNT"; sync
 	cmd_commit
 
-	cat <<EOF
-
-  [ OK ] Upgrade written successfully. Config and data are untouched.
-         Reboot to run the new version:   nas reboot
-         If the new version misbehaves, restore your 'nas backup' image
-         to another USB and boot from it.
-EOF
+	echo
+	# real ok() (the old heredoc faked an uncolored "[ OK ]"); the literal
+	# "Upgrade written successfully" is a CI expect string — keep it contiguous
+	ok "Upgrade written successfully. Config and data are untouched."
+	hint "Reboot to run the new version:   nas reboot"
+	hint "If the new version misbehaves, restore your 'nas backup' image"
+	hint "to another USB and boot from it."
 }
 
 # Per-command help: 'nas <cmd> --help' or 'nas help <cmd>'. Focused usage +
@@ -1581,7 +1689,7 @@ case "${1:-help}" in
 			case "$a" in
 				--json) js=1 ;;
 				--deep) dp=1 ;;
-				*) echo "usage: nas $sc [--deep] [--json]"; exit 1 ;;
+				*) usage "nas $sc [--deep] [--json]"; exit 1 ;;
 			esac
 		done
 		if [ "$js" = 1 ]; then

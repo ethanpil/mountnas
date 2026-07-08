@@ -10,6 +10,14 @@
 ### Added
 - **Disk-loss email alerts**: put an address in `/etc/mountnas/alert-email` (plus a configured `/etc/msmtprc`) and the 15-minute watcher emails once on the transition when the data disk disconnects, its mount dies, or its filesystem goes read-only — including the recovery command. Complements smartd's `-m` (SMART = disk warning it will fail; this = disk already gone).
 
+### Changed
+- **`nas` screens unified** (presentation only — every command, flag, and check is unchanged): one header/rule/hint grammar across all screens (bold-cyan section headers, dim tips, `usage:` errors on stderr), colors still tty-gated (`NO_COLOR` honored, `TERM=dumb` now excluded too), everything ASCII and ≤76 columns for serial consoles.
+- **`nas status` reads at a glance**: groups of passing checks compact to single `[ OK ]` lines (services, per-mount fstab trio, runlevel ownership) while any warning/failure keeps its own loud line; a verdict footer ("all N checks passed" / "N failed — details above") closes the screen and uptime is humanized (`3d 4h`). `--json` note: `fail_lines`/`warn_lines`/`healthy`/`services[]` are byte-stable; only the informational `checks.ok` count shrinks with the merged lines.
+- **`nas help` is two pages** (commands grouped by task, then files & recipes), with a `more`-style any-key pause on interactive terminals — pipes and scripts still get the whole text flat. A subcommand-clarity line sits under the title ("run as: nas \<command\>"), command names are bold, group headers colored, and the validate/checkup aliases are spelled out in full on page 2.
+- **`nas changes --diff` colorizes diffs** on the terminal (piped output stays patch-clean); the upgrade warning box renders red; wizard steps and upgrade stages are bolded.
+- **`nas disks` gets semantic color**: mounted mountpoints green, "(not mounted)" dim, blank-disk guidance yellow, boot-stick partition tags red.
+- **The login welcome banner adopts the `nas` palette**: version bold, disk-state lines red/yellow by severity, unsaved-changes yellow, the help pointer dim — same tty/`NO_COLOR`/`TERM=dumb` gating.
+
 ### Known / parked
 - Serial-console (`qm terminal`) full-screen layout remains wrong after the ash-compat fix; parked per maintainer decision — use SSH or noVNC for full-screen tools.
 
