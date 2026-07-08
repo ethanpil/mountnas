@@ -377,13 +377,14 @@ cmd_status() {
 	# Human runs (_own_checks=1) also render a verdict footer from the records.
 	# Verdict wording stays lowercase: CI greps healthy output for "FAIL".
 	if [ -n "$NAS_CHECKS" ]; then
-		src=0
-		grep -q "^FAIL	" "$NAS_CHECKS" 2>/dev/null && src=1
 		if [ "$_own_checks" = 1 ]; then
+			# one read of the records: awk counts drive both the footer and the
+			# exit code (vfa>0 is exactly what "^FAIL<TAB>" would have matched)
 			vc=$(awk -F'\t' '{c[$1]++} END{printf "%d %d %d", c["OK"]+0, c["WARN"]+0, c["FAIL"]+0}' "$NAS_CHECKS" 2>/dev/null)
 			[ -n "$vc" ] || vc="0 0 0"
 			vok=${vc%% *}; vfa=${vc##* }
 			vwa=${vc#* }; vwa=${vwa% *}
+			src=0; [ "$vfa" -gt 0 ] && src=1
 			printf '%s%s%s\n' "$C_D" "$(_fill 68 '-')" "$C_NO"
 			if [ "$vfa" -gt 0 ]; then
 				printf '  %s%s check(s) failed, %s warning(s) — details above%s\n' "$C_FA" "$vfa" "$vwa" "$C_NO"
@@ -393,6 +394,11 @@ cmd_status() {
 				printf '  %sall %s checks passed%s\n' "$C_OK" "$vok" "$C_NO"
 			fi
 			rm -f "$NAS_CHECKS"; NAS_CHECKS=""
+		else
+			# records supplied by cmd_status_json/cmd_report: no footer, just the
+			# probe exit code
+			src=0
+			grep -q "^FAIL	" "$NAS_CHECKS" 2>/dev/null && src=1
 		fi
 	else
 		# Fail CLOSED: without the records file we cannot know whether a FAIL
