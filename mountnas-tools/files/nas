@@ -150,7 +150,7 @@ ${C_HD}Add a disk${C_NO}  (disk/parity names are a convention; snapraid.conf dec
   3) nas status   check it      4) nas restart   mount + start (no reboot)
   5) nas commit   persist it
 
-  Install packages: apk add <pkg>   (cached; reinstalls at boot, offline)
+  Install packages: apk add <pkg>   then: nas commit   (cached, offline)
   Grant admin rights: adduser <user> wheel        (then: nas commit)
 ${C_D}Aliases:  nas validate = nas status,   nas checkup = nas status --deep${C_NO}
 EOF
