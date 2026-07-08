@@ -56,6 +56,7 @@ sub() {
 	printf -- '\n-- %s%s%s %s\n' "$C_B" "$1" "$C_NO" "$(_fill "$p" '-')"
 }
 hint() { printf '  %s%s%s\n' "$C_D" "$*" "$C_NO"; }
+step() { printf '%s%s%s\n' "$C_B" "$*" "$C_NO"; }
 usage() { printf 'usage: %s\n' "$*" >&2; return 1; }
 # seconds -> "3d 4h" / "4h 12m" / "12m" / "45s" (status header)
 _uptime_h() {
@@ -786,7 +787,7 @@ cmd_report() {
 	# directory literally called "sdd" (beta-1 test D).
 	rpt_f="/tmp/mountnas-report-$(hostname)-$(date +%Y%m%d-%H%M%S).tar.gz"
 	rpt_d=$(mktemp -d) || { bad "mktemp failed"; return 1; }
-	echo "Collecting diagnostics (runs 'nas status --deep' — may wake sleeping disks) ..."
+	step "Collecting diagnostics (runs 'nas status --deep' — may wake sleeping disks) ..."
 	# Colors are decided once at startup from the script's own stdout, so a
 	# report run from a terminal would embed ANSI escapes in the bundle. Blank
 	# the palette inside a subshell so the captured file is plain text; the
@@ -910,7 +911,7 @@ cmd_commit() {
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
 	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
 		&& { bad "a data path is in the lbu include list — refusing (would tar your data disk)"; return 1; }
-	echo "Saving configuration..."
+	step "Saving configuration..."
 	lbu commit -v || { bad "lbu commit failed"; return 1; }
 	if [ -n "$note" ]; then
 		nts=$(date -u -r "$CFG/$(hostname).apkovl.tar.gz" +%Y%m%d%H%M%S 2>/dev/null)
@@ -1295,7 +1296,7 @@ _free_modloop() {
 # nas upgrade --check — one GitHub API call: is a different release published?
 # No auto-update, no scheduling; prints the exact command to run when one is.
 _upgrade_check() {
-	printf '%sChecking the latest release of %s ...%s\n' "$C_B" "$REPO" "$C_NO"
+	step "Checking the latest release of $REPO ..."
 	api="https://api.github.com/repos/$REPO/releases/latest"
 	# capture the HTTP status: a 404 (private repo, or no releases) used to be
 	# reported as "no network" even while the box was fully online (beta-1
@@ -1323,7 +1324,7 @@ _upgrade_check() {
 	fi
 	warn "a different release is published: $tag (running: $RELEASE)"
 	rel_url=$(printf '%s\n' "$json" | jq -r '.assets[]?.browser_download_url // empty' 2>/dev/null | grep -m1 '\.img\.gz$')
-	echo "  Upgrade with (see UPGRADE.md — run 'nas backup' FIRST):"
+	hint "Upgrade with (see UPGRADE.md — run 'nas backup' FIRST):"
 	if [ -n "$rel_url" ]; then echo "    nas upgrade $rel_url"
 	else echo "    nas upgrade <mountnas-$tag.img.gz>   (release has no .img.gz asset?)"; fi
 }
@@ -1424,7 +1425,7 @@ EOF
 	# ---- URL: download into temp space, verify against SHA256SUMS if published ----
 	if [ -n "$url" ]; then
 		dlf="$tmp/.nas-upgrade.$$.${url##*/}"
-		printf '%sDownloading %s ...%s\n' "$C_B" "$url" "$C_NO"
+		step "Downloading $url ..."
 		if command -v curl >/dev/null 2>&1; then curl -fL -o "$dlf" "$url"
 		else wget -O "$dlf" "$url"; fi \
 			|| { bad "download failed"; rm -f "$dlf"; return 1; }
@@ -1450,7 +1451,7 @@ EOF
 
 	# ---- unpack + loop-mount the image's BOOT partition (p1) ----
 	raw="$tmp/.nas-upgrade.$$.img"; m=$(mktemp -d)
-	printf '%sUnpacking image into %s ...%s\n' "$C_B" "$tmp" "$C_NO"
+	step "Unpacking image into $tmp ..."
 	if [ "$img_gz" = 1 ]; then
 		# pv shows unpack progress when available; gzip -dc itself still
 		# detects a truncated/corrupt stream, so no extra status capture.
@@ -1472,12 +1473,12 @@ EOF
 	# _free_modloop copies ONLY the kernel modules to RAM (not the firmware
 	# tree) and does its own headroom pre-check — fits comfortably on 4 GB
 	# boxes, unlike Alpine's copy-modloop (see the function comment).
-	printf '%sFreeing the live modloop (copying kernel modules to RAM) ...%s\n' "$C_B" "$C_NO"
+	step "Freeing the live modloop (copying kernel modules to RAM) ..."
 	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks
 	_free_modloop || { bad "could not free the modloop — aborting (nothing on the USB was changed yet)"; _cleanup; return 1; }
 
 	# ---- overwrite boot files in place, crash-safe (stage all, then rename) ----
-	printf '%sWriting the new system to the USB ...%s\n' "$C_B" "$C_NO"
+	step "Writing the new system to the USB ..."
 	cp "$BOOTMNT/world.base" "$STATE/old.world.base" 2>/dev/null || true
 	# Phase 1 — stage: every payload is copied to a .new name first. All the
 	# slow USB writes happen here while the old system is still complete and
