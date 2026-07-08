@@ -159,7 +159,9 @@ cmd_help() {
 	_help_page1
 	if [ -t 0 ] && [ -t 1 ]; then
 		printf '%s-- More: any key for files & guides (q to quit) --%s' "$C_D" "$C_NO"
-		k=""; read -r -n 1 k 2>/dev/null || k=""
+		# -s so the keypress is not echoed (an echoed newline would move the
+		# cursor off the pause line before the erase below could blank it)
+		k=""; read -rs -n 1 k 2>/dev/null || k=""
 		# blank the pause line so page 2 starts clean on the same row
 		printf '\r%*s\r' 60 ''
 		case "$k" in q|Q) return 0 ;; esac
@@ -1718,12 +1720,15 @@ case "${1:-help}" in
 	help|--help|-h) shift 2>/dev/null || true
 		if [ -n "${1:-}" ]; then
 			# a typo'd topic must not look like success (matches the
-			# unknown-command behavior of the dispatcher below)
-			_cmd_help_for "$1" || { echo "no help for '$1' — commands:"; echo; cmd_help; exit 1; }
+			# unknown-command behavior of the dispatcher below). Print the
+			# command list only (_help_page1) — no pager pause on an error
+			# path, which would otherwise block an interactive typo or hang
+			# pty automation waiting for a keypress.
+			_cmd_help_for "$1" || { echo "no help for '$1' — commands:"; echo; _help_page1; exit 1; }
 		else
 			cmd_help
 		fi ;;
-	*) echo "unknown command: $1"; echo; cmd_help; exit 1 ;;
+	*) echo "unknown command: $1"; echo; _help_page1; exit 1 ;;
 esac
 rc=$?
 
