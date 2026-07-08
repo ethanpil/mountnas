@@ -41,3 +41,31 @@ awk -v q="'" '
 	END { exit bad+0 }
 ' .github/workflows/build.yml || { echo "FAIL: apostrophe inside the su -c block truncates it (see CONTEXT.md §6)"; exit 1; }
 echo "build.yml su -c block: no stray apostrophes"
+
+# Guard the command-set drift shellcheck cannot see: the nas subcommands are
+# enumerated in the dispatcher AND both shell completions, and 'changed' once
+# silently drifted out of the completions. Extract the set from the main
+# dispatcher case and require both completion lists to match it exactly.
+cmds=$(awk 'index($0,"case \"${1:-help}\" in"){f=1;next} f&&/^esac$/{f=0} f' \
+	mountnas-tools/files/nas \
+	| grep -oE '^	[a-z][a-z|-]*\)' | tr -d '\t)' | tr '|' '\n' \
+	| grep -vxE -- '--help|-h' | sort -u)
+[ -n "$cmds" ] || { echo "FAIL: could not extract the command set from files/nas"; exit 1; }
+bashcmds=$(sed -n '/nas)/s/.*compgen -W "\([^"]*\)".*/\1/p' \
+	mountnas-tools/files/bash-nas-completion.sh | head -n1 | tr ' ' '\n' | grep . | sort -u)
+zshcmds=$(sed -n 's/^cmds=(\(.*\))$/\1/p' \
+	mountnas-tools/files/zsh-nas-completion | tr ' ' '\n' | grep . | sort -u)
+cd_="$(mktemp)"; cb_="$(mktemp)"; cz_="$(mktemp)"
+printf '%s\n' "$cmds" > "$cd_"; printf '%s\n' "$bashcmds" > "$cb_"; printf '%s\n' "$zshcmds" > "$cz_"
+sync_ok=1
+if ! diff "$cd_" "$cb_" >/dev/null; then
+	echo "FAIL: bash completion out of sync with the nas dispatcher (< dispatcher / > completion):"
+	diff "$cd_" "$cb_" || true; sync_ok=0
+fi
+if ! diff "$cd_" "$cz_" >/dev/null; then
+	echo "FAIL: zsh completion out of sync with the nas dispatcher (< dispatcher / > completion):"
+	diff "$cd_" "$cz_" || true; sync_ok=0
+fi
+rm -f "$cd_" "$cb_" "$cz_"
+[ "$sync_ok" = 1 ] || { echo "sync files/bash-nas-completion.sh and files/zsh-nas-completion"; exit 1; }
+echo "nas completions: in sync with the dispatcher ($(printf '%s\n' "$cmds" | grep -c .) commands)"
