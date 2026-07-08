@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased — beta-3]
+## [beta-3] — 2026-07-07
 
 ### Fixed
 - **lbu include/exclude never worked.** The seed overlay shipped plain `/etc/lbu/include` and `/etc/lbu/exclude` files since alpha-1 — but lbu's real mechanism is `/etc/apk/protected_paths.d/lbu.list` (`+path`/`-path`), and nothing ever read the plain files. Consequences until now: `/root`, samba passwords, crontabs, and VPN identities **did not persist across reboots**, and boot-generated files meant to be excluded (`/etc/issue`) showed as unsaved changes forever (the beta-2 report that unraveled this). The seed now ships the real list; existing boxes are migrated automatically once by the `mountnas` service (old files parked as `*.migrated` — run `nas commit` after the first boot on beta-3 to persist the migration).
