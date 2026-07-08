@@ -26,7 +26,9 @@ printf '  %sType `nas help` for commands and paths.%s\n\n' "$_wd" "$_wn"
 # and 'nas setup' stays manually re-runnable at any time.
 if [ "$(id -u 2>/dev/null)" = 0 ] && [ ! -e /etc/mountnas/setup-done ] && [ -t 0 ] \
 	&& awk -F: '$1=="root"{exit ($2!="")}' /etc/shadow 2>/dev/null; then
-	printf '  %sFirst boot detected — starting the setup wizard (Ctrl-C to skip).%s\n\n' "$_wb" "$_wn"
+	# single trailing newline: cmd_setup's hdr adds its own leading blank line,
+	# so \n\n here would show two blank rows before the '== ... ==' header
+	printf '  %sFirst boot detected — starting the setup wizard (Ctrl-C to skip).%s\n' "$_wb" "$_wn"
 	# Unset BEFORE the wizard: Ctrl-C (the documented skip) aborts the rest of
 	# this sourced file, so the tail unset below would be skipped and the
 	# escape-valued vars would leak into the login shell.
