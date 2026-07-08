@@ -169,7 +169,6 @@ ${C_HD}Add a disk${C_NO}  (disk/parity names are a convention; snapraid.conf dec
 
   Install packages: apk add <pkg>   then: nas commit   (cached, offline)
   Grant admin rights: adduser <user> wheel        (then: nas commit)
-${C_D}Aliases:  nas validate = nas status,   nas checkup = nas status --deep${C_NO}
 EOF
 }
 cmd_help() {
@@ -1669,13 +1668,6 @@ nas setup
   Auto-runs at first login until completed once; safe to re-run any time.
 EOF
 ;;
-	validate|checkup) cat <<EOF
-nas validate / nas checkup
-  Aliases: validate = nas status (fast config check), checkup = nas status
-  --deep (adds SMART / SnapRAID / time-sync — may wake sleeping disks).
-  Both accept --json like nas status.
-EOF
-;;
 	version) echo "nas version — print the MountNAS release (and build id). No flags." ;;
 	about)   echo "nas about — logo, release, and project info. No flags." ;;
 	commit|save) cat <<EOF
@@ -1705,25 +1697,24 @@ EOF
 
 # 'nas <cmd> --help' NEVER executes the command: focused help when we have a
 # page for it, the overview otherwise. (Falling through used to RUN the
-# command — 'nas checkup --help' woke sleeping disks with a deep status.)
+# command — 'nas status --help' would have run a status instead of helping.)
 case "${2:-}" in
 	--help|-h) _cmd_help_for "${1:-}" || cmd_help; exit 0 ;;
 esac
 
 case "${1:-help}" in
 	setup) cmd_setup ;;
-	# status + its aliases share one order-independent flag parser: validate
-	# is plain status, checkup pre-sets --deep, and --json/--deep combine in
-	# any order (positional matching used to silently drop one of them, and
-	# 'nas validate --json' emitted human text into monitoring pipes).
-	status|validate|checkup)
-		sc="$1"; shift
-		js=0; dp=0; [ "$sc" = checkup ] && dp=1
+	# one order-independent flag parser: --json/--deep combine in any order
+	# (positional matching used to silently drop one of them, and
+	# 'nas status --json' must never emit human text into a monitoring pipe).
+	status)
+		shift
+		js=0; dp=0
 		for a in "$@"; do
 			case "$a" in
 				--json) js=1 ;;
 				--deep) dp=1 ;;
-				*) usage "nas $sc [--deep] [--json]"; exit 1 ;;
+				*) usage "nas status [--deep] [--json]"; exit 1 ;;
 			esac
 		done
 		if [ "$js" = 1 ]; then

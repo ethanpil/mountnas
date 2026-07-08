@@ -13,10 +13,13 @@
 ### Changed
 - **`nas` screens unified** (presentation, plus two small behavior tweaks noted below): one header/rule/hint grammar across all screens (bold-cyan section headers, dim tips), rules/framing use only ASCII (`=`/`-`) and every line is ≤76 columns for serial consoles (body text keeps the em-dash punctuation already used elsewhere). Two intentional behavior changes ride along: colors are now also suppressed when `TERM=dumb` (previously only `NO_COLOR`/non-tty), and `usage:` errors now print to stderr instead of stdout.
 - **`nas status` reads at a glance**: groups of passing checks compact to single `[ OK ]` lines (services, per-mount fstab trio, runlevel ownership) while any warning/failure keeps its own loud line; a verdict footer ("all N checks passed" / "N failed — details above") closes the screen and uptime is humanized (`3d 4h`). `--json` note: `fail_lines`/`warn_lines`/`healthy`/`services[]` are byte-stable; only the informational `checks.ok` count shrinks with the merged lines.
-- **`nas help` is two pages** (commands grouped by task, then files & recipes), with a `more`-style any-key pause on interactive terminals — pipes and scripts still get the whole text flat. A subcommand-clarity line sits under the title ("run as: nas \<command\>"), command names are bold, group headers colored, and the validate/checkup aliases are spelled out in full on page 2.
+- **`nas help` is two pages** (commands grouped by task, then files & recipes), with a `more`-style any-key pause on interactive terminals — pipes and scripts still get the whole text flat. A subcommand-clarity line sits under the title ("run as: nas \<command\>"), command names are bold, and group headers are colored.
 - **`nas changes --diff` colorizes diffs** on the terminal (piped output stays patch-clean); the upgrade warning box renders red; wizard steps and upgrade stages are bolded.
 - **`nas disks` gets semantic color**: mounted mountpoints green, "(not mounted)" dim, blank-disk guidance yellow, boot-stick partition tags red.
 - **The login welcome banner adopts the `nas` palette**: version bold, disk-state lines red/yellow by severity, unsaved-changes yellow, the help pointer dim — same tty/`NO_COLOR`/`TERM=dumb` gating.
+
+### Removed
+- **`nas validate` / `nas checkup`** — the two aliases for `nas status` / `nas status --deep` are gone; use the real commands. They added dispatcher and help/completion surface for no capability, following the earlier `nas howto` removal. A CI-lint guard now keeps the shell completions in lockstep with the dispatcher's command set.
 
 ### Known / parked
 - Serial-console (`qm terminal`) full-screen layout remains wrong after the ash-compat fix; parked per maintainer decision — use SSH or noVNC for full-screen tools.
