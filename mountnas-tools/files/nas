@@ -75,6 +75,18 @@ _uptime_h() {
 # mountnas service mounts over failed data mounts — mountpoint -q alone reports
 # that placeholder as a healthy mount.
 _blocked() { awk -v m="$1" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts; }
+# Disk-state of the filesystem a share/export path lands on: walk up to the
+# nearest mountpoint, then classify. Echoes "ok" (a real disk mount), "blocked"
+# (the ro placeholder over a failed disk), or "ram" (nothing mounted — lands on
+# the RAM root). The walk always ends at a mountpoint ("/" and the placeholder
+# are both mountpoints), so only a non-root, non-placeholder mount is a disk.
+_path_on_disk() {
+	local td=$1
+	while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
+	if _blocked "$td"; then echo blocked
+	elif [ "$td" != "/" ] && mountpoint -q "$td"; then echo ok
+	else echo ram; fi
+}
 # Parent disk of the BOOT partition (= the MountNAS boot USB); "" if absent.
 # THE single copy: cmd_status, cmd_disks, cmd_disks_json and cmd_backup all
 # rely on it, and boot-stick detection must never diverge between them.
@@ -321,22 +333,21 @@ cmd_status() {
 	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
 		&& bad "a data path is in the lbu include list (commit would copy your disk!) — remove with: lbu exclude <path>" \
 		|| ok "lbu include has no data paths"
-	# share paths must be live mountpoints
-	# NB: the walk always ends at a mountpoint — "/" itself is one (the RAM root),
-	# and the ro placeholder is one too. Only a non-root, non-placeholder mount
-	# means the path really lands on a disk.
+	# share/export paths must land on a live disk mount, not the RAM root
 	awk -F= '/^[[:space:]]*path[[:space:]]*=/{gsub(/[[:space:]]/,"",$2);print $2}' /etc/samba/smb.conf 2>/dev/null | while read -r p; do
 		[ -z "$p" ] && continue
-		td=$p; while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
-		if _blocked "$td"; then bad "samba path $p is BLOCKED (disk missing/failed)"
-		elif [ "$td" != "/" ] && mountpoint -q "$td"; then ok "samba path $p on a mounted fs"
-		else bad "samba path $p is on RAM (no disk mounted)"; fi
+		case "$(_path_on_disk "$p")" in
+			ok)      ok "samba path $p on a mounted fs" ;;
+			blocked) bad "samba path $p is BLOCKED (disk missing/failed)" ;;
+			*)       bad "samba path $p is on RAM (no disk mounted)" ;;
+		esac
 	done
 	[ -f /etc/exports ] && awk '/^\//{print $1}' /etc/exports | while read -r p; do
-		td=$p; while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
-		if _blocked "$td"; then bad "nfs export $p is BLOCKED (disk missing/failed)"
-		elif [ "$td" != "/" ] && mountpoint -q "$td"; then ok "nfs export $p on a mounted fs"
-		else bad "nfs export $p is on RAM (no disk mounted)"; fi
+		case "$(_path_on_disk "$p")" in
+			ok)      ok "nfs export $p on a mounted fs" ;;
+			blocked) bad "nfs export $p is BLOCKED (disk missing/failed)" ;;
+			*)       bad "nfs export $p is on RAM (no disk mounted)" ;;
+		esac
 	done
 	# snapraid parity sizing (best-effort)
 	if grep -q '^data ' /etc/snapraid.conf 2>/dev/null; then
