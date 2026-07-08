@@ -193,7 +193,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa
+	local svc_up rlv rl_ok vc vok vwa vfa alto
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -254,6 +254,16 @@ cmd_status() {
 		*[!0-9]*) ok "last backup: $lbk" ;;
 		*) ok "last backup: ${lbk#* } ($(( ( $(date +%s) - ${lbk%% *} ) / 86400 )) day(s) ago)" ;;
 	esac
+	# disk-loss email alerts (data-watch): surface whether alerting is wired and
+	# can actually send, so a misconfig is caught now — not when a disk dies.
+	# Parse the address exactly as data-watch does (strip comments/blank lines).
+	alto=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /etc/mountnas/alert-email 2>/dev/null | head -n1)
+	if [ -n "$alto" ]; then
+		if command -v mail >/dev/null 2>&1; then ok "disk-loss email alerts -> $alto"
+		else warn "disk-loss alerts: $alto set but 'mail' unavailable — configure msmtp"; fi
+	else
+		hint "disk-loss email alerts off (set /etc/mountnas/alert-email)"
+	fi
 
 	# JSON mode skips the sensors block: its data has no JSON representation,
 	# and per-disk hdparm probes on every monitoring poll would be pure waste.

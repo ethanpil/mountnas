@@ -9,6 +9,7 @@
 
 ### Added
 - **Disk-loss email alerts**: put an address in `/etc/mountnas/alert-email` (plus a configured `/etc/msmtprc`) and the 15-minute watcher emails once on the transition when the data disk disconnects, its mount dies, or its filesystem goes read-only — including the recovery command. Complements smartd's `-m` (SMART = disk warning it will fail; this = disk already gone).
+- **`nas status` surfaces alerting state**: a line reporting whether disk-loss email alerts are off, wired up (`-> address`), or configured-but-unsendable (address set but `mail` missing) — so a broken alert setup is caught now, not when a disk actually dies.
 
 ### Changed
 - **`nas` screens unified** (presentation, plus two small behavior tweaks noted below): one header/rule/hint grammar across all screens (bold-cyan section headers, dim tips), rules/framing use only ASCII (`=`/`-`) and every line is ≤76 columns for serial consoles (body text keeps the em-dash punctuation already used elsewhere). Two intentional behavior changes ride along: colors are now also suppressed when `TERM=dumb` (previously only `NO_COLOR`/non-tty), and `usage:` errors now print to stderr instead of stdout.
