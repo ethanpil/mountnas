@@ -27,6 +27,10 @@ printf '  %sType `nas help` for commands and paths.%s\n\n' "$_wd" "$_wn"
 if [ "$(id -u 2>/dev/null)" = 0 ] && [ ! -e /etc/mountnas/setup-done ] && [ -t 0 ] \
 	&& awk -F: '$1=="root"{exit ($2!="")}' /etc/shadow 2>/dev/null; then
 	printf '  %sFirst boot detected — starting the setup wizard (Ctrl-C to skip).%s\n\n' "$_wb" "$_wn"
+	# Unset BEFORE the wizard: Ctrl-C (the documented skip) aborts the rest of
+	# this sourced file, so the tail unset below would be skipped and the
+	# escape-valued vars would leak into the login shell.
+	unset _wb _wy _wr _wd _wn
 	nas setup
 fi
 unset _wb _wy _wr _wd _wn
