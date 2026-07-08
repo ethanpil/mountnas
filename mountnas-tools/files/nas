@@ -44,16 +44,20 @@ confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
 #   hint  dim guidance/next-step line (commands in hints stay copy-pasteable)
 #   usage uniform usage error on stderr (callers add their own return/exit)
 # Titles must stay ASCII: ${#} counts bytes, so UTF-8 would shorten the fill.
-_fill() { printf '%*s' "$1" '' | tr ' ' "$2"; }
+# Screen width lives in ONE place; rules are cut to length from these
+# precomputed 'UI_W'-wide strings with printf %.*s (no per-call forks).
+UI_W=68
+_RULE_EQ=$(printf '%*s' "$UI_W" '' | tr ' ' '=')
+_RULE_DA=$(printf '%*s' "$UI_W" '' | tr ' ' '-')
 hdr() {
 	local p
-	p=$((64 - ${#1})); [ "$p" -gt 0 ] || p=2
-	printf '\n%s== %s %s%s\n' "$C_HD" "$1" "$(_fill "$p" '=')" "$C_NO"
+	p=$((UI_W - 4 - ${#1})); [ "$p" -gt 0 ] || p=2
+	printf '\n%s== %s %.*s%s\n' "$C_HD" "$1" "$p" "$_RULE_EQ" "$C_NO"
 }
 sub() {
 	local p
-	p=$((64 - ${#1})); [ "$p" -gt 0 ] || p=2
-	printf -- '\n-- %s%s%s %s\n' "$C_B" "$1" "$C_NO" "$(_fill "$p" '-')"
+	p=$((UI_W - 4 - ${#1})); [ "$p" -gt 0 ] || p=2
+	printf -- '\n-- %s%s%s %.*s\n' "$C_B" "$1" "$C_NO" "$p" "$_RULE_DA"
 }
 hint() { printf '  %s%s%s\n' "$C_D" "$*" "$C_NO"; }
 step() { printf '%s%s%s\n' "$C_B" "$*" "$C_NO"; }
@@ -385,7 +389,7 @@ cmd_status() {
 			vok=${vc%% *}; vfa=${vc##* }
 			vwa=${vc#* }; vwa=${vwa% *}
 			src=0; [ "$vfa" -gt 0 ] && src=1
-			printf '%s%s%s\n' "$C_D" "$(_fill 68 '-')" "$C_NO"
+			printf '%s%.*s%s\n' "$C_D" "$UI_W" "$_RULE_DA" "$C_NO"
 			if [ "$vfa" -gt 0 ]; then
 				printf '  %s%s check(s) failed, %s warning(s) — details above%s\n' "$C_FA" "$vfa" "$vwa" "$C_NO"
 			elif [ "$vwa" -gt 0 ]; then
@@ -575,8 +579,8 @@ cmd_disks() {
 			# width math on the UNCOLORED text; escapes would inflate ${#}
 			drow="$f1  $f2  $bus$f4  temp:$dtp$tag"
 			ctag="$tag"; [ -n "$tag" ] && ctag="  $C_FA*BOOT USB*$C_NO"
-			pad=$((64 - ${#drow})); [ "$pad" -gt 0 ] || pad=2
-			printf -- '\n-- %s %s\n' "$C_B$f1$C_NO  $f2  $bus$f4  temp:$dtp$ctag" "$(_fill "$pad" '-')"
+			pad=$((UI_W - 4 - ${#drow})); [ "$pad" -gt 0 ] || pad=2
+			printf -- '\n-- %s %.*s\n' "$C_B$f1$C_NO  $f2  $bus$f4  temp:$dtp$ctag" "$pad" "$_RULE_DA"
 			id=""
 			[ "$f5" != "-" ] && id="$f5 "
 			[ "$f6" != "-" ] && id="$id$f6"
