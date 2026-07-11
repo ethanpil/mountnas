@@ -1,0 +1,6 @@
+# pip layer only -- pytest/pexpect/Pillow come from Alpine apk packages
+# (see run-suite.sh).  Both of these degrade gracefully if missing:
+# pytest-html -> no HTML report (plain pytest output), ansi2html -> plain
+# transcript rendering.
+pytest-html>=4.0
+ansi2html>=1.9
