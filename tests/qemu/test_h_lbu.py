@@ -48,12 +48,14 @@ def test_legacy_lbu_files_migrated_once(golden_guest):
     g.run("rc-service mountnas restart", timeout=180, check=True)
     parked = g.run("ls /etc/lbu/include.migrated 2>/dev/null")
     assert parked.rc == 0, "legacy include file was not parked as .migrated"
-    merged = g.run(f"grep -F '+/root/legacy-probe' {LBU_LIST}")
+    # the migration strips the leading slash and prepends '+' (sed s,^/*,+,),
+    # so /root/legacy-probe becomes the entry +root/legacy-probe
+    merged = g.run(f"grep -F '+root/legacy-probe' {LBU_LIST}")
     assert merged.rc == 0, \
         f"legacy include entry not merged into {LBU_LIST}"
     # migration must be one-time: another restart must not duplicate
     g.run("rc-service mountnas restart", timeout=180, check=True)
-    count = g.run(f"grep -cF '+/root/legacy-probe' {LBU_LIST}", check=True)
+    count = g.run(f"grep -cF '+root/legacy-probe' {LBU_LIST}", check=True)
     assert count.out.strip() == "1", f"migration ran twice: {count.out}"
 
 

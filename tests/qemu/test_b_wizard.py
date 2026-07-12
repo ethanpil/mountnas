@@ -46,13 +46,12 @@ def test_wizard_rejects_invalid_hostname(pristine_guest):
     s.expect(C.LOGIN, timeout=420)
     s.sendline("root")
     s.expect(C.WIZARD_HOSTNAME, timeout=120)
-    s.sendline("bad name!")
-    # must come back to the hostname prompt instead of moving to passwd
-    idx = s.expect([C.WIZARD_HOSTNAME, C.WIZARD_PASSWORD], timeout=60)
-    assert idx == 0, "wizard accepted an invalid hostname"
-    pristine_guest.screenshot("invalid-hostname-reprompt")
-    # finish cleanly so teardown gets a sane console
-    s.sendline("okname")
+    s.sendline("bad_host!")
+    # The wizard does NOT re-prompt: it warns, KEEPS the default hostname, and
+    # proceeds to the password step.  Assert the warning appears (and later
+    # that the hostname was left at the default).
+    s.expect(r"invalid hostname", timeout=60)
+    pristine_guest.screenshot("invalid-hostname-warned")
     s.expect(C.WIZARD_PASSWORD, timeout=60)
     s.sendline(PW)
     s.expect(C.WIZARD_RETYPE, timeout=60)

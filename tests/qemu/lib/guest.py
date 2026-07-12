@@ -159,18 +159,23 @@ class Guest:
             })]
             serial = d.serial or f"MNQ{i}"
             dev_id = f"dev{i}"
+            # Pin the boot disk (always disk 0) so SeaBIOS boots it regardless
+            # of what other controllers/buses are present -- a scsi-hd/ide-hd
+            # data disk otherwise perturbs the boot order and the box hangs in
+            # the BIOS (nvme happened not to, which masked this).
+            boot = ",bootindex=1" if i == 0 else ""
             if d.bus == "virtio-blk":
                 args += ["-device",
-                         f"virtio-blk-pci,drive={fmt_node},id={dev_id},serial={serial}"]
+                         f"virtio-blk-pci,drive={fmt_node},id={dev_id},serial={serial}{boot}"]
             elif d.bus == "virtio-scsi":
                 args += ["-device",
-                         f"scsi-hd,drive={fmt_node},id={dev_id},bus=scsi0.0,serial={serial}"]
+                         f"scsi-hd,drive={fmt_node},id={dev_id},bus=scsi0.0,serial={serial}{boot}"]
             elif d.bus == "ahci":
                 args += ["-device",
-                         f"ide-hd,drive={fmt_node},id={dev_id},bus=ahci0.{ahci_slot},serial={serial}"]
+                         f"ide-hd,drive={fmt_node},id={dev_id},bus=ahci0.{ahci_slot},serial={serial}{boot}"]
                 ahci_slot += 1
             elif d.bus == "nvme":
-                args += ["-device", f"nvme,drive={fmt_node},id={dev_id},serial={serial}"]
+                args += ["-device", f"nvme,drive={fmt_node},id={dev_id},serial={serial}{boot}"]
         return args
 
     def _build_argv(self) -> list[str]:

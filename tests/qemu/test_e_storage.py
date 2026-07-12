@@ -53,15 +53,20 @@ def test_mergerfs_pool_two_disks_reboot(golden_with_extras):
           " >> /etc/fstab", check=True)
     g.run("printf '%s\\n' 'LABEL=disk2 /mnt/disk2 ext4 rw,noatime,nofail 0 2'"
           " >> /etc/fstab", check=True)
+    # minfreespace=1M: mergerfs defaults to 4G and refuses to create files on
+    # a branch with less free space -- the 4 GB test disks have <4 GB free
+    # after ext4 overhead, so without this every write ENOSPCs.
     g.run("printf '%s\\n' '/mnt/disk1:/mnt/disk2 /mnt/storage fuse.mergerfs "
-          "allow_other,use_ino,nofail 0 0' >> /etc/fstab", check=True)
-    g.run("rc-service mountnas restart", timeout=240, check=True)
-    g.poll_until("mountpoint -q /mnt/storage", timeout=120, desc="pool mounted")
-    g.run("echo pooled > /mnt/storage/pool-probe", check=True)
+          "allow_other,use_ino,minfreespace=1M,nofail 0 0' >> /etc/fstab",
+          check=True)
+    # The fuse.mergerfs pool is mounted by boot-time localmount (after its
+    # branch disks), not by the mountnas supervisor -- so commit + reboot,
+    # then verify the pool comes up from the committed fstab.
     g.run("nas commit -m 'mergerfs pool'", timeout=120, check=True)
     g.reboot()
     g.poll_until("mountpoint -q /mnt/storage", timeout=240,
-                 desc="pool re-mounted after reboot")
+                 desc="pool mounted at boot")
+    g.run("echo pooled > /mnt/storage/pool-probe", check=True)
     r = g.run("cat /mnt/storage/pool-probe", check=True)
     assert r.out.strip() == "pooled"
     # the file physically lives on exactly one branch

@@ -71,7 +71,10 @@ def test_alert_email_comment_stripping(golden_guest, smtp_sink):
     configure_guest_msmtp(g, smtp_sink.port)
     g.run(f"printf '%s\\n' '# my alert address' '' 'ops@test.local' "
           f"> {C.ALERT_EMAIL}", check=True)
-    g.run(f"mount -o remount,ro {C.DATA_MOUNT}", check=True)
+    # release /mnt/nasdata so the remount,ro isn't EBUSY (see test_ro_remount)
+    g.run("for s in docker samba nfs; do rc-service $s stop 2>/dev/null; done",
+          timeout=90)
+    g.run(f"mount -o remount,ro {C.DATA_MOUNT}", timeout=60, check=True)
     g.run("/usr/libexec/mountnas/data-watch", timeout=120)
     mails = smtp_sink.wait_for_mail(1, timeout=g.cfg.scaled(90))
     assert any("ops@test.local" in r for r in mails[0].rcpt_tos), \
