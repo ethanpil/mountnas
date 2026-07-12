@@ -694,15 +694,24 @@ cmd_disks_json() {
 		t=$(_disk_temp "$d"); [ "$t" = "-" ] && continue
 		printf '{"name":"%s","temp":"%s"}\n' "$d" "$t"
 	done | jq -s 'map({(.name): .temp}) | add // {}')
+	# fstab entries can name a filesystem by UUID=, LABEL=, or a /dev/ path —
+	# all three are valid and documented. Collect each kind and match against
+	# the partition's uuid / label / name, so a LABEL=-based entry (common, and
+	# what 'nas disks' pastes) no longer reads in_fstab:false.
 	fuuids=$(awk '$1!~/^#/ && $1~/^UUID=/{sub("UUID=","",$1); print $1}' /etc/fstab 2>/dev/null | jq -R . | jq -s .)
+	flabels=$(awk '$1!~/^#/ && $1~/^LABEL=/{sub("LABEL=","",$1); print $1}' /etc/fstab 2>/dev/null | jq -R . | jq -s .)
+	fdevs=$(awk '$1!~/^#/ && $1~/^\/dev\//{sub("/dev/","",$1); print $1}' /etc/fstab 2>/dev/null | jq -R . | jq -s .)
 	printf '%s' "$lj" \
-	| jq --arg usb "$usb" --argjson temps "$temps" --argjson fuuids "$fuuids" '
-		# bind the uuid BEFORE piping into index(): inside index(f) the filter f
+	| jq --arg usb "$usb" --argjson temps "$temps" \
+	     --argjson fuuids "$fuuids" --argjson flabels "$flabels" --argjson fdevs "$fdevs" '
+		# bind the fields BEFORE piping into index(): inside index(f) the filter f
 		# is evaluated against the piped-in array, so a bare .uuid there indexed
 		# the ARRAY and crashed ("Cannot index array with string uuid")
-		def part: (.uuid // "") as $u |
+		def part: (.uuid // "") as $u | (.label // "") as $l | (.name // "") as $n |
 		          { name, size, fstype, label, uuid, mountpoint, fsavail,
-		            in_fstab: ($u != "" and (($fuuids | index($u)) != null)) };
+		            in_fstab: ( ($u != "" and (($fuuids  | index($u)) != null))
+		                     or ($l != "" and (($flabels | index($l)) != null))
+		                     or ($n != "" and (($fdevs   | index($n)) != null)) ) };
 		{ boot_usb: (if ($usb | length) > 0 then $usb else null end),
 		  disks: [ .blockdevices[] | select(.type=="disk") | {
 			name, size,
