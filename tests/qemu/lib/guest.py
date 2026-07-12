@@ -381,6 +381,15 @@ class Guest:
         """Supervisor state: fresh|ok|netfs|disconnected|mountfail (or '')."""
         return self.run(f"cat {C.STATE_DIR}/data 2>/dev/null", timeout=30).out.strip()
 
+    def push(self, local: Path, remote: str) -> None:
+        """scp a file into the guest (reuses the SSH control socket)."""
+        argv = ["scp", "-i", str(self.ssh_key), "-P", str(self.ssh_port),
+                "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "LogLevel=ERROR", "-o", f"ControlPath={self.ssh_ctl}",
+                str(local), f"root@127.0.0.1:{remote}"]
+        subprocess.run(argv, check=True, capture_output=True,
+                       timeout=self.cfg.scaled(120))
+
     def wait_ready(self, timeout: float = 300.0) -> None:
         """Wait for the mountnas supervisor to converge after boot.
 

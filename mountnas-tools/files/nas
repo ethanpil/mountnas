@@ -1499,6 +1499,13 @@ EOF
 	# the downloaded .gz is no longer needed once unpacked — free the space now
 	[ -n "$dlf" ] && { rm -f "$dlf"; dlf=""; }
 	loop=$(losetup -fP --show "$raw") || { bad "losetup failed"; _cleanup; return 1; }
+	# losetup -fP scans the partition table ASYNCHRONOUSLY — the ${loop}p1 device
+	# node is created by mdev/udev a moment later. Mounting it immediately races
+	# that node into existence and, on a busy or slow box, intermittently fails
+	# with "cannot mount the BOOT partition" and aborts the upgrade. Nudge the
+	# rescan and wait (bounded, ~5s) for the node before mounting.
+	command -v partprobe >/dev/null 2>&1 && partprobe "$loop" 2>/dev/null
+	pw=0; while [ ! -b "${loop}p1" ] && [ "$pw" -lt 50 ]; do sleep 0.1; pw=$((pw+1)); done
 	mount -o ro "${loop}p1" "$m" 2>/dev/null || { bad "cannot mount the image's BOOT partition — is this really a MountNAS release image (mountnas-<tag>.img.gz)?"; _cleanup; return 1; }
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
 		[ -f "$m/$f" ] || { bad "image is missing $f — not a MountNAS image?"; _cleanup; return 1; }

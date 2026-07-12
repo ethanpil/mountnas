@@ -15,7 +15,9 @@ kernel/modloop pair, never a missing /apks).
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -44,6 +46,12 @@ def prev_base(suite_config, prev_image_bundle, golden):
     return dest
 
 
+# When set, the current `nas` CLI source is injected into each upgrade guest,
+# so the suite tests the repo's nas (with local fixes) rather than only the
+# nas baked into the released image.  Unset -> tests the shipped nas as-is.
+NAS_SRC = os.environ.get("MOUNTNAS_NAS_SRC", "")
+
+
 @pytest.fixture
 def upgrade_guest(guest_factory, golden, payload_dir, tmp_path):
     """Factory: boot a pristine system + payload disk, ready to upgrade."""
@@ -54,6 +62,11 @@ def upgrade_guest(guest_factory, golden, payload_dir, tmp_path):
         guest = guest_factory(disks, name=name, mem_mb=mem_mb,
                               ssh_key=golden.ssh_key,
                               throwaway=[sysd, payd])
+        if NAS_SRC and Path(NAS_SRC).is_file():
+            guest.wait_ssh(timeout=420)
+            guest.push(Path(NAS_SRC), "/usr/sbin/nas.new")
+            guest.run("cat /usr/sbin/nas.new > /usr/sbin/nas && rm /usr/sbin/nas.new "
+                      "&& chmod +x /usr/sbin/nas", check=True)
         return guest, disks, (sysd, payd)
     return make
 
