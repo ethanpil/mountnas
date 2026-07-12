@@ -163,6 +163,10 @@ start() {
 	if _is_network_fs "$ft"; then
 		echo netfs > "$STATE/data"; log "$DATA declared as network fs ($ft) — unsupported, services held"
 		eerror "$DATA is a network filesystem ($ft) — unsupported for the system disk; use a local disk. Services held."
+		# NOTE: don't stop the data services here. OpenRC's `restart` restores
+		# services that stop() stopped mid-transition, so a stop inside start()
+		# is immediately undone. `nas restart` (cmd_restart) enforces 'held'
+		# after the transition, where the stop sticks.
 		return 0
 	fi
 	# clear a dead mount left by a detached device before retrying (same EIO
