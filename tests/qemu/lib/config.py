@@ -61,7 +61,10 @@ RELEASE_FILE = "/usr/share/mountnas/release"
 
 # Root password baked into the golden snapshot (recorded in meta.json too).
 GOLDEN_PASSWORD = "mnastest1"
-GOLDEN_HOSTNAME = "mountnas-test"
+# Keep the image's DEFAULT hostname: renaming it orphans the seed's
+# <host>.apkovl.tar.gz and makes `lbu commit` refuse ("use -d to replace").
+# The CI supervisor test keeps the default for the same reason.
+GOLDEN_HOSTNAME = "mountnas"
 
 # fstab line the golden build (and the CI supervisor test) uses for the data
 # disk.  LABEL-based so it survives bus/slot changes in overlay guests.
@@ -87,6 +90,12 @@ class SuiteConfig:
     kvm: bool = field(default_factory=lambda: os.environ.get("MOUNTNAS_KVM") == "1")
     time_scale: float = field(default_factory=_default_time_scale)
     ovmf: str = field(default_factory=lambda: os.environ.get("MOUNTNAS_OVMF", ""))
+    # Optional cap on per-guest RAM (MB) for memory-constrained hosts.  A guest
+    # requesting more (e.g. upgrades at 8192) is clamped down to this.  0/unset
+    # = use each guest's requested size.  Upgrades still need real headroom, so
+    # this is a debugging aid, not a way to run the full suite on a tiny box.
+    mem_cap_mb: int = field(
+        default_factory=lambda: int(os.environ.get("MOUNTNAS_TEST_MEM_MB", "0") or "0"))
     cache_dir: Path = field(
         default_factory=lambda: Path(
             os.environ.get(

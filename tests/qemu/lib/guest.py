@@ -33,6 +33,22 @@ log = logging.getLogger("mountnas.guest")
 VALID_BUSES = ("virtio-blk", "virtio-scsi", "ahci", "nvme")
 
 
+def _pdeathsig_preexec():
+    """Ask the kernel to SIGKILL this child when its parent (the test process)
+    dies -- so a crashed/killed pytest can never leak running QEMU guests.
+
+    Without this, qemu children are reparented to init and keep consuming RAM;
+    on a memory-constrained host a few orphans will thrash the box into
+    unresponsiveness.  Linux-only (PR_SET_PDEATHSIG=1); a no-op elsewhere.
+    """
+    try:
+        import ctypes
+        import signal
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGKILL, 0, 0, 0)
+    except Exception:
+        pass
+
+
 @dataclass
 class DiskSpec:
     path: str
@@ -80,7 +96,11 @@ class Guest:
         self.name = name
         self.disks = disks
         self.cfg = cfg
-        self.mem_mb = mem_mb
+        cap = getattr(cfg, "mem_cap_mb", 0)
+        self.mem_mb = min(mem_mb, cap) if cap else mem_mb
+        if cap and mem_mb > cap:
+            log.warning("guest %s: capping RAM %dMB -> %dMB (MOUNTNAS_TEST_MEM_MB)",
+                        name, mem_mb, cap)
         self.firmware = firmware
         self.ssh_key = Path(ssh_key) if ssh_key else None
         self.transcript_cb = transcript_cb
@@ -182,6 +202,7 @@ class Guest:
                 argv,
                 stdout=open(self.log_dir / "qemu-stdout.log", "ab"),
                 stderr=open(self.log_dir / "qemu-stderr.log", "ab"),
+                preexec_fn=_pdeathsig_preexec if os.name == "posix" else None,
             )
             # fail fast BEFORE the (up-to-30s) QMP connect: an immediate exit
             # means bad args / bad image / port clash.
@@ -252,13 +273,22 @@ class Guest:
         network: str = "",          # "" -> accept DHCP default
         login_first: bool = True,
     ) -> None:
-        """Drive the 5-step first-boot wizard over serial (auto-starts at the
-        first root login on a pristine image)."""
+        """Drive the 5-step first-boot wizard over serial.
+
+        The wizard auto-starts at the first root login (profile-nas-welcome.sh),
+        but that is best-effort: if it doesn't fire (already logged in, or the
+        auto-start raced the login), the interactive shell prompt appears
+        instead -- in which case we kick `nas setup` by hand.  Either way we end
+        up at the Hostname prompt.
+        """
         s = self.serial
         if login_first:
             s.expect(C.LOGIN, timeout=420)
             s.sendline("root")
-        s.expect(C.WIZARD_HOSTNAME, timeout=120)
+        idx = s.expect([C.WIZARD_HOSTNAME, C.PROMPT], timeout=180)
+        if idx == 1:                      # shell prompt -> wizard didn't auto-start
+            s.sendline("nas setup")
+            s.expect(C.WIZARD_HOSTNAME, timeout=120)
         s.sendline(hostname)
         s.expect(C.WIZARD_PASSWORD, timeout=60)
         s.sendline(password)

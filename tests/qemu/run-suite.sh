@@ -70,6 +70,13 @@ qemu-system-x86_64 qemu-img mtools e2fsprogs sfdisk util-linux-misc
 openssh-client-default openssh-keygen gzip curl ca-certificates"
 
 if command -v apk >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
+    # A fresh Alpine "sys" install ships the community repo commented out, but
+    # qemu, qemu-img and py3-pillow all live there.  Enable it (idempotent).
+    if grep -q '^#[[:space:]]*http.*/community[[:space:]]*$' /etc/apk/repositories 2>/dev/null; then
+        note "enabling the community apk repository"
+        sed -i 's|^#[[:space:]]*\(http.*/community\)[[:space:]]*$|\1|' /etc/apk/repositories
+        apk update >/dev/null 2>&1 || warn "apk update after enabling community failed"
+    fi
     note "installing dependencies via apk"
     # shellcheck disable=SC2086
     apk add --no-cache $APK_PKGS || fail "apk add failed"
@@ -91,6 +98,34 @@ else
         echo "  apk add --no-cache $APK_PKGS ovmf" | tr '\n' ' ' >&2
         echo >&2
         fail "dependencies missing"
+    fi
+fi
+
+# ---------------------------------------------------------------- leftover guests
+# A crashed/killed previous run can leave orphaned qemu guests running (the
+# harness now sets PR_SET_PDEATHSIG so this is rare, but belt-and-suspenders).
+# On a small host even a couple of 4 GB orphans will thrash the box into
+# unresponsiveness, so clear them before starting.
+if command -v pgrep >/dev/null 2>&1 && [ -n "$(pgrep -f 'qemu-system-x86_64.*mnq-' 2>/dev/null)" ]; then
+    warn "killing leftover MountNAS test guests from a previous run"
+    for p in $(pgrep -f 'qemu-system-x86_64.*mnq-' 2>/dev/null); do kill -9 "$p" 2>/dev/null; done
+fi
+
+# ---------------------------------------------------------------- RAM preflight
+# MountNAS is a diskless appliance: it installs its whole userspace into a
+# tmpfs RAM-root at boot, so a guest needs ~4 GB just to boot cleanly (less
+# and the package install ENOSPCs the tmpfs).  Upgrade guests use 8 GB.  With
+# only one guest live at a time the host needs headroom for that guest + itself.
+MEM_TOTAL_MB=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+if [ "$MEM_TOTAL_MB" -gt 0 ]; then
+    if [ "$MEM_TOTAL_MB" -lt 5000 ]; then
+        warn "host has only ${MEM_TOTAL_MB} MB RAM.  A single MountNAS guest needs ~4 GB"
+        warn "(8 GB for upgrade tests).  Below ~5 GB the box will swap-thrash and can"
+        warn "wedge; upgrade tests (-m 8192) will not fit.  Recommended: 12-16 GB."
+        warn "Run with -m 'not upgrade', or bump the VM's RAM."
+    elif [ "$MEM_TOTAL_MB" -lt 10000 ]; then
+        warn "host has ${MEM_TOTAL_MB} MB RAM; upgrade guests (-m 8192) may not fit."
+        warn "12-16 GB recommended for the full tier."
     fi
 fi
 
