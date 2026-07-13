@@ -663,8 +663,10 @@ cmd_disks() {
 	| { n=1; while IFS="$TAB" read -r PK VEND MOD SER NAME FSTYPE LABEL UUID; do
 		case "$LABEL" in BOOT|MNASCFG) continue ;; esac
 		[ "$PK" = "$usb" ] && continue
-		# already referenced in fstab (by UUID)?
-		grep -qF "$UUID" /etc/fstab 2>/dev/null && continue
+		# already referenced in an ACTIVE fstab entry (by UUID)? Commented-out
+		# lines don't count: a disk the user disabled by commenting its entry
+		# must get its paste-ready line back.
+		awk '$1!~/^#/' /etc/fstab 2>/dev/null | grep -qF "$UUID" && continue
 		if [ "$have_nd" = 0 ]; then mp=/mnt/nasdata; have_nd=1
 		else
 			while awk -v m="/mnt/disk$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
