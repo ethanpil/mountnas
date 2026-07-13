@@ -984,6 +984,17 @@ cmd_commit() {
 		nts=$(date -u -r "$CFG/$(hostname).apkovl.tar.gz" +%Y%m%d%H%M%S 2>/dev/null)
 		[ -n "$nts" ] && printf '%s\t%s\n' "$nts" "$note" >> "$CFG/.mountnas-notes" 2>/dev/null
 	fi
+	# Prune notes whose snapshot lbu has rotated away: keep entries whose
+	# mtime-stamp matches a tarball still on /cfg (any hostname, so snapshots
+	# from before a hostname change keep theirs). Without this the file
+	# collects an orphaned line for every rotation, forever.
+	if [ -f "$CFG/.mountnas-notes" ]; then
+		keep=$(for f in "$CFG"/*.tar.gz; do date -u -r "$f" +%Y%m%d%H%M%S 2>/dev/null; done)
+		awk -F'\t' -v k="$keep" 'BEGIN{n=split(k,a,/[[:space:]]+/); for(i=1;i<=n;i++)K[a[i]]=1} $1 in K' \
+			"$CFG/.mountnas-notes" > "$CFG/.mountnas-notes.new" 2>/dev/null \
+			&& mv "$CFG/.mountnas-notes.new" "$CFG/.mountnas-notes" \
+			|| rm -f "$CFG/.mountnas-notes.new"
+	fi
 	sz=$(du -k "$CFG"/*.apkovl.tar.gz 2>/dev/null | awk '{s+=$1}END{print s}')
 	[ "${sz:-0}" -gt 51200 ] && warn "overlay is large (${sz}KB) — a big file in a tracked path (e.g. /root)?"
 	ok "saved to $CFG${note:+  (note: $note)}"
