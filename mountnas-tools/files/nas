@@ -1092,11 +1092,13 @@ EOF
 	echo "Imaging $dev (~$(( ${sz:-0} /1048576)) MB) -> $out"
 	echo "This can take several minutes; the image compresses (mostly-empty space shrinks away)."
 	mkdir -p "$STATE" 2>/dev/null || true
-	# /cfg is remounted read-only for a quiescent image. An interrupt (Ctrl-C)
+	# /cfg is remounted read-only for a quiescent image. An interrupt (Ctrl-C,
+	# or HUP from a dropped SSH session — backups are typically run over SSH)
 	# during the multi-minute imaging must never strand it read-only — every
 	# later 'nas commit' would fail long after the cause is forgotten — and must
-	# not leave a partial backup file behind.
-	trap 'mount -o remount,rw "$CFG" 2>/dev/null; rm -f "$out"; echo; bad "backup interrupted — partial file removed, $CFG restored read-write"; exit 130' INT TERM
+	# not leave a partial backup file behind. (An untrapped fatal signal skips
+	# EXIT traps in ash, so HUP must be trapped explicitly.)
+	trap 'mount -o remount,rw "$CFG" 2>/dev/null; rm -f "$out"; echo; bad "backup interrupted — partial file removed, $CFG restored read-write"; exit 130' HUP INT TERM
 	sync; mount -o remount,ro "$CFG" 2>/dev/null || true
 	# pv gives a progress bar + ETA when available. Both stages must be checked:
 	# if pv hits a read error mid-device, gzip still exits 0 on the truncated
@@ -1108,7 +1110,7 @@ EOF
 	else
 		gzip -c < "$dev" > "$out" && rc=0 || rc=1
 	fi
-	trap - INT TERM
+	trap - HUP INT TERM
 	if [ "$rc" = 0 ]; then
 		mount -o remount,rw "$CFG" 2>/dev/null \
 			|| warn "could not remount $CFG read-write — 'nas commit' will fail until you run: mount -o remount,rw $CFG"
@@ -1456,7 +1458,9 @@ EOF
 		[ -n "$m" ] && rmdir "$m" 2>/dev/null
 		return 0
 	}
-	trap '_cleanup; trap - EXIT INT TERM; exit 130' INT TERM
+	# HUP included: an upgrade started over SSH must clean up its multi-GB temp
+	# files when the session drops (ash skips EXIT traps on untrapped signals).
+	trap '_cleanup; trap - EXIT HUP INT TERM; exit 130' HUP INT TERM
 	trap '_cleanup' EXIT
 
 	# ---- choose temp space and pre-check it fits the decompressed image ----
@@ -1582,7 +1586,7 @@ EOF
 		done
 		for d in apks EFI boot/grub; do rm -rf "$BOOTMNT/$d.new"; done
 		bad "staging the new system failed (USB full or failing?) — nothing on the USB was changed."
-		_cleanup; trap - EXIT INT TERM
+		_cleanup; trap - EXIT HUP INT TERM
 		return 1
 	fi
 	# push all staged data to the stick so the rename window carries no
@@ -1591,7 +1595,7 @@ EOF
 	for f in $sfiles; do _commit_file "$BOOTMNT/$f" || ec=1; done
 	for d in $sdirs; do _commit_dir "$BOOTMNT/$d" || ec=1; done
 	sync
-	_cleanup; trap - EXIT INT TERM
+	_cleanup; trap - EXIT HUP INT TERM
 	[ "$ec" = 0 ] || { bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."; return 1; }
 
 	# ---- reconcile /etc/apk/world (preserve user-added pkgs across the version bump) ----
