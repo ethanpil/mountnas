@@ -1,5 +1,23 @@
 # Changelog
 
+## [beta-4] — 2026-07-12
+
+### Fixed
+- **Interrupted `nas backup` / `nas upgrade` over SSH now clean up.** A dropped SSH session delivers SIGHUP, which neither operation trapped — and ash skips EXIT traps on untrapped signals. Backup stranded `/cfg` read-only (every later `nas commit` failed until a manual remount) and left a partial image behind; upgrade leaked its multi-GB temp files and loop device. Both now trap HUP.
+- **`nas upgrade` no longer intermittently aborts with "cannot mount the BOOT partition"**: losetup scans the image's partition table asynchronously, so on a busy box the mount could race the p1 device node into existence. The upgrade now nudges a rescan and waits (bounded ~5 s) for the node.
+- **`nas restart` holds data services when `/mnt/nasdata` is a network filesystem.** OpenRC's `restart` re-started the docker/samba/nfs its own stop had stopped mid-transition, so the unsupported-netfs state said "services held" while Docker kept running. The hold is now enforced after the transition.
+- **`nas disks --json` reports `in_fstab` for `LABEL=` and `/dev/` entries too** — previously only `UUID=` matched, so label-based entries (which `nas disks` itself suggests) read as unconfigured.
+- **`nas disks` offers the paste-ready line again for a disk whose fstab entry was commented out** — a disabled entry was treated as configured forever.
+- **`nas rollback` can no longer be locked out by a stale staging file from before a hostname change** (it was misreported as an encrypted overlay).
+
+### Changed
+- **Faster, quieter boots**: the boot-time package sync resolves offline-first (on-media repo + `/cfg/cache`) and only touches the CDN repos when something is missing locally. Previously every boot fetched package indexes over the network — and an offline box waited out the timeouts during startup.
+- `nas commit` prunes `.mountnas-notes` entries whose snapshot lbu has rotated away (the file grew an orphaned line per rotation, forever).
+
+### Build / CI
+- The build now fails if the raw image grows within 128 MiB of `nas upgrade`'s temp-space pre-check (`need_kb`), so the image size and the pre-check can no longer drift apart silently.
+- QEMU suite hardening from its first full run on KVM: serial-socket draining moved to a background thread, plus 10 harness fixes.
+
 ## [beta-3] — 2026-07-07
 
 ### Fixed
