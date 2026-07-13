@@ -1005,8 +1005,10 @@ cmd_rollback() {
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted"; return 1; }
 	# a power cut between cp and mv in a previous rollback can leave a stale
 	# .new behind — clear it, or the encrypted-overlay glob below matches it
-	# and locks rollback out forever with a misleading error
-	rm -f "$act.new"
+	# and locks rollback out forever with a misleading error. Glob over every
+	# hostname: a .new staged before a hostname change is just as stale, and
+	# clearing only the current host's left it tripping the glob forever.
+	rm -f "$CFG"/*.apkovl.tar.gz.new
 	if ls "$CFG"/*.apkovl.tar.gz.* >/dev/null 2>&1; then
 		bad "encrypted overlay detected — nas rollback supports plain overlays only"; return 1
 	fi
