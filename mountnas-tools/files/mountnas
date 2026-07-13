@@ -96,8 +96,16 @@ start() {
 	# stick across reboots. A no-op solver run when nothing is missing.
 	if mountpoint -q /cfg; then
 		mkdir -p /cfg/cache 2>>"$LOG" || true
+		# Offline-first: on every normal boot the on-media repo + /cfg/cache
+		# satisfy the whole world, and --no-network skips fetching APKINDEXes
+		# from the CDN repos (a diskless RAM root has no cached index, so the
+		# networked run paid a CDN round-trip — or its timeout, offline — on
+		# every boot). Only when something is unresolvable locally is the
+		# networked run tried; net may still be settling here (DHCP), so its
+		# failure stays a logged warning, as before.
 		# shellcheck disable=SC2046  # world entries are single tokens by format
-		apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
+		apk add --quiet --no-network $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
+			|| apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
 			|| log "world sync (apk add) reported errors — a package may be missing until network/cache provides it"
 	fi
 
