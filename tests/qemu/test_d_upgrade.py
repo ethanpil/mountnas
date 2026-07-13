@@ -233,8 +233,11 @@ def test_rejects_non_gzip_payload(upgrade_guest, golden):
 def test_upgrade_from_url(upgrade_guest, golden, http_server, image_bundle):
     """URL upgrades download into TMPDIR, sniff after arrival, and proceed;
     the payload disk provides both the mount and the scratch space."""
-    import shutil
-    shutil.copyfile(image_bundle.img_gz, http_server.directory / "new.img.gz")
+    # Symlink, never copy: the bundle is ~1 GB and http_server.directory is
+    # under tmp_path, which can sit on a tmpfs /tmp — a copy there pinned a
+    # gigabyte of host RAM per retained pytest run, and the accumulated
+    # pressure swap-thrashed the 8 GB upgrade guest into a 1 h timeout.
+    (http_server.directory / "new.img.gz").symlink_to(image_bundle.img_gz)
     guest, _, _ = upgrade_guest(golden.base_img, name="urlup")
     guest.wait_ssh(timeout=420)
     guest.run(f"mkdir -p {PAYLOAD_MOUNT} && mount /dev/vdb {PAYLOAD_MOUNT}",

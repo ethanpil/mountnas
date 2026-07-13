@@ -191,8 +191,13 @@ if [ "$COLLECT_ONLY" = "1" ]; then
     exec "$VENV/bin/python" -m pytest "$SUITE_DIR" --collect-only -q "$@"
 fi
 
+# basetemp on the (space-checked) cache disk, NOT pytest's default under
+# /tmp: /tmp is tmpfs on many hosts, and tmp_path holds every guest's qcow2
+# overlays — an upgrade test writes ~5 GB of scratch there, which together
+# with an 8 GB guest swap-thrashes a 16 GB host until the guest wedges.
 set -- "$SUITE_DIR" -v \
     --run-dir "$RUN_DIR" \
+    --basetemp "$CACHE_DIR/pytest-tmp" \
     --junitxml "$RUN_DIR/junit.xml" \
     -o "log_file=$RUN_DIR/pytest.log" -o log_file_level=DEBUG \
     "$@"
