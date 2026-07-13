@@ -182,6 +182,17 @@ jobs:
           # Partition sizes are frozen per deployed stick (upgrades replace
           # files, never partitions), so grow-only decisions happen here.
           truncate -s 3584M "$IMG"; LOOP=$(losetup -fP --show "$IMG")
+          # Enforce the "keep in sync" note above: nas upgrade pre-checks temp
+          # space against its need_kb constant before unpacking the raw image,
+          # so the raw size here must stay comfortably under it — growing the
+          # image without bumping need_kb would pass the pre-check yet run out
+          # of space mid-unpack. The largest need_kb in files/nas is that
+          # constant (the smaller one is the modloop-free margin).
+          IMG_KB=$(( $(stat -c %s "$IMG") / 1024 ))
+          NEED_KB=$(sed -n "s/^[[:space:]]*need_kb=\([0-9]\{1,\}\).*/\1/p" /home/build/repo/mountnas-tools/files/nas | sort -n | tail -1)
+          [ -n "$NEED_KB" ] || { echo "ERROR: no need_kb constant found in files/nas — did the upgrade pre-check change?"; exit 1; }
+          [ $((IMG_KB + 131072)) -le "$NEED_KB" ] \
+            || { echo "ERROR: raw image (${IMG_KB} KiB) within 128 MiB of the nas upgrade temp-space pre-check (need_kb=${NEED_KB}) — bump need_kb in files/nas"; exit 1; }
           sgdisk --zap-all "$LOOP"
           sgdisk -n1:0:+2560M -t1:ef00 -c1:BOOT "$LOOP"
           sgdisk -n2:0:0 -t2:8300 -c2:MNASCFG "$LOOP"
