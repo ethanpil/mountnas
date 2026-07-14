@@ -181,7 +181,7 @@ rc-service nfs restart &amp;&amp; nas commit</code></pre>
 <h3>nas status — the pre-flight check</h3>
 <p><code>nas status</code> validates health and storage config without waking sleeping disks; exit code 1 on any failure makes it cron/monitoring friendly. <code>--deep</code> adds SMART/SnapRAID/time-sync; <code>--json</code> is machine-readable for Uptime&nbsp;Kuma, Zabbix, Homepage, etc.</p>
 <h3>This web dashboard</h3>
-<p>Enable/disable with <code>nas web on [port]</code> / <code>nas web off</code> (default port 8080, then <code>nas commit</code>). It is deliberately <b>read-only</b>: a root-run job renders a static page into RAM every 2 minutes and a tiny server (running as <code>nobody</code>) serves it — no request-time code, no forms, nothing to attack, no disk writes. Manage the box over SSH. <code>/status.json</code> serves the same data machine-readable.</p>
+<p>Enable/disable with <code>nas web on [port]</code> / <code>nas web off</code> (default port 8080, then <code>nas commit</code>). It is deliberately <b>read-only</b>: a root-run job renders static pages into RAM every 2 minutes and a tiny server (running as <code>nobody</code>) serves them — no request-time code, no forms, nothing to attack, no disk writes. Manage the box over SSH. <code>/system.html</code> adds hardware/CPU detail, your added packages, and the last 100 syslog lines; <code>/status.json</code> serves the dashboard data machine-readable.</p>
 <h3>Notifications</h3>
 <p>List sinks in <code>/etc/mountnas/notify.conf</code>, one per line; every alert goes to all of them:</p>
 <pre><code>ntfy:https://ntfy.sh/your-secret-topic          # push to your phone, no relay needed

@@ -1939,7 +1939,8 @@ nas web [on [port] | off | status]
   on [port]   enable (default port 8080), start now; persist: nas commit
   off         stop + disable
   status      is it enabled/running, and on which URL
-  The guide lives at /guide.html; machine-readable data at /status.json.
+  Pages: / (dashboard), /system.html (hardware, syslog tail, added
+  packages), /guide.html (user guide), /status.json (machine-readable).
 EOF
 ;;
 	history) cat <<EOF
