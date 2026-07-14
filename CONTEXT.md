@@ -9,9 +9,9 @@ that will silently regress if "cleaned up" without understanding it.
 
 ---
 
-## 1. Status at a glance (as of beta-2, 2026-07-07)
+## 1. Status at a glance (as of beta-4 + unreleased features, 2026-07-13)
 
-- **Build: GREEN, releases through beta-2 published.** The workflow assembles
+- **Build: GREEN, releases through beta-4 published.** The workflow assembles
   everything end-to-end: 4 local apks, `mkimage` ISO, single-slot 3.5 GiB
   `.img.gz` (~1 GB compressed). Signing key is a fixed secret since alpha-7
   (§6) — the published `.rsa.pub` is a stable trust anchor now.
@@ -25,6 +25,11 @@ that will silently regress if "cleaned up" without understanding it.
   docker + reboot persistence, apk persistence, disk-loss recovery — see §8);
   every defect it surfaced was fixed in beta-2.
 - **Still manual:** real USB stick on real hardware; backup restore drill (§8).
+- **Self-hosted QEMU suite** (`tests/qemu/`, 78 tests, see `TESTING-QEMU.md`):
+  boots the real image under KVM and covers everything the CI smoke tests
+  don't — per-command CLI behavior, fault injection (hot-unplug, EIO, power
+  cuts mid-upgrade), lbu persistence, mail, and the unreleased features
+  (category K). Run on a 16 GB KVM box via `sh tests/qemu/run-suite.sh`.
 - **Single deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd for a
   fresh install; the same file is what `nas upgrade` consumes). See §4.
 
@@ -49,7 +54,11 @@ mountnas/
 │       ├── nas                       # the CLI (setup/status/disks/changes/report/backup/upgrade/…)
 │       ├── mountnas                  # storage guard + data-service supervisor (init.d)
 │       ├── mountnas-mkdirs, mountnas-net, mountnas-sshkey, mountnas-issue   # boot helpers (init.d)
+│       ├── mountnas-web              # read-only web dashboard service (init.d, OFF by default)
 │       ├── pick-nic, gen-issue, write-bootcfg, data-watch, release-string   # /usr/libexec/mountnas
+│       ├── notify, smartd-notify, health-digest    # alert fan-out (/usr/libexec/mountnas)
+│       ├── gen-webstatus, web-refresh              # dashboard renderer + loop (libexec)
+│       ├── web-guide.html, web-logo.png            # static web assets -> /usr/share/mountnas/web
 │       ├── periodic-datawatch        # /etc/periodic/15min wrapper (lbu-excluded, dot-free name)
 │       ├── issue-ifupdown            # /etc/network/if-up.d hook
 │       ├── profile-nas-{welcome,aliases,prompt,resize}.sh    # /etc/profile.d (lbu-excluded)
@@ -59,9 +68,10 @@ mountnas/
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
+├── tests/qemu/                       # self-hosted QEMU suite (78 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh on every push/PR
-├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  LICENSE
+├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
 ```
 
 There are **four locally-built apks**, all signed by the per-build key and served
@@ -566,6 +576,39 @@ _reltag sed.
   — the watcher exits early unless the previous state was ok).
 - nas status and 'nas logs --persist status' surface whether the persistence
   setting is committed (it is /etc config — RAM-only until nas commit).
+
+**[Unreleased] notes (post-beta-4: notify sinks / ops log / web dashboard):**
+- **ONE alert delivery path**: `/usr/libexec/mountnas/notify` fans a
+  subject+body out to the `type:target` sinks in `/etc/mountnas/notify.conf`
+  (email/ntfy/webhook/slack/discord/gotify; the legacy `alert-email` address
+  is folded in as one more email sink). data-watch, smartd-notify,
+  health-digest, `nas upgrade` and `nas notify` ALL route through it — never
+  send an alert any other way. Stateless (no daemon); every network send is
+  bounded (`--max-time 10`) so a dead sink can never hang the 15-min watcher;
+  exit 1 if any sink failed. JSON payloads are built with jq (baked in).
+- **Ops log**: `_ops_log` appends `UTCts<TAB>op<TAB>actor<TAB>details`
+  DIRECTLY to `/cfg/mountnas-ops.log` — deliberately NOT the overlay, so it
+  persists with no commit and survives a half-broken boot. Best-effort by
+  contract: silently skipped when `/cfg` is absent or read-only (mid-backup);
+  self-trims past 1200 lines to the last 1000. `nas history` renders it;
+  `nas report` bundles it as ops-history.log. Actor = doas user + ssh
+  origin/tty.
+- **Web dashboard** (`mountnas-web` service, OFF by default; `nas web on`
+  does rc-update add + optional `/etc/conf.d/mountnas-web` PORT= override):
+  **static-only by design** — gen-webstatus renders index.html + status.json
+  into tmpfs `/run/mountnas/web` every ~2 min (web-refresh loop) and busybox
+  httpd serves that dir as `nobody`. NO request-time code — keep it that way;
+  that property is the whole security story. httpd comes from
+  **busybox-extras** (now in packages.list — core busybox has no httpd
+  applet). guide.html + logo.png ship in the apk under
+  `/usr/share/mountnas/web` and are copied to the webroot at service start.
+  Port 8080 by default (80 collides with dockerized reverse proxies too
+  often). Everything shown derives from `nas status/disks --json` (no
+  secrets by construction).
+- **Diskless dev-test caveat** (tests/qemu category K): pushing repo tools
+  into a guest patches the RAM root only — a reboot rebuilds from the
+  released apk and the pushed files vanish. Post-reboot assertions must read
+  raw files (e.g. the ops log on /cfg), not invoke new commands.
 
 **Known caveats:**
 - **Signing key — RESOLVED: `ABUILD_PRIVKEY` is set** (alpha-7 and beta-1

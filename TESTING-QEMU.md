@@ -2,7 +2,7 @@
 
 This document covers the self-hosted QEMU test suite in `tests/qemu/`:
 what hardware/VM you need, how to run it on a freshly installed Alpine
-Linux system, how to read the results, and **what every one of the 73
+Linux system, how to read the results, and **what every one of the 78
 tests actually verifies**.
 
 The suite complements — it does not replace — the blocking CI smoke tests
@@ -221,7 +221,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (73 tests)
+## 4. The complete test catalog (78 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -358,6 +358,22 @@ user networking.
 | `test_banner_shows_dhcp_ip` | `/etc/issue` carries the box's DHCP address — the banner a headless user reads off the monitor to find the box. Screenshot taken. |
 | `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` resolves to the box's address. |
 | `test_hostname_change_regenerates_banner` | `gen-issue` picks up a hostname change and rewrites the banner (the wizard and if-up hook both lean on it). |
+
+### K — Unreleased features (`test_k_features.py`, 5 tests)
+
+These exercise features that exist in the repo but not yet in a published
+image, so each runs on `dev_guest`: a golden guest with the repo's current
+`mountnas-tools/files` pushed over the released ones. **Diskless caveat:**
+the push patches the RAM root only — a reboot restores the released apk, so
+post-reboot assertions read raw files instead of invoking new commands.
+
+| Test | What it verifies |
+|---|---|
+| `test_notify_fans_out_to_webhook_and_email` | One `nas notify --test` reaches EVERY configured sink: a JSON webhook (host-side POST catcher validates title/host) and an email (SMTP sink validates the subject). |
+| `test_notify_lists_sinks_and_takes_piped_body` | `nas notify` with no args lists the configured sinks; a body piped into `nas notify "subject"` arrives intact in the delivered message. |
+| `test_data_watch_alerts_through_sinks` | The disk-loss watcher routes through the sink fan-out: with a webhook-only config (no msmtp at all), hot-unplugging the data disk still lands a DISCONNECTED alert as a JSON POST. |
+| `test_ops_log_history_and_no_commit_persistence` | A commit lands in `nas history` with a well-formed record (UTC ts, op, actor with `@`, details), and `/cfg/mountnas-ops.log` survives a reboot **without** any commit — the direct-to-/cfg design. |
+| `test_web_dashboard_guide_and_json` **[network]** | `nas web on` serves the dashboard (hostname, services, disks), valid `/status.json`, the full `/guide.html`, and the logo; `nas web status` reports running; the enable is in the ops log; `nas web off` stops serving. Installs busybox-extras from the CDN, hence the marker. The rendered page is saved as a report artifact for visual review. |
 
 ---
 
