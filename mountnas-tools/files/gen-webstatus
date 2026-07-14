@@ -54,7 +54,7 @@ gen_at=$(date '+%Y-%m-%d %H:%M:%S')
 loadavg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "?")
 cores=$(nproc 2>/dev/null || echo "?")
 mem=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2}
-	END{ if (t>0) printf "%.1f of %.1f GB (%d%%)", (t-a)/1048576, t/1048576, (t-a)*100/t; else print "?" }' /proc/meminfo 2>/dev/null)
+	END{ if (t>0) printf "%.1f used &middot; %.1f avail &middot; %.1f GB total", (t-a)/1048576, a/1048576, t/1048576; else print "?" }' /proc/meminfo 2>/dev/null)
 # RAM root fill matters on a diskless box: a full / breaks 'nas commit'
 ramroot=$(df -k / 2>/dev/null | awk 'NR==2{printf "%d%% of %.1f GB", $3*100/$2, $2/1048576}')
 ramroot_pct=$(df -k / 2>/dev/null | awk 'NR==2{printf "%d", $3*100/$2}')
@@ -160,7 +160,7 @@ disk_rows=$(printf '%s' "$dj" | jq -r '
 	  ] | if length == 0 then "<span class=\"mut\">no filesystem</span>" else join("<br>") end)</td></tr>"')
 [ -n "$disk_rows" ] || disk_rows='<tr><td colspan="6" class="mut">no disk data</td></tr>'
 
-# ---- system.html data: deeper facts + the syslog tail ----------------------
+# ---- deeper system facts + the syslog tail (bottom of the dashboard) -------
 cpu_model=$(awk -F': *' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
 [ -n "$cpu_model" ] || cpu_model="?"
 hw_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)
@@ -236,9 +236,17 @@ th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)
 td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:none}
 .mnt{display:inline-block}
-pre.log{background:var(--card);border:1px solid var(--line);border-radius:10px;
-padding:12px 14px;overflow-x:auto;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;
-color:var(--ink);max-height:70vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+pre.log{background:var(--card);padding:12px 16px;overflow-x:auto;
+font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;color:var(--ink);
+max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
+border-top:1px solid var(--line)}
+details.card{padding:0;margin-bottom:14px}
+details.card summary{cursor:pointer;padding:12px 16px;font-size:11px;
+letter-spacing:.09em;text-transform:uppercase;color:var(--mut);font-weight:600;
+list-style:none;display:flex;align-items:center;gap:8px}
+details.card summary::before{content:"\25B8";font-size:10px;transition:transform .12s}
+details.card[open] summary::before{transform:rotate(90deg)}
+details.card summary .mut{text-transform:none;letter-spacing:0;font-weight:400}
 .pkglist code{background:var(--offbg);border-radius:4px;padding:1px 6px;font-size:12px;
 display:inline-block;margin:2px 2px}
 footer{max-width:1080px;margin:0 auto;padding:0 20px 30px;color:var(--mut);font-size:12.5px;display:flex;gap:18px;flex-wrap:wrap}
@@ -303,7 +311,7 @@ $checks
 $recent_ops
     </ul></div>
   </div>
-  <div class="card tablecard">
+  <div class="card tablecard" style="margin-bottom:14px">
     <table>
       <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Temp</th><th>Filesystems</th></tr></thead>
       <tbody>
@@ -311,9 +319,25 @@ $disk_rows
       </tbody>
     </table>
   </div>
+  <div class="grid">
+    <div class="card"><h2>Hardware</h2>
+      <dl>
+        <dt>Machine</dt><dd>$hw</dd>
+        <dt>CPU</dt><dd>$cpu_model</dd>
+        <dt>Box time</dt><dd class="num">$now_tz</dd>
+      </dl>
+    </div>
+    <div class="card"><h2>Your added packages</h2>
+      <div class="pkglist">$extras</div>
+      <p class="mut" style="margin-top:8px;font-size:12px">Additions over the stock image (persist across reboots and upgrades once committed).</p>
+    </div>
+  </div>
+  <details class="card">
+    <summary>Syslog &mdash; last 100 lines <span class="mut">(newest at the bottom; RAM-only unless <span class="mono">nas logs --persist on</span>)</span></summary>
+    <pre class="log">$syslog_html</pre>
+  </details>
 </main>
 <footer>
-  <a href="system.html">System &amp; log</a>
   <a href="guide.html">User guide</a>
   <a href="status.json">status.json</a>
   <span>Read-only &mdash; manage over SSH with the <span class="mono">nas</span> CLI</span>
@@ -322,66 +346,6 @@ $disk_rows
 </html>
 EOF
 mv "$WEB/index.html.new" "$WEB/index.html"
-
-# ---- page 2: system details + syslog tail -----------------------------------
-cat > "$WEB/system.html.new" <<EOF
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="120">
-<title>System &middot; $host &middot; MountNAS</title>
-<link rel="icon" href="logo.png">
-<style>
-$css
-</style>
-</head>
-<body>
-<header>
-  <img src="logo.png" alt="MountNAS">
-  <div><h1>$host &middot; system</h1>
-  <div class="sub">MountNAS $rel &middot; <a href="index.html">back to the dashboard</a></div></div>
-  <div class="spacer"></div>
-  <div class="upd">updated $gen_at<br>refreshes every 2 min</div>
-</header>
-<main class="wrap">
-  <div class="grid">
-    <div class="card"><h2>Hardware &amp; OS</h2>
-      <dl>
-        <dt>Hardware</dt><dd>$hw</dd>
-        <dt>CPU</dt><dd>$cpu_model</dd>
-        <dt>Cores</dt><dd class="num">$cores</dd>
-        <dt>Memory</dt><dd class="num">$mem</dd>
-        <dt>CPU temp</dt><dd class="num">$cputemp</dd>
-        <dt>Kernel</dt><dd class="num">$kern</dd>
-      </dl>
-    </div>
-    <div class="card"><h2>Runtime</h2>
-      <dl>
-        <dt>Uptime</dt><dd class="num">$up</dd>
-        <dt>Load</dt><dd class="num">$loadavg</dd>
-        <dt>RAM root</dt><dd>$ramroot_html</dd>
-        <dt>Box time</dt><dd class="num">$now_tz</dd>
-        <dt>Release</dt><dd>$rel <span class="mut">($build)</span></dd>
-        <dt>Packages</dt><dd class="num">$pkgcount installed</dd>
-      </dl>
-    </div>
-    <div class="card"><h2>Your added packages</h2>
-      <div class="pkglist">$extras</div>
-      <p class="mut" style="margin-top:8px;font-size:12px">Additions over the stock image (persist across reboots and upgrades once committed).</p>
-    </div>
-  </div>
-  <h2 style="font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);margin:6px 0 8px">Syslog &mdash; last 100 lines <span style="text-transform:none;letter-spacing:0">(newest at the bottom; RAM-only unless <span class="mono">nas logs --persist on</span>)</span></h2>
-  <pre class="log">$syslog_html</pre>
-</main>
-<footer>
-  <a href="index.html">Dashboard</a>
-  <a href="guide.html">User guide</a>
-  <a href="status.json">status.json</a>
-  <span>Read-only &mdash; manage over SSH with the <span class="mono">nas</span> CLI</span>
-</footer>
-</body>
-</html>
-EOF
-mv "$WEB/system.html.new" "$WEB/system.html"
+# the short-lived separate system page is folded into the dashboard now —
+# clear a stale copy from the tmpfs webroot on boxes that rendered one
+rm -f "$WEB/system.html" "$WEB/system.html.new"

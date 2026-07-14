@@ -152,6 +152,10 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
     page = g.run("curl -fsS http://127.0.0.1:8080/", check=True).out
     host = g.run("hostname", check=True).out.strip()
     assert host in page and "Services" in page and "Disk" in page, page[:500]
+    # the system detail lives at the bottom of the ONE page: hardware,
+    # added packages, and a collapsed syslog tail
+    for marker in ("Syslog", "Your added packages", "Machine", "<details"):
+        assert marker in page, f"{marker!r} missing from dashboard"
 
     sj = g.run("curl -fsS http://127.0.0.1:8080/status.json", check=True)
     data = json.loads(sj.out)
@@ -159,10 +163,6 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
 
     guide = g.run("curl -fsS http://127.0.0.1:8080/guide.html", check=True).out
     assert "MountNAS User Guide" in guide and "nas commit" in guide
-
-    system = g.run("curl -fsS http://127.0.0.1:8080/system.html", check=True).out
-    assert "Syslog" in system and "Packages" in system, system[:500]
-    assert host in system
 
     logo = g.run("curl -fsS -o /dev/null -w '%{http_code}' "
                  "http://127.0.0.1:8080/logo.png", check=True)
@@ -175,11 +175,9 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
     hist = g.run("nas history", check=True)
     assert "web" in hist.out
 
-    # keep the rendered pages as report artifacts for visual review
+    # keep the rendered page as a report artifact for visual review
     (artifacts.out_dir / "dashboard.html").write_text(page, encoding="utf-8")
     artifacts.attach_file("rendered dashboard", artifacts.out_dir / "dashboard.html")
-    (artifacts.out_dir / "system.html").write_text(system, encoding="utf-8")
-    artifacts.attach_file("rendered system page", artifacts.out_dir / "system.html")
 
     off = g.run("nas web off", timeout=120)
     assert off.rc == 0
