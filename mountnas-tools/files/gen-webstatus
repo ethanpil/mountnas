@@ -104,23 +104,23 @@ services=$(printf '%s' "$sj" | jq -r '
 	] | join(" ")')
 [ -n "$services" ] || services='<span class="mut">no service data</span>'
 
-# optional services are OFF by default, so they are probed here (a stopped
-# one is a neutral "off", never a warning — that is exactly why they cannot
-# join the cmd_status service loop, which warns on stopped entries)
-opt_services=""
+# off-by-default services are probed here and folded into the same pill row
+# (a stopped one is a neutral "off", never a warning — that is exactly why
+# they cannot join the cmd_status service loop, which warns on stopped
+# entries)
 for s in tailscale zerotier-one nut-upsd nut-upsmon; do
 	if rc-service "$s" status >/dev/null 2>&1; then
-		opt_services="$opt_services <span class=\"pill p-ok\"><i></i>$s</span>"
+		services="$services <span class=\"pill p-ok\"><i></i>$s</span>"
 	else
-		opt_services="$opt_services <span class=\"pill p-off\"><i></i>$s</span>"
+		services="$services <span class=\"pill p-off\"><i></i>$s</span>"
 	fi
 done
 # WireGuard has no daemon — an existing wg interface means it is up
 wg_ifs=$(wg show interfaces 2>/dev/null | tr '\n' ' ')
 if [ -n "${wg_ifs% }" ]; then
-	opt_services="$opt_services <span class=\"pill p-ok\"><i></i>wireguard (${wg_ifs% })</span>"
+	services="$services <span class=\"pill p-ok\"><i></i>wireguard (${wg_ifs% })</span>"
 else
-	opt_services="$opt_services <span class=\"pill p-off\"><i></i>wireguard</span>"
+	services="$services <span class=\"pill p-off\"><i></i>wireguard</span>"
 fi
 
 checks=$(printf '%s' "$sj" | jq -r '
@@ -137,10 +137,35 @@ recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null \
 	| awk -F'\t' '{ printf "<li><span class=\"num mut\">%s</span> <b>%s</b> <span class=\"mut\">%s</span></li>\n", substr($1,1,16), $2, $4 }')
 [ -n "$recent_ops" ] || recent_ops='<li class="mut">none yet — commits, backups and upgrades land here</li>'
 
+# SMART overall health per disk, STANDBY-SAFE and cached: smartctl -n standby
+# returns without touching a spun-down drive (same discipline as smartd's
+# shipped config), and the verdicts are refreshed at most every 15 min so the
+# 2-minute page cycle never turns into a SMART polling loop. Cache lives
+# OUTSIDE the webroot.
+SMART_CACHE=/run/mountnas/websmart
+if [ ! -f "$SMART_CACHE" ] || [ "$(( $(date +%s) - $(date -r "$SMART_CACHE" +%s 2>/dev/null || echo 0) ))" -ge 900 ]; then
+	printf '%s' "$dj" \
+	| jq -r '.disks[]? | select(.name | test("^(fd|sr|loop|ram|zram)") | not) | .name' \
+	| while IFS= read -r d; do
+		[ -n "$d" ] || continue
+		sm=$(smartctl -n standby -H "/dev/$d" 2>/dev/null)
+		case "$sm" in
+			*PASSED*|*"SMART Health Status: OK"*) v=PASSED ;;
+			*FAILED*)                             v=FAILED ;;
+			*STANDBY*|*standby*)                  v=standby ;;
+			*)                                    v=n/a ;;
+		esac
+		printf '%s\t%s\n' "$d" "$v"
+	done > "$SMART_CACHE.new" && mv "$SMART_CACHE.new" "$SMART_CACHE"
+fi
+smart_map=$(awk -F'\t' '{printf "{\"k\":\"%s\",\"v\":\"%s\"}\n", $1, $2}' "$SMART_CACHE" 2>/dev/null \
+	| jq -s 'map({(.k): .v}) | add // {}')
+[ -n "$smart_map" ] || smart_map='{}'
+
 # every partition that carries a filesystem is listed (mounted ones with
 # their free space) — incl. the boot USB's BOOT/MNASCFG; junk devices
 # (floppy/cdrom/loop) are filtered out
-disk_rows=$(printf '%s' "$dj" | jq -r '
+disk_rows=$(printf '%s' "$dj" | jq -r --argjson smart "$smart_map" '
 	def hum: if . == null then "?"
 		elif . >= 1099511627776 then "\(. / 1099511627776 * 10 | round / 10) TB"
 		elif . >= 1073741824 then "\(. / 1073741824 * 10 | round / 10) GB"
@@ -151,6 +176,11 @@ disk_rows=$(printf '%s' "$dj" | jq -r '
 	"<td class=\"num\">\(.size | hum)</td>" +
 	"<td>\(if .rotational then "HDD" else "SSD" end)</td>" +
 	"<td class=\"num\">\((.temp // "-") | @html)</td>" +
+	"<td>\( ($smart[.name] // "n/a") as $sv |
+		if $sv == "PASSED" then "<span class=\"pill p-ok\">PASSED</span>"
+		elif $sv == "FAILED" then "<span class=\"pill p-fail\">FAILED</span>"
+		elif $sv == "standby" then "<span class=\"pill p-off\">standby</span>"
+		else "<span class=\"mut\">n/a</span>" end)</td>" +
 	"<td>\([ .partitions[]? | select(.fstype != null) |
 		if .mountpoint != null then
 			"<span class=\"mnt\"><b>\((.label // .name) | @html)</b> &rarr; \(.mountpoint | @html) <span class=\"mut\">&middot; \(.fstype | @html) &middot; \(.fsavail | hum) free</span></span>"
@@ -158,7 +188,7 @@ disk_rows=$(printf '%s' "$dj" | jq -r '
 			"<span class=\"mnt mut\"><b>\((.label // .name) | @html)</b> &middot; \(.fstype | @html) &middot; not mounted</span>"
 		end
 	  ] | if length == 0 then "<span class=\"mut\">no filesystem</span>" else join("<br>") end)</td></tr>"')
-[ -n "$disk_rows" ] || disk_rows='<tr><td colspan="6" class="mut">no disk data</td></tr>'
+[ -n "$disk_rows" ] || disk_rows='<tr><td colspan="7" class="mut">no disk data</td></tr>'
 
 # ---- deeper system facts + the syslog tail (bottom of the dashboard) -------
 cpu_model=$(awk -F': *' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
@@ -279,14 +309,22 @@ $css
 </header>
 <main class="wrap">
   <div class="grid">
+    <div class="card"><h2>Hardware</h2>
+      <dl>
+        <dt>Machine</dt><dd>$hw</dd>
+        <dt>CPU</dt><dd>$cpu_model</dd>
+        <dt>Cores</dt><dd class="num">$cores</dd>
+        <dt>CPU temp</dt><dd class="num">$cputemp</dd>
+        <dt>Memory</dt><dd class="num">$mem</dd>
+        <dt>Box time</dt><dd class="num">$now_tz</dd>
+      </dl>
+    </div>
     <div class="card"><h2>System</h2>
       <dl>
         <dt>Uptime</dt><dd class="num">$up</dd>
         <dt>Address</dt><dd class="num">$ips</dd>
         <dt>Load</dt><dd class="num">$loadavg <span class="mut">/ $cores cores</span></dd>
-        <dt>Memory</dt><dd class="num">$mem</dd>
         <dt>RAM root</dt><dd>$ramroot_html</dd>
-        <dt>CPU temp</dt><dd class="num">$cputemp</dd>
         <dt>Kernel</dt><dd class="num">$kern</dd>
         <dt>Packages</dt><dd class="num">$pkgcount installed</dd>
         <dt>Release</dt><dd>$rel <span class="mut">($build)</span></dd>
@@ -302,8 +340,7 @@ $css
         <dt>Alert sinks</dt><dd>$sinks_html</dd>
       </dl>
     </div>
-    <div class="card"><h2>Services</h2><div class="svc">$services</div>
-      <h2 class="later">Optional</h2><div class="svc">$opt_services</div></div>
+    <div class="card"><h2>Services</h2><div class="svc">$services</div></div>
     <div class="card"><h2>Checks</h2><ul class="checks">
 $checks
     </ul></div>
@@ -313,20 +350,13 @@ $recent_ops
   </div>
   <div class="card tablecard" style="margin-bottom:14px">
     <table>
-      <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Temp</th><th>Filesystems</th></tr></thead>
+      <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Temp</th><th>SMART</th><th>Filesystems</th></tr></thead>
       <tbody>
 $disk_rows
       </tbody>
     </table>
   </div>
   <div class="grid">
-    <div class="card"><h2>Hardware</h2>
-      <dl>
-        <dt>Machine</dt><dd>$hw</dd>
-        <dt>CPU</dt><dd>$cpu_model</dd>
-        <dt>Box time</dt><dd class="num">$now_tz</dd>
-      </dl>
-    </div>
     <div class="card"><h2>Your added packages</h2>
       <div class="pkglist">$extras</div>
       <p class="mut" style="margin-top:8px;font-size:12px">Additions over the stock image (persist across reboots and upgrades once committed).</p>
