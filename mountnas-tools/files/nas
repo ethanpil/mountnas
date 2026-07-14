@@ -164,6 +164,7 @@ ${C_HD}Everyday${C_NO}
   ${C_B}changes${C_NO}   List unsaved changes; --diff shows content  (alias: changed)
   ${C_B}commit${C_NO}    Save changes to the USB; label: -m "note"     (alias: save)
   ${C_B}logs${C_NO}      View the system log  [-n N | -f | --persist on|off|status]
+  ${C_B}web${C_NO}       Read-only dashboard + user guide      [on [port]|off|status]
 
 ${C_HD}Recover${C_NO}
   ${C_B}rollback${C_NO}  Restore a previous committed config          [--list | <n>]
@@ -881,6 +882,52 @@ cmd_logs() {
 		tail -n "$nn" "$t" 2>/dev/null || warn "no log file at $t yet"
 		;;
 	*) usage "nas logs [-n N | -f | --persist on|off|status]"; return 1 ;;
+	esac
+}
+
+# nas web — the read-only LAN status dashboard + built-in user guide
+# (mountnas-web service: busybox httpd serving a tmpfs webroot that
+# gen-webstatus re-renders every ~2 min; static files only, no request-time
+# code, httpd dropped to nobody). OFF by default; this is the opt-in switch.
+cmd_web() {
+	local wport
+	wport=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-web 2>/dev/null | head -n1)
+	: "${wport:=8080}"
+	case "${1:-status}" in
+	on)
+		if [ -n "${2:-}" ]; then
+			case "$2" in *[!0-9]*) usage "nas web [on [port] | off | status]"; return 1 ;; esac
+			wport=$2
+			printf 'PORT=%s\n' "$wport" > /etc/conf.d/mountnas-web
+		fi
+		command -v httpd >/dev/null 2>&1 \
+			|| { bad "busybox httpd missing — run: apk add busybox-extras && nas commit"; return 1; }
+		rc-update -q add mountnas-web default 2>/dev/null || true
+		rc-service mountnas-web restart >/dev/null 2>&1 \
+			|| { bad "mountnas-web failed to start — check: rc-service mountnas-web status"; return 1; }
+		_ops_log web "enabled (port $wport)"
+		ok "web dashboard ON -> http://$(hostname).local:$wport/  (read-only, plain HTTP, LAN)"
+		hint "built-in user guide: http://$(hostname).local:$wport/guide.html"
+		hint "Persist the setting: nas commit"
+		;;
+	off)
+		rc-service mountnas-web stop >/dev/null 2>&1 || true
+		rc-update -q del mountnas-web default 2>/dev/null || true
+		_ops_log web "disabled"
+		ok "web dashboard OFF"
+		hint "Persist the setting: nas commit"
+		;;
+	status)
+		if rc-service mountnas-web status >/dev/null 2>&1; then
+			ok "web dashboard running -> http://$(hostname).local:$wport/"
+			hint "disable: nas web off"
+		elif rc-update show default 2>/dev/null | grep -q mountnas-web; then
+			warn "web dashboard enabled but not running — try: rc-service mountnas-web start"
+		else
+			hint "web dashboard off (enable: nas web on [port] — default port 8080)"
+		fi
+		;;
+	*) usage "nas web [on [port] | off | status]"; return 1 ;;
 	esac
 }
 
@@ -1883,6 +1930,18 @@ nas report
   config) written to /tmp for attaching to bug reports.
 EOF
 ;;
+	web) cat <<EOF
+nas web [on [port] | off | status]
+  Read-only LAN status dashboard + the built-in user guide, served by a
+  tiny static-file server (busybox httpd as nobody). A background job
+  re-renders the page every ~2 minutes into RAM — no request-time code,
+  no disk writes, nothing to manage. Plain HTTP on your trusted LAN.
+  on [port]   enable (default port 8080), start now; persist: nas commit
+  off         stop + disable
+  status      is it enabled/running, and on which URL
+  The guide lives at /guide.html; machine-readable data at /status.json.
+EOF
+;;
 	history) cat <<EOF
 nas history [-n N | --all]
   The append-only operations log: every setup, commit (with its note),
@@ -1949,6 +2008,7 @@ case "${1:-help}" in
 	commit|save) shift; cmd_commit "$@" ;;
 	rollback) shift; cmd_rollback "$@" ;;
 	logs) shift; cmd_logs "$@" ;;
+	web) shift; cmd_web "$@" ;;
 	history) shift; cmd_history "$@" ;;
 	notify) shift; cmd_notify "$@" ;;
 	backup) shift; cmd_backup "$@" ;;

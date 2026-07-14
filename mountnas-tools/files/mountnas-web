@@ -1,0 +1,58 @@
+#!/sbin/openrc-run
+# mountnas-web — read-only LAN status dashboard + the built-in user guide.
+#
+# OFF by default ('nas web on' enables it — same opt-in pattern as every
+# other optional service). Serves ONLY pre-rendered static files from a
+# tmpfs webroot: a root-run refresher (web-refresh -> gen-webstatus) writes
+# index.html/status.json every ~2 min and busybox httpd — dropped to nobody —
+# serves them. No request-time code, no auth/TLS (LAN, read-only, no secrets
+# in the data by construction; the trusted-LAN posture matches sshd/samba).
+#
+# Port defaults to 8080 (80 collides with dockerized reverse proxies too
+# often); override via PORT= in /etc/conf.d/mountnas-web ('nas web on <port>'
+# writes it). WEB_REFRESH_SEC= tunes the render cadence.
+description="MountNAS read-only web status page"
+
+PORT=${PORT:-8080}
+WEB_REFRESH_SEC=${WEB_REFRESH_SEC:-120}
+WEBROOT=/run/mountnas/web
+HTTPD_PID=/run/mountnas-web.httpd.pid
+REFRESH_PID=/run/mountnas-web.refresh.pid
+
+depend() {
+	need localmount
+	after net mountnas
+}
+
+start_pre() {
+	if ! command -v httpd >/dev/null 2>&1; then
+		eerror "busybox httpd not found — install it with: apk add busybox-extras"
+		return 1
+	fi
+	mkdir -p "$WEBROOT"
+	# static assets ship read-only in the apk; the dashboard itself is
+	# rendered into tmpfs by gen-webstatus
+	cp /usr/share/mountnas/web/logo.png  "$WEBROOT/" 2>/dev/null || true
+	cp /usr/share/mountnas/web/guide.html "$WEBROOT/" 2>/dev/null || true
+	/usr/libexec/mountnas/gen-webstatus 2>/dev/null || true
+	chmod 0755 "$WEBROOT" 2>/dev/null || true
+}
+
+start() {
+	ebegin "Starting MountNAS web status page (port $PORT)"
+	WEB_REFRESH_SEC="$WEB_REFRESH_SEC" start-stop-daemon --start --background \
+		--make-pidfile --pidfile "$REFRESH_PID" \
+		--exec /usr/libexec/mountnas/web-refresh
+	start-stop-daemon --start --background \
+		--make-pidfile --pidfile "$HTTPD_PID" \
+		--exec /usr/sbin/httpd -- -f -p "$PORT" -h "$WEBROOT" -u nobody
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping MountNAS web status page"
+	start-stop-daemon --stop --quiet --pidfile "$HTTPD_PID" 2>/dev/null
+	start-stop-daemon --stop --quiet --pidfile "$REFRESH_PID" 2>/dev/null
+	rm -f "$HTTPD_PID" "$REFRESH_PID"
+	eend 0
+}

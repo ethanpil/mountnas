@@ -1,0 +1,200 @@
+#!/bin/sh
+# gen-webstatus — render the read-only status dashboard into the tmpfs webroot.
+#
+# Design (see CONTEXT.md): NO request-time code. A root-run refresher renders
+# static index.html + status.json into /run/mountnas/web every ~2 minutes and
+# busybox httpd serves only those files — the attack surface is "serve static
+# files", and tmpfs means zero disk writes (no drive spin-up, no flash wear).
+# Everything shown comes from 'nas status --json' + 'nas disks --json', which
+# already exclude secrets by construction.
+WEB=${WEB:-/run/mountnas/web}
+mkdir -p "$WEB"
+
+# status --json exits 1 when a check FAILs — the output is still the snapshot
+# we want. Guard with jq so a hard failure degrades to an "unknown" page, not
+# a broken one.
+sj=$(NO_COLOR=1 nas status --json 2>/dev/null) || true
+dj=$(NO_COLOR=1 nas disks --json 2>/dev/null) || true
+printf '%s' "$sj" | jq -e . >/dev/null 2>&1 || sj='{}'
+printf '%s' "$dj" | jq -e . >/dev/null 2>&1 || dj='{}'
+
+# machine-readable copy for integrations (atomic swap; also linked in the footer)
+printf '%s\n' "$sj" > "$WEB/status.json.new" && mv "$WEB/status.json.new" "$WEB/status.json"
+
+state=$(printf '%s' "$sj" | jq -r '
+	if (.checks.fail // 0) > 0 then "fail"
+	elif (.checks.warn // 0) > 0 then "warn"
+	elif .healthy == true then "ok"
+	else "unknown" end')
+case "$state" in
+	ok)      state_word="Healthy" ;;
+	warn)    state_word="Warnings" ;;
+	fail)    state_word="Attention" ;;
+	*)       state_word="Unknown" ;;
+esac
+
+host=$(printf '%s' "$sj" | jq -r '.hostname // "mountnas" | @html')
+rel=$(printf '%s' "$sj" | jq -r '.release // "?" | @html')
+build=$(printf '%s' "$sj" | jq -r '.version // "?" | @html')
+ips=$(printf '%s' "$sj" | jq -r '[.ips[]? | @html] | join(" &middot; ") | if . == "" then "?" else . end')
+up=$(printf '%s' "$sj" | jq -r '(.uptime_seconds // 0) |
+	if . >= 86400 then "\(. / 86400 | floor)d \(. % 86400 / 3600 | floor)h"
+	elif . >= 3600 then "\(. / 3600 | floor)h \(. % 3600 / 60 | floor)m"
+	else "\(. / 60 | floor)m" end')
+datastate=$(printf '%s' "$sj" | jq -r '.data_disk // "?"')
+cfgstate=$(printf '%s' "$sj" | jq -r '.config_partition // "?"')
+unsaved=$(printf '%s' "$sj" | jq -r '.unsaved_changes // 0')
+lastbk=$(printf '%s' "$sj" | jq -r '(.last_backup_epoch // 0) |
+	if . > 0 then (. | strflocaltime("%Y-%m-%d %H:%M")) else "never" end' 2>/dev/null || echo "never")
+gen_at=$(date '+%Y-%m-%d %H:%M:%S')
+
+case "$datastate" in
+	ok) data_cls=ok; data_word="mounted" ;;
+	fresh) data_cls=warn; data_word="not configured yet" ;;
+	*) data_cls=fail; data_word="$datastate" ;;
+esac
+if [ "${unsaved:-0}" -gt 0 ] 2>/dev/null; then
+	unsaved_html="<span class=\"pill p-warn\">$unsaved unsaved &mdash; nas commit</span>"
+else
+	unsaved_html="<span class=\"pill p-ok\">none</span>"
+fi
+
+services=$(printf '%s' "$sj" | jq -r '
+	[.services[]? |
+	  if .running then "<span class=\"pill p-ok\"><i></i>\(.name | @html)</span>"
+	  else "<span class=\"pill p-off\"><i></i>\(.name | @html)</span>" end
+	] | join(" ")')
+[ -n "$services" ] || services='<span class="mut">no service data</span>'
+
+checks=$(printf '%s' "$sj" | jq -r '
+	([.fail_lines[]? | "<li class=\"c-fail\">\(@html)</li>"] +
+	 [.warn_lines[]? | "<li class=\"c-warn\">\(@html)</li>"]) | join("\n")')
+if [ -z "$checks" ]; then
+	if [ "$state" = ok ]; then checks='<li class="c-ok">All checks passed</li>'
+	else checks='<li class="mut">no check data</li>'; fi
+fi
+
+disk_rows=$(printf '%s' "$dj" | jq -r '
+	def hum: if . == null then "?"
+		elif . >= 1099511627776 then "\(. / 1099511627776 * 10 | round / 10) TB"
+		elif . >= 1073741824 then "\(. / 1073741824 * 10 | round / 10) GB"
+		else "\(. / 1048576 | floor) MB" end;
+	.disks[]? |
+	"<tr><td class=\"mono\">\(.name | @html)\(if .boot_usb then " <span class=\"pill p-boot\">boot USB</span>" else "" end)</td>" +
+	"<td>\((.model // .vendor // "?") | @html)</td>" +
+	"<td class=\"num\">\(.size | hum)</td>" +
+	"<td>\(if .rotational then "HDD" else "SSD" end)</td>" +
+	"<td class=\"num\">\((.temp // "-") | @html)</td>" +
+	"<td>\([ .partitions[]? | select(.mountpoint != null) |
+		"<span class=\"mnt\"><b>\((.label // .name) | @html)</b> &rarr; \(.mountpoint | @html) <span class=\"mut\">(\(.fsavail | hum) free)</span></span>"
+	  ] | if length == 0 then "<span class=\"mut\">&mdash;</span>" else join("<br>") end)</td></tr>"')
+[ -n "$disk_rows" ] || disk_rows='<tr><td colspan="6" class="mut">no disk data</td></tr>'
+
+cat > "$WEB/index.html.new" <<EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="120">
+<title>$host &middot; MountNAS</title>
+<link rel="icon" href="logo.png">
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#16222e;--mut:#5c6b7a;--line:#d9e1e9;
+--navy:#043b62;--acc:#1273b8;--ok:#148a46;--okbg:#e2f3e9;--warn:#8a6100;
+--warnbg:#f7edd0;--fail:#c22d23;--failbg:#fae4e2;--off:#5c6b7a;--offbg:#e7ecf1}
+@media(prefers-color-scheme:dark){:root{--bg:#0d151d;--card:#152230;--ink:#e4edf5;
+--mut:#8ea1b3;--line:#233648;--navy:#043b62;--acc:#4aa3e0;--ok:#3cc776;--okbg:#12301e;
+--warn:#e3ac3c;--warnbg:#2e2513;--fail:#ff6f64;--failbg:#341713;--off:#8ea1b3;--offbg:#1b2a3a}}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.mut{color:var(--mut)}
+header{background:var(--navy);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header img{width:44px;height:44px;border-radius:9px}
+header h1{font-size:20px;line-height:1.2}
+header .sub{color:#a8c4dc;font-size:12.5px}
+header .spacer{flex:1}
+.state{font-weight:700;padding:7px 16px;border-radius:22px;font-size:14px}
+.state.ok{background:#1d9d55;color:#fff}.state.warn{background:#e0a93a;color:#3a2b00}
+.state.fail{background:#e04b40;color:#fff}.state.unknown{background:#5c6b7a;color:#fff}
+header .upd{color:#a8c4dc;font-size:11.5px;text-align:right}
+.wrap{max-width:1080px;margin:0 auto;padding:18px 20px 40px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:13.5px}
+dt{color:var(--mut);white-space:nowrap}dd{text-align:right}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:14px;font-size:12px;font-weight:600}
+.pill i{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
+.p-ok{color:var(--ok);background:var(--okbg)}.p-warn{color:var(--warn);background:var(--warnbg)}
+.p-fail{color:var(--fail);background:var(--failbg)}.p-off{color:var(--off);background:var(--offbg)}
+.p-boot{color:var(--acc);background:var(--offbg);font-size:10.5px}
+.svc{display:flex;flex-wrap:wrap;gap:7px}
+ul.checks{list-style:none;font-size:13px}
+ul.checks li{padding:4px 0 4px 20px;position:relative}
+ul.checks li::before{content:"";position:absolute;left:4px;top:11px;width:8px;height:8px;border-radius:50%}
+.c-ok::before{background:var(--ok)}.c-warn::before{background:var(--warn)}.c-fail::before{background:var(--fail)}
+.c-fail{color:var(--fail);font-weight:600}.c-warn{color:var(--warn)}
+.tablecard{padding:0;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
+td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.mnt{display:inline-block}
+.big{font-size:17px;font-weight:700}
+footer{max-width:1080px;margin:0 auto;padding:0 20px 30px;color:var(--mut);font-size:12.5px;display:flex;gap:18px;flex-wrap:wrap}
+footer a{color:var(--acc);text-decoration:none}
+footer a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<header>
+  <img src="logo.png" alt="MountNAS">
+  <div><h1>$host</h1><div class="sub">MountNAS $rel &middot; read-only dashboard</div></div>
+  <div class="spacer"></div>
+  <div class="state $state">$state_word</div>
+  <div class="upd">updated $gen_at<br>refreshes every 2 min</div>
+</header>
+<main class="wrap">
+  <div class="grid">
+    <div class="card"><h2>System</h2>
+      <dl>
+        <dt>Uptime</dt><dd class="num">$up</dd>
+        <dt>Address</dt><dd class="num">$ips</dd>
+        <dt>Release</dt><dd>$rel <span class="mut">($build)</span></dd>
+        <dt>Unsaved changes</dt><dd>$unsaved_html</dd>
+        <dt>Last backup</dt><dd class="num">$lastbk</dd>
+      </dl>
+    </div>
+    <div class="card"><h2>Storage</h2>
+      <dl>
+        <dt>Data disk</dt><dd><span class="pill p-$data_cls"><i></i>$data_word</span></dd>
+        <dt>Config partition</dt><dd><span class="pill p-$( [ "$cfgstate" = ok ] && echo ok || echo fail )"><i></i>$cfgstate</span></dd>
+      </dl>
+      <p class="mut" style="margin-top:9px;font-size:12.5px">Docker/Samba/NFS are held until /mnt/nasdata is mounted.</p>
+    </div>
+    <div class="card"><h2>Services</h2><div class="svc">$services</div></div>
+    <div class="card"><h2>Checks</h2><ul class="checks">
+$checks
+    </ul></div>
+  </div>
+  <div class="card tablecard">
+    <table>
+      <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Temp</th><th>Mounted</th></tr></thead>
+      <tbody>
+$disk_rows
+      </tbody>
+    </table>
+  </div>
+</main>
+<footer>
+  <a href="guide.html">User guide</a>
+  <a href="status.json">status.json</a>
+  <span>Read-only &mdash; manage over SSH with the <span class="mono">nas</span> CLI</span>
+</footer>
+</body>
+</html>
+EOF
+mv "$WEB/index.html.new" "$WEB/index.html"

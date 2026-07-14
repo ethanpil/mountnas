@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MountNAS User Guide</title>
+<link rel="icon" href="logo.png">
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#16222e;--mut:#5c6b7a;--line:#d9e1e9;
+--navy:#043b62;--acc:#1273b8;--ok:#148a46;--warn:#8a6100;--warnbg:#f7edd0;
+--fail:#c22d23;--failbg:#fae4e2;--code:#f2f5f8;--codeink:#123a5c}
+@media(prefers-color-scheme:dark){:root{--bg:#0d151d;--card:#152230;--ink:#e4edf5;
+--mut:#8ea1b3;--line:#233648;--acc:#4aa3e0;--ok:#3cc776;--warn:#e3ac3c;--warnbg:#2e2513;
+--fail:#ff6f64;--failbg:#341713;--code:#0f1a24;--codeink:#9cc6e8}}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{background:var(--navy);color:#fff;padding:18px 20px;display:flex;align-items:center;gap:14px}
+header img{width:48px;height:48px;border-radius:10px}
+header h1{font-size:21px}
+header .sub{color:#a8c4dc;font-size:12.5px}
+nav{position:sticky;top:0;background:var(--card);border-bottom:1px solid var(--line);
+padding:8px 20px;display:flex;gap:4px 16px;flex-wrap:wrap;font-size:13px;z-index:2}
+nav a{color:var(--acc);text-decoration:none;white-space:nowrap}
+nav a:hover{text-decoration:underline}
+main{max-width:880px;margin:0 auto;padding:10px 20px 60px}
+section{margin-top:34px}
+h2{font-size:20px;padding-bottom:6px;border-bottom:2px solid var(--line);margin-bottom:14px}
+h3{font-size:15.5px;margin:20px 0 8px;color:var(--acc)}
+p{margin:8px 0;max-width:74ch}
+ul,ol{margin:8px 0 8px 22px;max-width:74ch}
+li{margin:3px 0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+code{background:var(--code);color:var(--codeink);padding:1px 5px;border-radius:4px}
+pre{background:var(--code);color:var(--codeink);border:1px solid var(--line);
+border-radius:8px;padding:10px 13px;overflow-x:auto;margin:8px 0}
+pre code{background:none;padding:0}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:10px 0}
+th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--mut);
+text-align:left;padding:8px 10px;border-bottom:2px solid var(--line)}
+td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+td:first-child{white-space:nowrap}
+.warn{background:var(--warnbg);border-left:4px solid var(--warn);border-radius:0 8px 8px 0;padding:10px 14px;margin:12px 0}
+.danger{background:var(--failbg);border-left:4px solid var(--fail);border-radius:0 8px 8px 0;padding:10px 14px;margin:12px 0}
+.mut{color:var(--mut)}
+footer{max-width:880px;margin:0 auto;padding:0 20px 40px;color:var(--mut);font-size:12.5px}
+footer a{color:var(--acc)}
+a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weight:400}
+</style>
+</head>
+<body>
+<header>
+  <img src="logo.png" alt="MountNAS">
+  <div><h1>MountNAS User Guide</h1>
+  <div class="sub">Ships with your release &middot; <a href="index.html" style="color:#a8c4dc">back to the dashboard</a></div></div>
+</header>
+<nav>
+  <a href="#philosophy">Philosophy</a>
+  <a href="#how">How it works</a>
+  <a href="#firstboot">First boot</a>
+  <a href="#storage">Storage</a>
+  <a href="#services">Sharing &amp; services</a>
+  <a href="#monitoring">Monitoring &amp; alerts</a>
+  <a href="#maintenance">Maintenance</a>
+  <a href="#commands">Command manual</a>
+  <a href="#files">File map</a>
+  <a href="#troubleshooting">Troubleshooting</a>
+</nav>
+<main>
+
+<section id="philosophy">
+<h2>Philosophy <a class="top" href="#top">&uarr;</a></h2>
+<p>MountNAS is a <b>diskless Alpine NAS that runs entirely from RAM</b> off a USB stick. The stick holds the OS and your saved configuration; your data lives on ordinary mounted drives. It is built for power users who want a small, transparent, hands-on system — every moving part is a readable shell script you can inspect (and, in a pinch, patch) on the box.</p>
+<ul>
+<li><b>The OS is rebuilt in RAM at every boot</b> from packages on the stick plus a small config overlay. A reboot is a factory-fresh OS with your config applied.</li>
+<li><b>Nothing persists until you commit.</b> <code>nas commit</code> saves your <code>/etc</code> changes back to the stick. This is a feature: experiments are free, and a reboot always recovers a clean system.</li>
+<li><b>Storage is plain Linux.</b> Disks are ordinary filesystems declared in <code>/etc/fstab</code> — no proprietary volume format. Any Linux machine can read your data disks.</li>
+<li><b>Data services are supervised.</b> Docker, Samba and NFS are held until the data disk is confirmed mounted, so a missing disk can never quietly fill RAM.</li>
+<li><b>CLI-first, appliance discipline.</b> One tool (<code>nas</code>) drives everything; optional extras (web dashboard, notifications, VPNs, UPS) are <i>off until you enable them</i> and safe to ignore.</li>
+</ul>
+</section>
+
+<section id="how">
+<h2>How it works <a class="top" href="#top">&uarr;</a></h2>
+<h3>Boot sequence</h3>
+<ol>
+<li>Firmware boots the USB stick (BIOS or UEFI); the kernel + initramfs load.</li>
+<li>Your saved config overlay (from the <code>MNASCFG</code> partition) is applied.</li>
+<li>The base system + any packages you added install into a RAM filesystem from the on-stick package snapshot and <code>/cfg/cache</code> — no network needed.</li>
+<li>The <code>mountnas</code> supervisor mounts your fstab disks, then starts Docker/Samba/NFS once <code>/mnt/nasdata</code> is up.</li>
+</ol>
+<h3>What lives where</h3>
+<table>
+<tr><th>Place</th><th>What</th><th>Survives reboot?</th></tr>
+<tr><td>RAM (<code>/</code>)</td><td>The running OS, all live changes</td><td>No — until <code>nas commit</code></td></tr>
+<tr><td>USB <code>BOOT</code></td><td>Kernel, packages, boot loaders</td><td>Yes (replaced by <code>nas upgrade</code>)</td></tr>
+<tr><td>USB <code>MNASCFG</code> (<code>/cfg</code>)</td><td>Committed config overlays, package cache, operations log</td><td>Yes</td></tr>
+<tr><td>Data disks (<code>/mnt/*</code>)</td><td>Your files, Docker data, appdata, backups</td><td>Yes — never touched by commits or upgrades</td></tr>
+</table>
+<div class="warn"><b>The one rule that matters:</b> changes live in RAM until <code>nas commit</code>. That includes passwords, fstab edits, installed packages, and Samba users. <code>nas status</code> and the shell prompt track the unsaved count for you.</div>
+</section>
+
+<section id="firstboot">
+<h2>First boot <a class="top" href="#top">&uarr;</a></h2>
+<ol>
+<li>Write the release image to a USB stick (4&nbsp;GB+) with Etcher or <code>dd</code>, boot from it.</li>
+<li>Log in as <code>root</code> (no password). The <b>setup wizard starts automatically</b>: hostname, root password, timezone, network — then it saves.</li>
+<li>Add your disks (next section), then <code>nas commit</code>.</li>
+</ol>
+<h3>Finding a headless box</h3>
+<ul>
+<li>The console login screen shows the IP and <code>hostname.local</code> before login — a monitor is enough.</li>
+<li>mDNS is on: <code>ssh root@mountnas.local</code> works on most LANs.</li>
+<li><b>Pre-seed an SSH key:</b> after flashing, drop a file named <code>authorized_keys</code> onto the FAT <code>BOOT</code> partition — it is installed at every boot.</li>
+<li>The fresh image permits passwordless root SSH so you can get in; the wizard disables that automatically once a password is set.</li>
+</ul>
+</section>
+
+<section id="storage">
+<h2>Storage <a class="top" href="#top">&uarr;</a></h2>
+<p>Disks are managed in <code>/etc/fstab</code> — like any Linux box. Mount everything under <code>/mnt</code>. One mountpoint is special: <b><code>/mnt/nasdata</code></b> must exist to hold Docker data, appdata and backups; Docker/Samba/NFS stay off until it is mounted.</p>
+<h3>Add a disk</h3>
+<pre><code>nas disks                         # find the disk; copy its paste-ready fstab line
+mkfs.ext4 -L nasdata /dev/sdX1    # blank disk? format it first
+vi /etc/fstab                     # e.g.: UUID=&lt;uuid&gt;  /mnt/nasdata  ext4  rw,noatime,nofail  0 2
+nas status                        # pre-flight check of your fstab
+nas restart                       # mount + start services, no reboot
+nas commit                        # persist it</code></pre>
+<ul>
+<li><b>Always include <code>nofail</code></b> — a missing disk must never hang the boot.</li>
+<li>Mountpoints are created for you from fstab at each boot — no <code>mkdir</code> needed (and do <b>not</b> use <code>x-mount.mkdir</code>).</li>
+<li>Network filesystems (NFS/CIFS) are <b>never mounted at boot</b> and are refused as <code>/mnt/nasdata</code> — a dead remote must not stall the box. Mount them manually or use them inside Docker.</li>
+<li>nasdata on a shared disk? Use a bind mount: <code>/mnt/disk1/nasdata&nbsp;&nbsp;/mnt/nasdata&nbsp;&nbsp;none&nbsp;&nbsp;bind,nofail&nbsp;&nbsp;0 0</code> (real disk listed first).</li>
+</ul>
+<h3>Pool disks into one mount (mergerfs)</h3>
+<pre><code>/mnt/disk1:/mnt/disk2  /mnt/pool  fuse.mergerfs  nofail,allow_other,use_ino,category.create=mfs  0 0</code></pre>
+<p>Add after the member disks in fstab; <code>nas commit</code> and reboot (the pool is mounted by the boot path). Keep <code>/mnt/nasdata</code> out of the pool.</p>
+<h3>Parity (SnapRAID)</h3>
+<ol>
+<li>Mount data + parity disks in fstab like any other disk.</li>
+<li>Configure <code>/etc/snapraid.conf</code> (a commented template ships). Keep <code>/mnt/nasdata</code> out of the array.</li>
+<li>Schedule sync/scrub and pipe the result into a notification:</li>
+</ol>
+<pre><code>crontab -e
+0 3 * * *  snapraid sync 2&gt;&amp;1 | nas notify "snapraid sync"
+0 5 * * 0  snapraid scrub 2&gt;&amp;1 | nas notify "snapraid scrub"</code></pre>
+<p>SnapRAID gives parity (recover a failed disk), mergerfs gives one namespace — they compose well. Then <code>nas commit</code>.</p>
+</section>
+
+<section id="services">
+<h2>Sharing &amp; services <a class="top" href="#top">&uarr;</a></h2>
+<h3>Samba (Windows/macOS shares)</h3>
+<pre><code>vi /etc/samba/smb.conf            # add a [share] block (template included)
+adduser -D alice                  # system user (if new)
+smbpasswd -a alice                # samba password
+rc-service samba restart
+nas commit</code></pre>
+<h3>NFS</h3>
+<pre><code>vi /etc/exports
+rc-service nfs restart &amp;&amp; nas commit</code></pre>
+<h3>Docker</h3>
+<p>Runs with <code>data-root = /mnt/nasdata/docker</code>. Keep compose files and appdata under <code>/mnt/nasdata</code> so they survive a dead USB and travel with the data. <code>docker compose</code> is included.</p>
+<h3>Remote access (all off by default)</h3>
+<ul>
+<li><b>Tailscale:</b> <code>rc-update add tailscale default &amp;&amp; rc-service tailscale start &amp;&amp; tailscale up &amp;&amp; nas commit</code></li>
+<li><b>ZeroTier:</b> <code>rc-update add zerotier-one default &amp;&amp; rc-service zerotier-one start &amp;&amp; zerotier-cli join &lt;net&gt; &amp;&amp; nas commit</code></li>
+<li><b>WireGuard:</b> plain kernel WireGuard, <code>wg</code>/<code>wg-quick</code> included.</li>
+</ul>
+<h3>UPS (NUT)</h3>
+<p>NUT is baked in, off by default. <a href="https://wiki.alpinelinux.org/wiki/Nut-ups">Determine your UPS USB parameters</a>, configure <code>/etc/nut/</code> (<code>nut.conf</code>, <code>ups.conf</code>, <code>upsd.conf</code>, <code>upsmon.conf</code>, with <code>SHUTDOWNCMD "/sbin/poweroff"</code>), then <code>rc-update add nut-upsd default &amp;&amp; rc-update add nut-upsmon default &amp;&amp; nas commit</code>. A power cut discards uncommitted changes — commit early and often either way.</p>
+<h3>Admin users</h3>
+<pre><code>adduser bob wheel &amp;&amp; nas commit    # wheel = doas (sudo) rights</code></pre>
+</section>
+
+<section id="monitoring">
+<h2>Monitoring &amp; alerts <a class="top" href="#top">&uarr;</a></h2>
+<h3>nas status — the pre-flight check</h3>
+<p><code>nas status</code> validates health and storage config without waking sleeping disks; exit code 1 on any failure makes it cron/monitoring friendly. <code>--deep</code> adds SMART/SnapRAID/time-sync; <code>--json</code> is machine-readable for Uptime&nbsp;Kuma, Zabbix, Homepage, etc.</p>
+<h3>This web dashboard</h3>
+<p>Enable/disable with <code>nas web on [port]</code> / <code>nas web off</code> (default port 8080, then <code>nas commit</code>). It is deliberately <b>read-only</b>: a root-run job renders a static page into RAM every 2 minutes and a tiny server (running as <code>nobody</code>) serves it — no request-time code, no forms, nothing to attack, no disk writes. Manage the box over SSH. <code>/status.json</code> serves the same data machine-readable.</p>
+<h3>Notifications</h3>
+<p>List sinks in <code>/etc/mountnas/notify.conf</code>, one per line; every alert goes to all of them:</p>
+<pre><code>ntfy:https://ntfy.sh/your-secret-topic          # push to your phone, no relay needed
+email:you@example.com                           # needs /etc/msmtprc configured
+webhook:https://example.com/hook                # generic JSON POST
+slack:https://hooks.slack.com/services/...      # also Mattermost-compatible
+discord:https://discord.com/api/webhooks/...
+gotify:https://gotify.example.com/message?token=...</code></pre>
+<p>Test with <code>nas notify --test</code>, persist with <code>nas commit</code>. What alerts automatically: <b>data-disk loss</b> (disconnect, dead mount, filesystem gone read-only — once, on the transition), <b>failed upgrades</b>, and anything you pipe in yourself (<code>... | nas notify "subject"</code>).</p>
+<h3>SMART disk health</h3>
+<p>smartd runs out of the box and never wakes spun-down disks. For failure alerts, add ONE line to <code>/etc/smartd.conf</code> and restart smartd:</p>
+<pre><code>DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify   # via your sinks
+DEVICESCAN -n standby,q -m you@example.com                                    # or classic email</code></pre>
+<h3>Health digest (optional)</h3>
+<pre><code>crontab -e
+0 8 * * 1  /usr/libexec/mountnas/health-digest    # Monday-morning summary via your sinks</code></pre>
+<h3>Operations log</h3>
+<p><code>nas history</code> shows every setup, commit (with note), rollback, backup, upgrade and shutdown — timestamp, who, outcome. Zero setup; persists without a commit.</p>
+<h3>Persistent system logs (optional)</h3>
+<p><code>nas logs --persist on</code> moves syslog to <code>/mnt/nasdata/logs</code> (rotated automatically) so a crash leaves history behind — tradeoff: periodic writes keep that disk awake.</p>
+</section>
+
+<section id="maintenance">
+<h2>Maintenance <a class="top" href="#top">&uarr;</a></h2>
+<h3>Committing &amp; rolling back config</h3>
+<pre><code>nas changes --diff                 # review what would be saved
+nas commit -m "added media share"  # save, with a label
+nas rollback --list                # previous saved configs (with your labels)
+nas rollback 1 &amp;&amp; nas reboot       # restore one (applies at next boot)</code></pre>
+<h3>Backup (the rollback net)</h3>
+<p><code>nas backup</code> images the <b>whole boot USB</b> (OS + saved config) to a verified gzip file — default <code>/mnt/nasdata/backups</code>. <b>Copy it off the box.</b> Recovery = write it to a different stick and boot. Data disks are separate — back those up with restic/rclone (both included).</p>
+<h3>Upgrading</h3>
+<pre><code>nas upgrade --check                                  # is a newer release out?
+nas backup                                           # required first — no automatic rollback
+nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reboot</code></pre>
+<p>Upgrades rewrite the OS in place; your config and data are untouched, added packages are preserved. See UPGRADE.md in the repo for details and recovery.</p>
+<h3>Installing packages</h3>
+<p><code>apk add &lt;pkg&gt;</code> works out of the box (repos are pinned to this release). After installing: <code>nas commit</code> — packages are cached on the stick and reinstall at every boot, even offline. Missing device firmware: find the file with <code>dmesg | grep -i firmware</code>, <code>apk add linux-firmware-&lt;vendor&gt;</code>, commit, reboot.</p>
+<h3>Recovery</h3>
+<ul>
+<li><b>Dead USB stick:</b> write your latest <code>nas backup</code> image to a new stick and boot — OS and config restored exactly. No backup? Flash a fresh release and reconfigure; data disks are untouched.</li>
+<li><b>Lost root password:</b> mount <code>MNASCFG</code> on another Linux box, unpack the overlay, blank the root hash in <code>etc/shadow</code>, repack, boot, <code>passwd</code>, <code>nas commit</code>. (Full steps in the README.)</li>
+</ul>
+<div class="danger"><b>Never</b> re-flash the release image over a running box (it erases the saved config — the image is for first install; upgrades go through <code>nas upgrade</code>), and <b>never</b> boot with two MountNAS sticks attached (their disk labels collide).</div>
+</section>
+
+<section id="commands">
+<h2>Command manual <a class="top" href="#top">&uarr;</a></h2>
+<p>Run as <code>nas &lt;command&gt;</code>. Every command has focused help: <code>nas &lt;command&gt; --help</code>. Tab completion ships for bash and zsh.</p>
+<table>
+<tr><th>Command</th><th>Does</th></tr>
+<tr><td><code>setup</code></td><td>Guided first-run wizard (hostname, password, timezone, network). Auto-runs at first login; safe to re-run.</td></tr>
+<tr><td><code>status [--deep|--json]</code></td><td>Health + storage-config checks; exit 1 on failure. <code>--deep</code> adds SMART/SnapRAID (may wake disks); <code>--json</code> for monitoring.</td></tr>
+<tr><td><code>disks [--json]</code></td><td>Every disk: identity, partitions, temps (spin-down safe), fstab state, paste-ready fstab lines.</td></tr>
+<tr><td><code>restart</code></td><td>Re-mount fstab disks and (re)start Docker/Samba/NFS — no reboot. Run after editing fstab.</td></tr>
+<tr><td><code>changes [--diff]</code></td><td>What <code>commit</code> would save; <code>--diff</code> shows the content. <span class="mut">(alias: changed)</span></td></tr>
+<tr><td><code>commit [-m "note"]</code></td><td>Save in-RAM config to the stick. Label it — labels show in <code>rollback --list</code>. <span class="mut">(alias: save)</span></td></tr>
+<tr><td><code>rollback [--list|&lt;n&gt;]</code></td><td>Config time machine: restore a previous committed overlay (applies at next boot; roll-forward possible).</td></tr>
+<tr><td><code>backup [--to &lt;dir|file&gt;]</code></td><td>Verified image of the whole boot USB. Copy it off-box; it is the upgrade/dead-stick recovery net.</td></tr>
+<tr><td><code>upgrade [--check|--yes] &lt;img|url&gt;</code></td><td>In-place OS upgrade from a release image; config/data untouched. Requires a backup first.</td></tr>
+<tr><td><code>history [-n N|--all]</code></td><td>Append-only operations log: setups, commits, rollbacks, backups, upgrades, power events — with who and when.</td></tr>
+<tr><td><code>notify [--test|&lt;subject&gt; [body]]</code></td><td>List/test notification sinks, or send an ad-hoc message (body pipeable) — cron friendly.</td></tr>
+<tr><td><code>web [on [port]|off|status]</code></td><td>This read-only dashboard + guide. Off by default; default port 8080.</td></tr>
+<tr><td><code>logs [-n N|-f|--persist ...]</code></td><td>View syslog; optionally persist it to the data disk with rotation.</td></tr>
+<tr><td><code>report</code></td><td>Secrets-free diagnostics bundle in /tmp for bug reports.</td></tr>
+<tr><td><code>shutdown / reboot [--yes|--save]</code></td><td>Power off / reboot with an unsaved-changes gate; <code>--save</code> commits first.</td></tr>
+<tr><td><code>version / about / help</code></td><td>Release info, project info, and the two-page command overview.</td></tr>
+</table>
+</section>
+
+<section id="files">
+<h2>File map <a class="top" href="#top">&uarr;</a></h2>
+<p>Edit a file, then <code>nas commit</code>.</p>
+<table>
+<tr><th>Path</th><th>Purpose</th></tr>
+<tr><td><code>/etc/fstab</code></td><td><b>Where you configure disks.</b> The heart of storage setup.</td></tr>
+<tr><td><code>/mnt/nasdata</code></td><td>Required system-data mount: Docker root, appdata, backups.</td></tr>
+<tr><td><code>/cfg</code></td><td>Config partition: saved overlays, package cache, operations log.</td></tr>
+<tr><td><code>/etc/samba/smb.conf</code></td><td>Samba shares (users via <code>smbpasswd -a</code>).</td></tr>
+<tr><td><code>/etc/exports</code></td><td>NFS exports.</td></tr>
+<tr><td><code>/etc/snapraid.conf</code></td><td>SnapRAID parity config.</td></tr>
+<tr><td><code>/etc/docker/daemon.json</code></td><td>Docker daemon (data-root on nasdata).</td></tr>
+<tr><td><code>/etc/mountnas/notify.conf</code></td><td>Notification sinks (email/ntfy/webhook/...).</td></tr>
+<tr><td><code>/etc/conf.d/mountnas-web</code></td><td>Dashboard port override (<code>PORT=</code>).</td></tr>
+<tr><td><code>/etc/smartd.conf</code></td><td>SMART monitoring + alert routing.</td></tr>
+<tr><td><code>/etc/msmtprc</code></td><td>Outbound email relay (mode 0600 — holds a password).</td></tr>
+<tr><td><code>/etc/nut/</code></td><td>UPS: nut.conf, ups.conf, upsd.conf, upsmon.conf.</td></tr>
+<tr><td><code>/etc/ssh/sshd_config</code></td><td>SSH policy; keys in <code>/root/.ssh/authorized_keys</code>.</td></tr>
+<tr><td><code>/etc/network/interfaces</code></td><td>Static IP / bond / bridge / VLAN config.</td></tr>
+<tr><td><code>crontab -e</code></td><td>Scheduled jobs: SnapRAID sync/scrub, health digest, backups.</td></tr>
+</table>
+</section>
+
+<section id="troubleshooting">
+<h2>Troubleshooting <a class="top" href="#top">&uarr;</a></h2>
+<table>
+<tr><th>Symptom</th><th>Fix</th></tr>
+<tr><td>Docker/Samba/NFS will not start</td><td><code>nas status</code> — almost always the data disk is not mounted. Fix fstab, re-check, <code>nas restart</code>.</td></tr>
+<tr><td>Settings gone after reboot</td><td>They were never committed. Check <code>/cfg</code> is mounted (<code>nas status</code>), then <code>nas commit</code>.</td></tr>
+<tr><td>Cannot find the box</td><td>Try <code>mountnas.local</code>; or attach a monitor — the IP is shown above the login prompt.</td></tr>
+<tr><td>Not reachable on the network</td><td>Wired DHCP is auto-configured on first boot; check cable/link. Custom config: <code>/etc/network/interfaces</code>, <code>rc-service networking restart</code>, commit.</td></tr>
+<tr><td>Custom init.d service vanished</td><td>lbu does not track <code>/etc/init.d</code>. Once: <code>lbu include /etc/init.d/&lt;name&gt;</code>, then commit.</td></tr>
+<tr><td><code>commit</code> fails: "tar: empty archive"</td><td>RAM root is full (<code>df -h /</code>). Free space or reboot, then commit.</td></tr>
+<tr><td>Dashboard not loading</td><td><code>nas web status</code>; check the port (default 8080) and that you committed after <code>nas web on</code>.</td></tr>
+<tr><td>Notifications not arriving</td><td><code>nas notify --test</code>, then <code>tail /var/log/mountnas.log</code>. Email sinks additionally need <code>/etc/msmtprc</code>.</td></tr>
+</table>
+<p class="mut">Deeper diagnosis: <code>nas report</code> writes a secrets-free bundle for a bug report.</p>
+</section>
+
+</main>
+<footer>
+<p>MountNAS &middot; <a href="https://github.com/ethanpil/mountnas">github.com/ethanpil/mountnas</a> &middot; <a href="http://mountnas.com">mountnas.com</a> &mdash; this guide is baked into the release it shipped with; the repo README always has the latest.</p>
+</footer>
+</body>
+</html>

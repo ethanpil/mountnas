@@ -41,6 +41,13 @@ package() {
 	install -Dm755 "$startdir"/files/data-watch     "$pkgdir"/usr/libexec/mountnas/data-watch
 	install -Dm755 "$startdir"/files/notify         "$pkgdir"/usr/libexec/mountnas/notify
 	install -Dm755 "$startdir"/files/smartd-notify  "$pkgdir"/usr/libexec/mountnas/smartd-notify
+	install -Dm755 "$startdir"/files/health-digest  "$pkgdir"/usr/libexec/mountnas/health-digest
+	# web dashboard: init script + renderer + refresher + static assets
+	install -Dm755 "$startdir"/files/mountnas-web   "$pkgdir"/etc/init.d/mountnas-web
+	install -Dm755 "$startdir"/files/gen-webstatus  "$pkgdir"/usr/libexec/mountnas/gen-webstatus
+	install -Dm755 "$startdir"/files/web-refresh    "$pkgdir"/usr/libexec/mountnas/web-refresh
+	install -Dm644 "$startdir"/files/web-guide.html "$pkgdir"/usr/share/mountnas/web/guide.html
+	install -Dm644 "$startdir"/files/web-logo.png   "$pkgdir"/usr/share/mountnas/web/logo.png
 	install -Dm755 "$startdir"/files/release-string "$pkgdir"/usr/libexec/mountnas/release-string
 	install -Dm755 "$startdir"/files/periodic-datawatch "$pkgdir"/etc/periodic/15min/mountnas-datawatch
 	install -Dm755 "$startdir"/files/issue-ifupdown "$pkgdir"/etc/network/if-up.d/mountnas-issue

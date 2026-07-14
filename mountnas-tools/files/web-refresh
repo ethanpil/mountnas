@@ -1,0 +1,12 @@
+#!/bin/sh
+# web-refresh — keep the status dashboard current (run by the mountnas-web
+# service). A plain sleep loop instead of cron: Alpine's periodic buckets
+# start at 15 minutes, too coarse for a dashboard, and this loop only exists
+# while the (opt-in) web service is running. The render lands in tmpfs, so
+# the cadence costs no disk writes and never wakes a drive.
+INT=${WEB_REFRESH_SEC:-120}
+case "$INT" in ''|*[!0-9]*) INT=120 ;; esac
+while :; do
+	/usr/libexec/mountnas/gen-webstatus 2>/dev/null
+	sleep "$INT"
+done

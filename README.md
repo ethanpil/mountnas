@@ -152,6 +152,7 @@ The `nas` tool has been designed to help you manage the system.
 | `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition. `-m "note"` labels the snapshot for `nas rollback --list`. Alias: `nas save`. |
 | `nas rollback` | The config time machine: `--list` shows the previous committed overlays lbu keeps on `/cfg` (with the notes from `nas commit -m`); `nas rollback <n>` restores one (crash-safe swap, applies at the next boot, the replaced config stays available for rolling forward). |
 | `nas logs` | View the system log (`-f` follows). `nas logs --persist on` moves syslog onto `/mnt/nasdata/logs` so a crash or power cut leaves history behind; rotation is automatic (1 MB × 10 files via syslogd — nothing to manage). Opt-in because periodic writes keep that disk awake. |
+| `nas web` | The read-only LAN status dashboard + built-in user guide (off by default). `on [port]` enables it (default 8080), `off` disables, `status` reports the URL. Static files only — a background job re-renders the page into RAM every ~2 minutes and busybox httpd (as `nobody`) serves it: no request-time code, no disk writes. `/guide.html` is the full user guide baked into the release; `/status.json` feeds integrations. |
 | `nas notify` | Notification sinks: with no arguments lists what's configured in `/etc/mountnas/notify.conf` (email, ntfy, webhook, Slack, Discord, gotify — one `type:target` per line); `--test` sends a test message to every sink; `nas notify "subject" [body]` sends ad-hoc messages from scripts/cron (body can be piped in). Disk-loss alerts, SMART trouble, and health digests fan out to all sinks. |
 | `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
 | `nas upgrade` | Rewrites the OS on the USB **in place** from a release image — a local `mountnas-<tag>.img.gz` or an `https://` release URL (verified against the release's `SHA256SUMS` when present) — then reboot. Requires a `nas backup` first (see `UPGRADE.md`). `nas upgrade --check` asks GitHub whether a newer release is published and prints the exact upgrade command. |
@@ -176,6 +177,19 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`.
 - **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
 - **New admin user**: `adduser <name> wheel` (so `doas` works), then `nas commit`.
+
+## Web dashboard & built-in user guide
+
+MountNAS stays CLI-first, but a glanceable **read-only** status page is one command away:
+
+```sh
+nas web on        # default port 8080; or: nas web on 9090
+nas commit
+```
+
+Then browse to `http://mountnas.local:8080/` — overall health, storage state, services, per-disk temps and free space, and the failing check lines when something's wrong. The page auto-refreshes every 2 minutes. `http://mountnas.local:8080/guide.html` serves the **full user guide** baked into your release — philosophy, how-tos, the complete `nas` manual, file map, troubleshooting — available even when the box (or your internet) is having a bad day.
+
+By design it can't manage anything: a root-run job renders **static files into RAM** every ~2 minutes and busybox httpd — dropped to `nobody` — serves only those. No request-time code, no forms, no auth to get wrong, no disk writes (nothing spins up a sleeping drive). Plain HTTP on your trusted LAN, same posture as Samba. Management stays on SSH with the `nas` CLI. Off by default; `nas web off` removes it entirely.
 
 ## Design Principles & Justifications
 
@@ -219,6 +233,8 @@ then `rc-service smartd restart && nas commit`.
 **Disk-loss alerts** (detachment, dead mount, filesystem gone read-only): fire automatically through your sinks — the 15-minute watcher notifies on the transition, once, and tells you the recovery command. (The old `/etc/mountnas/alert-email` file keeps working as one more email sink.) SMART covers a disk *warning* it will fail; this covers a disk that already *vanished*.
 
 From cron, pipe anything into a notification: `snapraid sync 2>&1 | nas notify "snapraid sync"`.
+
+**Health digest (optional):** a periodic summary — overall status, warnings, recent operations — through the same sinks. Schedule it yourself: `crontab -e` → `0 8 * * 1  /usr/libexec/mountnas/health-digest` (then `nas commit`). With no sinks configured it's a silent no-op, so it's always safe to leave scheduled.
 
 **UPS:** nut is installed; configure `/etc/nut/*`, enable nut-upsd + nut-upsmon, set `SHUTDOWNCMD "/sbin/poweroff"`, then `nas commit`.
 

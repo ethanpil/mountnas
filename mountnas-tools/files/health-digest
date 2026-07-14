@@ -1,0 +1,26 @@
+#!/bin/sh
+# health-digest — one-shot health summary pushed through the notification
+# sinks (/etc/mountnas/notify.conf). OPT-IN: nothing schedules this for you;
+# add a cron line yourself if you want it (then: nas commit):
+#   crontab -e
+#   0 8 * * 1  /usr/libexec/mountnas/health-digest     # Mondays 08:00
+#
+# No sinks configured -> silent no-op (safe to leave scheduled). The status
+# run is the fast, no-spin-up variant, so a weekly digest never wakes disks.
+NOTIFY=/usr/libexec/mountnas/notify
+[ -n "$("$NOTIFY" --list 2>/dev/null)" ] || exit 0
+
+st=$(NO_COLOR=1 nas status 2>&1); rc=$?
+if [ "$rc" -ge 1 ]; then verdict="FAIL"
+elif printf '%s' "$st" | grep -q '\[WARN\]'; then verdict="warnings"
+else verdict="OK"; fi
+
+recent=$(tail -n 5 /cfg/mountnas-ops.log 2>/dev/null | awk -F'\t' '{ printf "  %s  %-10s %s\n", $1, $2, $4 }')
+
+{
+	printf '%s\n\n' "$st"
+	if [ -n "$recent" ]; then
+		printf 'Recent operations:\n%s\n\n' "$recent"
+	fi
+	printf 'Full detail: ssh in and run nas status --deep, or open the web dashboard.\n'
+} | "$NOTIFY" "health digest: $verdict"

@@ -2,6 +2,8 @@
 mountnas-tools
 
 # --- core shell / base utilities ---
+# busybox-extras: the httpd applet serving the 'nas web' status dashboard
+busybox-extras
 bash
 zsh
 coreutils

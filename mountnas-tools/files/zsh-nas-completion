@@ -4,7 +4,7 @@
 # Command list: keep in sync with the dispatcher in files/nas AND the bash
 # completion (files/bash-nas-completion.sh).
 local -a cmds
-cmds=(setup status disks restart changes changed commit save rollback backup logs history notify report shutdown reboot upgrade version about help)
+cmds=(setup status disks restart changes changed commit save rollback backup logs web history notify report shutdown reboot upgrade version about help)
 if (( CURRENT == 2 )); then
 	_describe "nas command" cmds
 else
@@ -15,6 +15,7 @@ else
 		commit|save)     _values flag -m ;;
 		rollback)        _values flag --list ;;
 		logs)            _values flag -f -n --persist ;;
+		web)             _values action on off status ;;
 		history)         _values flag -n --all ;;
 		notify)          _values flag --test ;;
 		upgrade)         _values flag --check --yes ;;
