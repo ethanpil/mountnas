@@ -177,10 +177,8 @@ ${C_HD}Maintain${C_NO}
   ${C_B}notify${C_NO}    List/test alert sinks; send a message     [--test|<subject>]
   ${C_B}report${C_NO}    Diagnostics bundle for bug reports (status+logs, no secrets)
   ${C_B}setup${C_NO}     Guided setup (hostname, network, password, timezone)
-
 ${C_HD}Power${C_NO}  ${C_B}shutdown${C_NO} / ${C_B}reboot${C_NO} [--yes|--save]    ${C_HD}Info${C_NO}  ${C_B}about${C_NO} / ${C_B}version${C_NO} / ${C_B}help${C_NO}
-${C_D}Per-command help:  nas <command> --help     (or: nas help <command>)${C_NO}
-${C_WA}Nothing persists across reboot until: nas commit${C_NO}
+${C_D}Per-command help: nas <command> --help${C_NO}  ${C_WA}Nothing persists until: nas commit${C_NO}
 EOF
 }
 _help_page2() {

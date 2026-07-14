@@ -16,8 +16,7 @@ cd "$(dirname "$0")/.."
 # a shebang is by definition LINE 1 — grep -rl would also match scripts whose
 # CONTENT quotes a shebang (web-guide.html embeds "#!/bin/sh" in a code
 # example, and shellcheck then chokes trying to parse HTML)
-files=$(for f in mountnas-tools/files/*; do
-	[ -f "$f" ] || continue
+files=$(find mountnas-tools/files -type f | while IFS= read -r f; do
 	# `|| :` so a non-matching last file cannot fail the $() under set -e
 	head -n1 "$f" | grep -qE '^#!/(bin/sh|sbin/openrc-run)' && printf '%s\n' "$f" || :
 done)

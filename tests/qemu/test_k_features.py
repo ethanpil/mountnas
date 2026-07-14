@@ -56,8 +56,10 @@ def dev_guest(golden_guest):
 
 
 def _set_sinks(guest, *sinks: str) -> None:
-    lines = "\\n".join(sinks)
-    guest.run(f"printf '{lines}\\n' > /etc/mountnas/notify.conf", check=True)
+    # sinks go in as printf ARGUMENTS, never in the format string — a future
+    # sink URL containing % (URL-encoded tokens) must not be format-parsed
+    args = " ".join(f"'{s}'" for s in sinks)
+    guest.run(f"printf '%s\\n' {args} > /etc/mountnas/notify.conf", check=True)
     # keep the legacy file quiet unless a test wants it explicitly
     guest.run("printf '# none\\n' > /etc/mountnas/alert-email", check=True)
 

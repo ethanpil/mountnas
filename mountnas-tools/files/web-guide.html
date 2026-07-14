@@ -202,8 +202,8 @@ cat &gt; /etc/local.d/spindown.start &lt;&lt;'SH'
 hdparm -S 241 /dev/disk/by-id/ata-WDC_...   # 241 = 30 min idle; 0 = never
 SH
 chmod +x /etc/local.d/spindown.start
-lbu include /etc/local.d/spindown.start &amp;&amp; nas commit</code></pre>
-<p>Use <code>/dev/disk/by-id/</code> paths (stable across reboots). Check a disk's state anytime with <code>hdparm -C /dev/sdX</code>. <b>What keeps disks awake:</b> Docker/appdata living on them (keep that on <code>/mnt/nasdata</code>), <code>nas logs --persist on</code> (targets nasdata), open Samba/NFS handles, and mergerfs create policies that touch every branch. The nasdata system disk is expected to stay awake — spin down the media disks, not that one.</p>
+nas commit</code></pre>
+<p>(<code>/etc/local.d</code> is saved by <code>nas commit</code> like the rest of <code>/etc</code> — no <code>lbu include</code> needed; only <code>/etc/init.d</code> has that quirk.) Use <code>/dev/disk/by-id/</code> paths (stable across reboots). Check a disk's state anytime with <code>hdparm -C /dev/sdX</code>. <b>What keeps disks awake:</b> Docker/appdata living on them (keep that on <code>/mnt/nasdata</code>), <code>nas logs --persist on</code> (targets nasdata), open Samba/NFS handles, and mergerfs create policies that touch every branch. The nasdata system disk is expected to stay awake — spin down the media disks, not that one.</p>
 </section>
 
 <section id="services">

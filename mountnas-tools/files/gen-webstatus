@@ -96,7 +96,9 @@ fans_row=""
 procs=$(find /proc -maxdepth 1 -name '[0-9]*' 2>/dev/null | grep -c .)
 logins=$(who 2>/dev/null | wc -l | tr -d ' ')
 lastcommit=$(date -r "$CFG/$(hostname).apkovl.tar.gz" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "never")
-sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null | grep -c . || echo 0)
+# grep -c always prints a count — no || fallback (it would emit a SECOND
+# line on the no-match exit-1 path and make $sinks non-numeric)
+sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null | grep -c .)
 if [ "${sinks:-0}" -gt 0 ] 2>/dev/null; then
 	sinks_html="<span class=\"pill p-ok\">$sinks sink(s)</span>"
 else
@@ -179,7 +181,9 @@ if rc-service nut-upsd status >/dev/null 2>&1; then
 		ups_stat=$(upsc "$ups_name" ups.status 2>/dev/null)
 		ups_chg=$(upsc "$ups_name" battery.charge 2>/dev/null)
 		ups_rt=$(upsc "$ups_name" battery.runtime 2>/dev/null)
-		[ -n "$ups_rt" ] && ups_rt="$((ups_rt / 60)) min"
+		# some drivers omit battery.runtime or report N/A — never feed that
+		# into arithmetic (ash errors and the raw string leaks into the page)
+		case "$ups_rt" in ''|*[!0-9]*) ups_rt="" ;; *) ups_rt="$((ups_rt / 60)) min" ;; esac
 		case "$ups_stat" in
 			OL*) ups_pill="<span class=\"pill p-ok\">on line</span>" ;;
 			OB*) ups_pill="<span class=\"pill p-fail\">ON BATTERY</span>" ;;
@@ -190,17 +194,20 @@ if rc-service nut-upsd status >/dev/null 2>&1; then
 fi
 
 # ---- docker containers (guarded on the daemon; ~50 ms when up) --------------
+# Every docker call is time-bounded: a wedged dockerd (e.g. the data disk died
+# underneath it) otherwise blocks this renderer forever and the dashboard
+# freezes at its last healthy render — exactly when it must not.
 docker_html='<span class="mut">docker not running (held until the data disk is up)</span>'
 if rc-service docker status >/dev/null 2>&1; then
-	d_run=$(docker ps -q 2>/dev/null | wc -l | tr -d ' ')
-	d_all=$(docker ps -aq 2>/dev/null | wc -l | tr -d ' ')
-	d_list=$(docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | head -n 12 | esc \
+	d_run=$(timeout 10 docker ps -q 2>/dev/null | wc -l | tr -d ' ')
+	d_all=$(timeout 10 docker ps -aq 2>/dev/null | wc -l | tr -d ' ')
+	d_list=$(timeout 10 docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | head -n 12 | esc \
 		| awk -F'\t' '{ st = ($2 ~ /^Up/) ? "c-ok" : "c-off";
 			printf "<li class=\"%s\"><b>%s</b> <span class=\"mut\">%s</span></li>\n", st, $1, $2 }')
 	if [ "${d_all:-0}" -gt 0 ] 2>/dev/null; then
 		docker_html="<div class=\"mut\" style=\"margin-bottom:6px\"><span class=\"num\">$d_run</span> running / <span class=\"num\">$d_all</span> total</div><ul class=\"checks\">$d_list</ul>"
 	else
-		docker_html='<span class="mut">daemon up &middot; no containers yet</span>'
+		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers</span>'
 	fi
 fi
 
@@ -303,9 +310,12 @@ disk_rows=$(printf '%s' "$dj" | jq -r --argjson smart "$smart_map" --argjson pow
 	  ] | if length == 0 then "<span class=\"mut\">no filesystem</span>" else join("<br>") end)</td></tr>"')
 [ -n "$disk_rows" ] || disk_rows='<tr><td colspan="8" class="mut">no disk data</td></tr>'
 
-# mergerfs pools are fuse mounts (invisible to lsblk) — appended as rows
+# mergerfs pools are fuse mounts (invisible to lsblk) — appended as rows.
+# /proc/mounts octal-escapes spaces as \040: decode with %b or df misses the
+# path and the pool silently vanishes from the table.
 pool_rows=$(awk '$3=="fuse.mergerfs"{print $2}' /proc/mounts 2>/dev/null \
-	| while IFS= read -r mp; do
+	| while IFS= read -r mp_raw; do
+		mp=$(printf '%b' "$mp_raw")
 		df -kP "$mp" 2>/dev/null | awk -v mp="$mp" 'NR==2 {
 			pct = int($3 * 100 / $2);
 			cls = (pct >= 90) ? "b-fail" : (pct >= 80) ? "b-warn" : "";
@@ -325,8 +335,15 @@ else
 fi
 cron_html=$(crontab -l 2>/dev/null | grep -vE '^[[:space:]]*(#|$)' | head -n 12 | esc)
 [ -n "$cron_html" ] || cron_html="(no scheduled jobs — snapraid sync and the health digest go here)"
-unsaved_list=$(lbu status 2>/dev/null | head -n 40 | esc)
-[ -n "$unsaved_list" ] || unsaved_list="(nothing — all changes are committed)"
+# run the /etc-walking lbu status ONLY when the count (already computed by
+# status --json above) says there is something to list — in the committed
+# steady state this saves a full lbu walk every render
+if [ "${unsaved:-0}" -gt 0 ] 2>/dev/null; then
+	unsaved_list=$(lbu status 2>/dev/null | head -n 40 | esc)
+	[ -n "$unsaved_list" ] || unsaved_list="(nothing — all changes are committed)"
+else
+	unsaved_list="(nothing — all changes are committed)"
+fi
 syslog_file=$(sed -n 's/.*-O \([^ "]*\).*/\1/p' /etc/conf.d/syslog 2>/dev/null | head -n1)
 [ -n "$syslog_file" ] && [ -f "$syslog_file" ] || syslog_file=/var/log/messages
 syslog_html=$(tail -n 100 "$syslog_file" 2>/dev/null | esc)

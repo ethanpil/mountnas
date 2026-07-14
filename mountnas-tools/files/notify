@@ -39,8 +39,10 @@ body="$*"
 # body from stdin when not given as arguments (and stdin is not a terminal)
 if [ -z "$body" ] && [ ! -t 0 ]; then body=$(cat); fi
 [ -n "$body" ] || body="$subject"
-# one uniform subject: every sink shows which box is talking
-subj="[$(hostname)] $subject"
+# one uniform subject: every sink shows which box is talking. Strip CR/LF —
+# the subject travels in an HTTP header (ntfy Title) and in mail -s, where a
+# newline breaks the request outright (header injection / malformed send).
+subj=$(printf '[%s] %s' "$(hostname)" "$subject" | tr -d '\r\n')
 
 fails=0; sent=0
 while IFS= read -r sink; do
