@@ -889,6 +889,15 @@ cmd_logs() {
 # (mountnas-web service: busybox httpd serving a tmpfs webroot that
 # gen-webstatus re-renders every ~2 min; static files only, no request-time
 # code, httpd dropped to nobody). OFF by default; this is the opt-in switch.
+#
+# The on/off state is /etc config (a runlevel symlink + the conf.d port
+# file), so like EVERYTHING under /etc it lives in RAM until 'nas commit' —
+# same honesty pattern as 'nas logs --persist': say loudly when the current
+# setting would not survive a reboot, because a dashboard that silently
+# vanishes (or resurrects) at the next boot looks like a bug.
+_web_unsaved() {
+	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-web|conf\.d/mountnas-web)'
+}
 cmd_web() {
 	local wport
 	wport=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-web 2>/dev/null | head -n1)
@@ -908,22 +917,32 @@ cmd_web() {
 		_ops_log web "enabled (port $wport)"
 		ok "web dashboard ON -> http://$(hostname).local:$wport/  (read-only, plain HTTP, LAN)"
 		hint "built-in user guide: http://$(hostname).local:$wport/guide.html"
-		hint "Persist the setting: nas commit"
+		if _web_unsaved; then
+			warn "setting NOT saved — the dashboard is OFF again after a reboot unless you run: nas commit"
+		fi
 		;;
 	off)
 		rc-service mountnas-web stop >/dev/null 2>&1 || true
 		rc-update -q del mountnas-web default 2>/dev/null || true
 		_ops_log web "disabled"
 		ok "web dashboard OFF"
-		hint "Persist the setting: nas commit"
+		if _web_unsaved; then
+			warn "setting NOT saved — the dashboard comes BACK at reboot unless you run: nas commit"
+		fi
 		;;
 	status)
 		if rc-service mountnas-web status >/dev/null 2>&1; then
 			ok "web dashboard running -> http://$(hostname).local:$wport/"
+			if _web_unsaved; then
+				warn "running now but NOT saved — off after a reboot unless: nas commit"
+			fi
 			hint "disable: nas web off"
 		elif rc-update show default 2>/dev/null | grep -q mountnas-web; then
 			warn "web dashboard enabled but not running — try: rc-service mountnas-web start"
 		else
+			if _web_unsaved; then
+				warn "off now but NOT saved — comes back at reboot unless: nas commit"
+			fi
 			hint "web dashboard off (enable: nas web on [port] — default port 8080)"
 		fi
 		;;
@@ -1936,9 +1955,12 @@ nas web [on [port] | off | status]
   tiny static-file server (busybox httpd as nobody). A background job
   re-renders the page every ~2 minutes into RAM — no request-time code,
   no disk writes, nothing to manage. Plain HTTP on your trusted LAN.
-  on [port]   enable (default port 8080), start now; persist: nas commit
+  on [port]   enable (default port 8080) and start it now
   off         stop + disable
-  status      is it enabled/running, and on which URL
+  status      is it enabled/running/saved, and on which URL
+  IMPORTANT: like every /etc setting, on/off lives in RAM until you run
+  'nas commit' — uncommitted, the dashboard is gone (or back) after a
+  reboot. The command warns whenever the current state is unsaved.
   Pages: / (dashboard incl. hardware, added packages and a collapsible
   syslog tail), /guide.html (user guide), /status.json (machine-readable).
 EOF

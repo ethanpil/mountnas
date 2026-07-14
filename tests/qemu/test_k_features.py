@@ -168,8 +168,14 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
                  "http://127.0.0.1:8080/logo.png", check=True)
     assert logo.out.strip() == "200"
 
+    # persistence honesty: enabled but uncommitted must WARN, and the
+    # warning must clear once the setting is committed
     st = g.run("nas web status", check=True)
     assert "running" in st.out
+    assert "NOT saved" in st.out, f"missing unsaved warning:\n{st.out}"
+    g.run("nas commit -m 'web on'", timeout=120, check=True)
+    st2 = g.run("nas web status", check=True)
+    assert "NOT saved" not in st2.out, f"warning survived a commit:\n{st2.out}"
 
     # the enable/disable pair is itself an operation worth auditing
     hist = g.run("nas history", check=True)

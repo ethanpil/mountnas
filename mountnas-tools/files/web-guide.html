@@ -259,7 +259,7 @@ nas commit</code></pre></li>
 <h3>nas status — the pre-flight check</h3>
 <p><code>nas status</code> validates health and storage config without waking sleeping disks; exit code 1 on any failure makes it cron/monitoring friendly. <code>--deep</code> adds SMART/SnapRAID/time-sync; <code>--json</code> is machine-readable for Uptime&nbsp;Kuma, Zabbix, Homepage, etc.</p>
 <h3>This web dashboard</h3>
-<p>Enable/disable with <code>nas web on [port]</code> / <code>nas web off</code> (default port 8080, then <code>nas commit</code>). It is deliberately <b>read-only</b>: a root-run job renders a static page into RAM every 2 minutes and a tiny server (running as <code>nobody</code>) serves it — no request-time code, no forms, nothing to attack, no disk writes. Manage the box over SSH. Everything is on the one page: health, services, disks, hardware, your added packages, and a collapsible tail of the last 100 syslog lines; <code>/status.json</code> serves the data machine-readable.</p>
+<p>Enable/disable with <code>nas web on [port]</code> / <code>nas web off</code> (default port 8080). <b>Then <code>nas commit</code></b> — like every setting, on/off lives in RAM until committed, and uncommitted the dashboard is gone (or back) after a reboot; <code>nas web status</code> tells you when the state is unsaved. It is deliberately <b>read-only</b>: a root-run job renders a static page into RAM every 2 minutes and a tiny server (running as <code>nobody</code>) serves it — no request-time code, no forms, nothing to attack, no disk writes. Manage the box over SSH. Everything is on the one page: health, services, disks, hardware, your added packages, and a collapsible tail of the last 100 syslog lines; <code>/status.json</code> serves the data machine-readable.</p>
 <h3>Notifications</h3>
 <p>List sinks in <code>/etc/mountnas/notify.conf</code>, one per line; every alert goes to all of them:</p>
 <pre><code>ntfy:https://ntfy.sh/your-secret-topic          # push to your phone, no relay needed
@@ -387,7 +387,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td><code>upgrade [--check|--yes] &lt;img|url&gt;</code></td><td>In-place OS upgrade from a release image; config/data untouched. Requires a backup first.</td></tr>
 <tr><td><code>history [-n N|--all]</code></td><td>Append-only operations log: setups, commits, rollbacks, backups, upgrades, power events — with who and when.</td></tr>
 <tr><td><code>notify [--test|&lt;subject&gt; [body]]</code></td><td>List/test notification sinks, or send an ad-hoc message (body pipeable) — cron friendly.</td></tr>
-<tr><td><code>web [on [port]|off|status]</code></td><td>This read-only dashboard + guide. Off by default; default port 8080.</td></tr>
+<tr><td><code>web [on [port]|off|status]</code></td><td>This read-only dashboard + guide. Off by default; default port 8080. <b><code>nas commit</code> after on/off</b> or the setting is lost at reboot (the command warns).</td></tr>
 <tr><td><code>logs [-n N|-f|--persist ...]</code></td><td>View syslog; optionally persist it to the data disk with rotation.</td></tr>
 <tr><td><code>report</code></td><td>Secrets-free diagnostics bundle in /tmp for bug reports.</td></tr>
 <tr><td><code>shutdown / reboot [--yes|--save]</code></td><td>Power off / reboot with an unsaved-changes gate; <code>--save</code> commits first.</td></tr>
