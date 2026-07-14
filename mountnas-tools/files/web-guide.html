@@ -42,6 +42,10 @@ td:first-child{white-space:nowrap}
 .warn{background:var(--warnbg);border-left:4px solid var(--warn);border-radius:0 8px 8px 0;padding:10px 14px;margin:12px 0}
 .danger{background:var(--failbg);border-left:4px solid var(--fail);border-radius:0 8px 8px 0;padding:10px 14px;margin:12px 0}
 .mut{color:var(--mut)}
+main a{color:var(--acc);text-decoration:none}
+main a:hover{text-decoration:underline}
+.pkgs p{margin:6px 0}
+.pkgs b{display:inline-block;min-width:0;color:var(--ink)}
 footer{max-width:880px;margin:0 auto;padding:0 20px 40px;color:var(--mut);font-size:12.5px}
 footer a{color:var(--acc)}
 a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weight:400}
@@ -63,13 +67,14 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
   <a href="#maintenance">Maintenance</a>
   <a href="#commands">Command manual</a>
   <a href="#files">File map</a>
+  <a href="#packages">Packages</a>
   <a href="#troubleshooting">Troubleshooting</a>
 </nav>
 <main>
 
 <section id="philosophy">
 <h2>Philosophy <a class="top" href="#top">&uarr;</a></h2>
-<p>MountNAS is a <b>diskless Alpine NAS that runs entirely from RAM</b> off a USB stick. The stick holds the OS and your saved configuration; your data lives on ordinary mounted drives. It is built for power users who want a small, transparent, hands-on system — every moving part is a readable shell script you can inspect (and, in a pinch, patch) on the box.</p>
+<p>MountNAS is a <b>diskless <a href="https://alpinelinux.org/">Alpine Linux</a> NAS that runs entirely from RAM</b> off a USB stick. The stick holds the OS and your saved configuration; your data lives on ordinary mounted drives. It is built for power users who want a small, transparent, hands-on system — every moving part is a readable shell script you can inspect (and, in a pinch, patch) on the box.</p>
 <ul>
 <li><b>The OS is rebuilt in RAM at every boot</b> from packages on the stick plus a small config overlay. A reboot is a factory-fresh OS with your config applied.</li>
 <li><b>Nothing persists until you commit.</b> <code>nas commit</code> saves your <code>/etc</code> changes back to the stick. This is a feature: experiments are free, and a reboot always recovers a clean system.</li>
@@ -131,10 +136,10 @@ nas commit                        # persist it</code></pre>
 <li>Network filesystems (NFS/CIFS) are <b>never mounted at boot</b> and are refused as <code>/mnt/nasdata</code> — a dead remote must not stall the box. Mount them manually or use them inside Docker.</li>
 <li>nasdata on a shared disk? Use a bind mount: <code>/mnt/disk1/nasdata&nbsp;&nbsp;/mnt/nasdata&nbsp;&nbsp;none&nbsp;&nbsp;bind,nofail&nbsp;&nbsp;0 0</code> (real disk listed first).</li>
 </ul>
-<h3>Pool disks into one mount (mergerfs)</h3>
+<h3>Pool disks into one mount (<a href="https://github.com/trapexit/mergerfs">mergerfs</a>)</h3>
 <pre><code>/mnt/disk1:/mnt/disk2  /mnt/pool  fuse.mergerfs  nofail,allow_other,use_ino,category.create=mfs  0 0</code></pre>
 <p>Add after the member disks in fstab; <code>nas commit</code> and reboot (the pool is mounted by the boot path). Keep <code>/mnt/nasdata</code> out of the pool.</p>
-<h3>Parity (SnapRAID)</h3>
+<h3>Parity (<a href="https://www.snapraid.it/">SnapRAID</a>)</h3>
 <ol>
 <li>Mount data + parity disks in fstab like any other disk.</li>
 <li>Configure <code>/etc/snapraid.conf</code> (a commented template ships). Keep <code>/mnt/nasdata</code> out of the array.</li>
@@ -148,24 +153,24 @@ nas commit                        # persist it</code></pre>
 
 <section id="services">
 <h2>Sharing &amp; services <a class="top" href="#top">&uarr;</a></h2>
-<h3>Samba (Windows/macOS shares)</h3>
+<h3><a href="https://www.samba.org/">Samba</a> (Windows/macOS shares)</h3>
 <pre><code>vi /etc/samba/smb.conf            # add a [share] block (template included)
 adduser -D alice                  # system user (if new)
 smbpasswd -a alice                # samba password
 rc-service samba restart
 nas commit</code></pre>
-<h3>NFS</h3>
+<h3><a href="https://linux-nfs.org/">NFS</a></h3>
 <pre><code>vi /etc/exports
 rc-service nfs restart &amp;&amp; nas commit</code></pre>
-<h3>Docker</h3>
-<p>Runs with <code>data-root = /mnt/nasdata/docker</code>. Keep compose files and appdata under <code>/mnt/nasdata</code> so they survive a dead USB and travel with the data. <code>docker compose</code> is included.</p>
+<h3><a href="https://docs.docker.com/">Docker</a></h3>
+<p>Runs with <code>data-root = /mnt/nasdata/docker</code>. Keep compose files and appdata under <code>/mnt/nasdata</code> so they survive a dead USB and travel with the data. <a href="https://docs.docker.com/compose/"><code>docker compose</code></a> is included.</p>
 <h3>Remote access (all off by default)</h3>
 <ul>
-<li><b>Tailscale:</b> <code>rc-update add tailscale default &amp;&amp; rc-service tailscale start &amp;&amp; tailscale up &amp;&amp; nas commit</code></li>
-<li><b>ZeroTier:</b> <code>rc-update add zerotier-one default &amp;&amp; rc-service zerotier-one start &amp;&amp; zerotier-cli join &lt;net&gt; &amp;&amp; nas commit</code></li>
-<li><b>WireGuard:</b> plain kernel WireGuard, <code>wg</code>/<code>wg-quick</code> included.</li>
+<li><b><a href="https://tailscale.com/">Tailscale</a>:</b> <code>rc-update add tailscale default &amp;&amp; rc-service tailscale start &amp;&amp; tailscale up &amp;&amp; nas commit</code></li>
+<li><b><a href="https://www.zerotier.com/">ZeroTier</a>:</b> <code>rc-update add zerotier-one default &amp;&amp; rc-service zerotier-one start &amp;&amp; zerotier-cli join &lt;net&gt; &amp;&amp; nas commit</code></li>
+<li><b><a href="https://www.wireguard.com/">WireGuard</a>:</b> plain kernel WireGuard, <code>wg</code>/<code>wg-quick</code> included.</li>
 </ul>
-<h3>UPS (NUT)</h3>
+<h3>UPS (<a href="https://networkupstools.org/">NUT</a>)</h3>
 <p>NUT is baked in, off by default. <a href="https://wiki.alpinelinux.org/wiki/Nut-ups">Determine your UPS USB parameters</a>, configure <code>/etc/nut/</code> (<code>nut.conf</code>, <code>ups.conf</code>, <code>upsd.conf</code>, <code>upsmon.conf</code>, with <code>SHUTDOWNCMD "/sbin/poweroff"</code>), then <code>rc-update add nut-upsd default &amp;&amp; rc-update add nut-upsmon default &amp;&amp; nas commit</code>. A power cut discards uncommitted changes — commit early and often either way.</p>
 <h3>Admin users</h3>
 <pre><code>adduser bob wheel &amp;&amp; nas commit    # wheel = doas (sudo) rights</code></pre>
@@ -180,13 +185,13 @@ rc-service nfs restart &amp;&amp; nas commit</code></pre>
 <h3>Notifications</h3>
 <p>List sinks in <code>/etc/mountnas/notify.conf</code>, one per line; every alert goes to all of them:</p>
 <pre><code>ntfy:https://ntfy.sh/your-secret-topic          # push to your phone, no relay needed
-email:you@example.com                           # needs /etc/msmtprc configured
+email:you@example.com                           # needs /etc/msmtprc (msmtp) configured
 webhook:https://example.com/hook                # generic JSON POST
 slack:https://hooks.slack.com/services/...      # also Mattermost-compatible
 discord:https://discord.com/api/webhooks/...
 gotify:https://gotify.example.com/message?token=...</code></pre>
-<p>Test with <code>nas notify --test</code>, persist with <code>nas commit</code>. What alerts automatically: <b>data-disk loss</b> (disconnect, dead mount, filesystem gone read-only — once, on the transition), <b>failed upgrades</b>, and anything you pipe in yourself (<code>... | nas notify "subject"</code>).</p>
-<h3>SMART disk health</h3>
+<p>Test with <code>nas notify --test</code>, persist with <code>nas commit</code>. What alerts automatically: <b>data-disk loss</b> (disconnect, dead mount, filesystem gone read-only — once, on the transition), <b>failed upgrades</b>, and anything you pipe in yourself (<code>... | nas notify "subject"</code>). Sink docs: <a href="https://ntfy.sh/">ntfy</a>, <a href="https://marlam.de/msmtp/">msmtp</a> (email), <a href="https://gotify.net/">gotify</a>.</p>
+<h3>SMART disk health (<a href="https://www.smartmontools.org/">smartmontools</a>)</h3>
 <p>smartd runs out of the box and never wakes spun-down disks. For failure alerts, add ONE line to <code>/etc/smartd.conf</code> and restart smartd:</p>
 <pre><code>DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify   # via your sinks
 DEVICESCAN -n standby,q -m you@example.com                                    # or classic email</code></pre>
@@ -207,7 +212,7 @@ nas commit -m "added media share"  # save, with a label
 nas rollback --list                # previous saved configs (with your labels)
 nas rollback 1 &amp;&amp; nas reboot       # restore one (applies at next boot)</code></pre>
 <h3>Backup (the rollback net)</h3>
-<p><code>nas backup</code> images the <b>whole boot USB</b> (OS + saved config) to a verified gzip file — default <code>/mnt/nasdata/backups</code>. <b>Copy it off the box.</b> Recovery = write it to a different stick and boot. Data disks are separate — back those up with restic/rclone (both included).</p>
+<p><code>nas backup</code> images the <b>whole boot USB</b> (OS + saved config) to a verified gzip file — default <code>/mnt/nasdata/backups</code>. <b>Copy it off the box.</b> Recovery = write it to a different stick and boot. Data disks are separate — back those up with <a href="https://restic.net/">restic</a>/<a href="https://rclone.org/">rclone</a> (both included).</p>
 <h3>Upgrading</h3>
 <pre><code>nas upgrade --check                                  # is a newer release out?
 nas backup                                           # required first — no automatic rollback
@@ -268,6 +273,27 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td><code>/etc/network/interfaces</code></td><td>Static IP / bond / bridge / VLAN config.</td></tr>
 <tr><td><code>crontab -e</code></td><td>Scheduled jobs: SnapRAID sync/scrub, health digest, backups.</td></tr>
 </table>
+</section>
+
+<section id="packages" class="pkgs">
+<h2>Baked-in packages <a class="top" href="#top">&uarr;</a></h2>
+<p>Everything below ships in the image, works offline, and survives upgrades. Anything else: <code>apk add &lt;pkg&gt; &amp;&amp; nas commit</code>.</p>
+<p><b>MountNAS:</b> <code>mountnas-tools</code> (the <code>nas</code> CLI, supervisor, web dashboard, notify helpers)</p>
+<p><b>Shell &amp; base:</b> <code>bash</code> <code>zsh</code> <code>coreutils</code> <code>findutils</code> <code>util-linux</code> <code>busybox-extras</code> <code>less</code> <code>file</code> <code>tree</code> <code>pv</code> <code>mc</code> <code>tmux</code> <code>nano</code> <code>lsof</code> <code>psmisc</code> <code>jq</code> <code>yq</code> <code>tzdata</code> <code>chrony</code> <code>acpid</code> <code>doas</code></p>
+<p><b>Partitioning:</b> <code>parted</code> <code>gptfdisk</code> <code>cfdisk</code> <code>sfdisk</code></p>
+<p><b>Parity / volumes:</b> <a href="https://www.snapraid.it/"><code>snapraid</code></a> (built from source) &middot; <a href="https://github.com/trapexit/mergerfs"><code>mergerfs</code></a> (upstream static build) &middot; <code>mdadm</code> <code>lvm2</code></p>
+<p><b>Disk health / recovery / benchmark:</b> <a href="https://www.smartmontools.org/"><code>smartmontools</code></a> <code>nvme-cli</code> <code>hdparm</code> <code>lsscsi</code> <code>sg3_utils</code> <code>ddrescue</code> <a href="https://www.cgsecurity.org/wiki/TestDisk"><code>testdisk</code></a> <code>f3</code> <code>fio</code></p>
+<p><b>Integrity / dedup / compression:</b> <code>xxhash</code> <code>fdupes</code> <code>zstd</code> <code>lz4</code> <code>xz</code></p>
+<p><b>Networking / transfer:</b> <code>curl</code> <code>wget</code> <code>rsync</code> <a href="https://rclone.org/"><code>rclone</code></a> <a href="https://restic.net/"><code>restic</code></a> <code>openssh</code> <a href="https://mosh.org/"><code>mosh</code></a></p>
+<p><b>VPN / mesh (off by default):</b> <a href="https://tailscale.com/"><code>tailscale</code></a> <a href="https://www.zerotier.com/"><code>zerotier-one</code></a> <a href="https://www.wireguard.com/"><code>wireguard-tools</code></a></p>
+<p><b>Discovery / sharing:</b> <code>avahi</code> <code>dbus</code> <a href="https://www.samba.org/"><code>samba</code></a> <code>nfs-utils</code></p>
+<p><b>Filesystems:</b> <code>e2fsprogs</code> <code>xfsprogs</code> <code>btrfs-progs</code> <code>f2fs-tools</code> <code>exfatprogs</code> <code>dosfstools</code> <code>ntfs-3g-progs</code> <code>hfsprogs</code> <code>udftools</code> <code>fuse</code>/<code>fuse3</code> <code>fuse-overlayfs</code></p>
+<p><b>Hardware ID:</b> <code>pciutils</code> <code>usbutils</code> <code>dmidecode</code> <code>lshw</code> <code>lm-sensors</code></p>
+<p><b>Network diagnostics:</b> <code>ethtool</code> <code>iperf3</code> <code>tcpdump</code> <code>mtr</code> <code>bind-tools</code></p>
+<p><b>Monitoring:</b> <code>btop</code> <code>iotop</code> <code>ncdu</code> <code>sysstat</code> <code>fastfetch</code></p>
+<p><b>Containers:</b> <a href="https://docs.docker.com/"><code>docker</code></a> <code>docker-cli-compose</code></p>
+<p><b>UPS:</b> <a href="https://networkupstools.org/"><code>nut</code></a> &middot; <b>Email:</b> <a href="https://marlam.de/msmtp/"><code>msmtp</code></a> <code>mailx</code></p>
+<p><b>Device firmware:</b> a curated consumer-x86 set (Intel/AMD/NVIDIA graphics, common wifi/Bluetooth/wired-NIC blobs, laptop platform firmware). Missing something exotic? <code>dmesg | grep -i firmware</code>, then <code>apk add linux-firmware-&lt;vendor&gt; &amp;&amp; nas commit</code>.</p>
 </section>
 
 <section id="troubleshooting">

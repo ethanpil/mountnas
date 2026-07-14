@@ -5,9 +5,11 @@
 # static index.html + status.json into /run/mountnas/web every ~2 minutes and
 # busybox httpd serves only those files — the attack surface is "serve static
 # files", and tmpfs means zero disk writes (no drive spin-up, no flash wear).
-# Everything shown comes from 'nas status --json' + 'nas disks --json', which
-# already exclude secrets by construction.
+# Everything shown comes from 'nas status --json' + 'nas disks --json' (no
+# secrets by construction) plus /proc//sys reads — nothing here may ever wake
+# a sleeping disk or run request-driven logic.
 WEB=${WEB:-/run/mountnas/web}
+CFG=/cfg
 mkdir -p "$WEB"
 
 # status --json exits 1 when a check FAILs — the output is still the snapshot
@@ -48,6 +50,38 @@ lastbk=$(printf '%s' "$sj" | jq -r '(.last_backup_epoch // 0) |
 	if . > 0 then (. | strflocaltime("%Y-%m-%d %H:%M")) else "never" end' 2>/dev/null || echo "never")
 gen_at=$(date '+%Y-%m-%d %H:%M:%S')
 
+# ---- cheap /proc//sys data points (no spin-up, no subprocess storms) -------
+loadavg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "?")
+cores=$(nproc 2>/dev/null || echo "?")
+mem=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2}
+	END{ if (t>0) printf "%.1f of %.1f GB (%d%%)", (t-a)/1048576, t/1048576, (t-a)*100/t; else print "?" }' /proc/meminfo 2>/dev/null)
+# RAM root fill matters on a diskless box: a full / breaks 'nas commit'
+ramroot=$(df -k / 2>/dev/null | awk 'NR==2{printf "%d%% of %.1f GB", $3*100/$2, $2/1048576}')
+ramroot_pct=$(df -k / 2>/dev/null | awk 'NR==2{printf "%d", $3*100/$2}')
+if [ "${ramroot_pct:-0}" -ge 80 ] 2>/dev/null; then
+	ramroot_html="<span class=\"pill p-warn\">$ramroot</span>"
+else
+	ramroot_html="<span class=\"num\">$ramroot</span>"
+fi
+kern="$(uname -r 2>/dev/null || echo '?') &middot; Alpine $(cat /etc/alpine-release 2>/dev/null || echo '?')"
+cputemp="-"
+for h in /sys/class/hwmon/hwmon*; do
+	[ -f "$h/name" ] || continue
+	case "$(cat "$h/name" 2>/dev/null)" in
+	coretemp|k10temp|zenpower|cpu_thermal|soc_thermal|acpitz)
+		t=$(cat "$h/temp1_input" 2>/dev/null) || continue
+		case "$t" in *[!0-9]*|'') continue ;; esac
+		cputemp="$((t / 1000))&deg;C"; break ;;
+	esac
+done
+lastcommit=$(date -r "$CFG/$(hostname).apkovl.tar.gz" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "never")
+sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null | grep -c . || echo 0)
+if [ "${sinks:-0}" -gt 0 ] 2>/dev/null; then
+	sinks_html="<span class=\"pill p-ok\">$sinks sink(s)</span>"
+else
+	sinks_html="<span class=\"pill p-off\">off</span>"
+fi
+
 case "$datastate" in
 	ok) data_cls=ok; data_word="mounted" ;;
 	fresh) data_cls=warn; data_word="not configured yet" ;;
@@ -59,12 +93,32 @@ else
 	unsaved_html="<span class=\"pill p-ok\">none</span>"
 fi
 
+# core services come from nas status --json (docker/samba/nfs/sshd/avahi/...)
 services=$(printf '%s' "$sj" | jq -r '
 	[.services[]? |
 	  if .running then "<span class=\"pill p-ok\"><i></i>\(.name | @html)</span>"
 	  else "<span class=\"pill p-off\"><i></i>\(.name | @html)</span>" end
 	] | join(" ")')
 [ -n "$services" ] || services='<span class="mut">no service data</span>'
+
+# optional services are OFF by default, so they are probed here (a stopped
+# one is a neutral "off", never a warning — that is exactly why they cannot
+# join the cmd_status service loop, which warns on stopped entries)
+opt_services=""
+for s in tailscale zerotier-one nut-upsd nut-upsmon; do
+	if rc-service "$s" status >/dev/null 2>&1; then
+		opt_services="$opt_services <span class=\"pill p-ok\"><i></i>$s</span>"
+	else
+		opt_services="$opt_services <span class=\"pill p-off\"><i></i>$s</span>"
+	fi
+done
+# WireGuard has no daemon — an existing wg interface means it is up
+wg_ifs=$(wg show interfaces 2>/dev/null | tr '\n' ' ')
+if [ -n "${wg_ifs% }" ]; then
+	opt_services="$opt_services <span class=\"pill p-ok\"><i></i>wireguard (${wg_ifs% })</span>"
+else
+	opt_services="$opt_services <span class=\"pill p-off\"><i></i>wireguard</span>"
+fi
 
 checks=$(printf '%s' "$sj" | jq -r '
 	([.fail_lines[]? | "<li class=\"c-fail\">\(@html)</li>"] +
@@ -74,20 +128,33 @@ if [ -z "$checks" ]; then
 	else checks='<li class="mut">no check data</li>'; fi
 fi
 
+# recent operations (nas history) — ties the audit trail into the glance page
+recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null \
+	| sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+	| awk -F'\t' '{ printf "<li><span class=\"num mut\">%s</span> <b>%s</b> <span class=\"mut\">%s</span></li>\n", substr($1,1,16), $2, $4 }')
+[ -n "$recent_ops" ] || recent_ops='<li class="mut">none yet — commits, backups and upgrades land here</li>'
+
+# every partition that carries a filesystem is listed (mounted ones with
+# their free space) — incl. the boot USB's BOOT/MNASCFG; junk devices
+# (floppy/cdrom/loop) are filtered out
 disk_rows=$(printf '%s' "$dj" | jq -r '
 	def hum: if . == null then "?"
 		elif . >= 1099511627776 then "\(. / 1099511627776 * 10 | round / 10) TB"
 		elif . >= 1073741824 then "\(. / 1073741824 * 10 | round / 10) GB"
 		else "\(. / 1048576 | floor) MB" end;
-	.disks[]? |
+	.disks[]? | select(.name | test("^(fd|sr|loop|ram|zram)") | not) |
 	"<tr><td class=\"mono\">\(.name | @html)\(if .boot_usb then " <span class=\"pill p-boot\">boot USB</span>" else "" end)</td>" +
 	"<td>\((.model // .vendor // "?") | @html)</td>" +
 	"<td class=\"num\">\(.size | hum)</td>" +
 	"<td>\(if .rotational then "HDD" else "SSD" end)</td>" +
 	"<td class=\"num\">\((.temp // "-") | @html)</td>" +
-	"<td>\([ .partitions[]? | select(.mountpoint != null) |
-		"<span class=\"mnt\"><b>\((.label // .name) | @html)</b> &rarr; \(.mountpoint | @html) <span class=\"mut\">(\(.fsavail | hum) free)</span></span>"
-	  ] | if length == 0 then "<span class=\"mut\">&mdash;</span>" else join("<br>") end)</td></tr>"')
+	"<td>\([ .partitions[]? | select(.fstype != null) |
+		if .mountpoint != null then
+			"<span class=\"mnt\"><b>\((.label // .name) | @html)</b> &rarr; \(.mountpoint | @html) <span class=\"mut\">&middot; \(.fstype | @html) &middot; \(.fsavail | hum) free</span></span>"
+		else
+			"<span class=\"mnt mut\"><b>\((.label // .name) | @html)</b> &middot; \(.fstype | @html) &middot; not mounted</span>"
+		end
+	  ] | if length == 0 then "<span class=\"mut\">no filesystem</span>" else join("<br>") end)</td></tr>"')
 [ -n "$disk_rows" ] || disk_rows='<tr><td colspan="6" class="mut">no disk data</td></tr>'
 
 cat > "$WEB/index.html.new" <<EOF
@@ -121,9 +188,10 @@ header .spacer{flex:1}
 .state.fail{background:#e04b40;color:#fff}.state.unknown{background:#5c6b7a;color:#fff}
 header .upd{color:#a8c4dc;font-size:11.5px;text-align:right}
 .wrap{max-width:1080px;margin:0 auto;padding:18px 20px 40px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .card h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
+.card h2.later{margin-top:12px}
 dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:13.5px}
 dt{color:var(--mut);white-space:nowrap}dd{text-align:right}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:14px;font-size:12px;font-weight:600}
@@ -132,18 +200,19 @@ dt{color:var(--mut);white-space:nowrap}dd{text-align:right}
 .p-fail{color:var(--fail);background:var(--failbg)}.p-off{color:var(--off);background:var(--offbg)}
 .p-boot{color:var(--acc);background:var(--offbg);font-size:10.5px}
 .svc{display:flex;flex-wrap:wrap;gap:7px}
-ul.checks{list-style:none;font-size:13px}
+ul.checks,ul.ops{list-style:none;font-size:13px}
 ul.checks li{padding:4px 0 4px 20px;position:relative}
 ul.checks li::before{content:"";position:absolute;left:4px;top:11px;width:8px;height:8px;border-radius:50%}
 .c-ok::before{background:var(--ok)}.c-warn::before{background:var(--warn)}.c-fail::before{background:var(--fail)}
 .c-fail{color:var(--fail);font-weight:600}.c-warn{color:var(--warn)}
+ul.ops li{padding:4px 0;border-bottom:1px dashed var(--line)}
+ul.ops li:last-child{border-bottom:none}
 .tablecard{padding:0;overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
 td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
 tr:last-child td{border-bottom:none}
 .mnt{display:inline-block}
-.big{font-size:17px;font-weight:700}
 footer{max-width:1080px;margin:0 auto;padding:0 20px 30px;color:var(--mut);font-size:12.5px;display:flex;gap:18px;flex-wrap:wrap}
 footer a{color:var(--acc);text-decoration:none}
 footer a:hover{text-decoration:underline}
@@ -163,26 +232,36 @@ footer a:hover{text-decoration:underline}
       <dl>
         <dt>Uptime</dt><dd class="num">$up</dd>
         <dt>Address</dt><dd class="num">$ips</dd>
+        <dt>Load</dt><dd class="num">$loadavg <span class="mut">/ $cores cores</span></dd>
+        <dt>Memory</dt><dd class="num">$mem</dd>
+        <dt>RAM root</dt><dd>$ramroot_html</dd>
+        <dt>CPU temp</dt><dd class="num">$cputemp</dd>
+        <dt>Kernel</dt><dd class="num">$kern</dd>
         <dt>Release</dt><dd>$rel <span class="mut">($build)</span></dd>
-        <dt>Unsaved changes</dt><dd>$unsaved_html</dd>
-        <dt>Last backup</dt><dd class="num">$lastbk</dd>
       </dl>
     </div>
-    <div class="card"><h2>Storage</h2>
+    <div class="card"><h2>Config &amp; storage</h2>
       <dl>
         <dt>Data disk</dt><dd><span class="pill p-$data_cls"><i></i>$data_word</span></dd>
         <dt>Config partition</dt><dd><span class="pill p-$( [ "$cfgstate" = ok ] && echo ok || echo fail )"><i></i>$cfgstate</span></dd>
+        <dt>Unsaved changes</dt><dd>$unsaved_html</dd>
+        <dt>Last commit</dt><dd class="num">$lastcommit</dd>
+        <dt>Last backup</dt><dd class="num">$lastbk</dd>
+        <dt>Alert sinks</dt><dd>$sinks_html</dd>
       </dl>
-      <p class="mut" style="margin-top:9px;font-size:12.5px">Docker/Samba/NFS are held until /mnt/nasdata is mounted.</p>
     </div>
-    <div class="card"><h2>Services</h2><div class="svc">$services</div></div>
+    <div class="card"><h2>Services</h2><div class="svc">$services</div>
+      <h2 class="later">Optional</h2><div class="svc">$opt_services</div></div>
     <div class="card"><h2>Checks</h2><ul class="checks">
 $checks
+    </ul></div>
+    <div class="card"><h2>Recent operations</h2><ul class="ops">
+$recent_ops
     </ul></div>
   </div>
   <div class="card tablecard">
     <table>
-      <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Temp</th><th>Mounted</th></tr></thead>
+      <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Temp</th><th>Filesystems</th></tr></thead>
       <tbody>
 $disk_rows
       </tbody>
