@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Disabling unused services is now documented and fully supported.** New "Disabling Unused Services" sections in the README and the built-in guide cover every service. The one enabling change: the `mountnas` supervisor's data-service list is overridable via `DATA_SERVICES=` in `/etc/conf.d/mountnas` (list only what you keep) — previously Docker/Samba/NFS could not be permanently disabled at all (they live in no runlevel, `apk del` is undone by upgrade world-reconciliation, and init.d edits don't persist on a diskless system). `nas status` and the web dashboard understand the override and report deliberately disabled services as disabled instead of warning forever.
+
 ## [beta-5] — 2026-07-13
 
 ### Added

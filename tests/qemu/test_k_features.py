@@ -110,6 +110,32 @@ def test_data_watch_alerts_through_sinks(dev_guest, http_server):
     assert "DISCONNECTED" in payload["title"] + payload["message"]
 
 
+# ---------------------------------------------------------------- disable
+
+def test_disable_data_service_via_conf(dev_guest):
+    """Docker/Samba/NFS live in no runlevel, so the supported permanent
+    disable is DATA_SERVICES= in /etc/conf.d/mountnas (the documented steps
+    are exactly what this test runs). The supervisor must not start a
+    disabled service, and nas status must report it as disabled — never as
+    a 'not running' warning."""
+    g = dev_guest
+    g.poll_until("rc-service docker status", timeout=300, desc="docker up")
+    # the documented recipe: stop it now, list only what you KEEP, check
+    g.run("rc-service docker stop", timeout=120)
+    g.run("printf 'DATA_SERVICES=\"samba nfs\"\\n' > /etc/conf.d/mountnas",
+          check=True)
+    g.run("rc-service mountnas restart", timeout=240, check=True)
+    g.poll_until("rc-service samba status", timeout=180,
+                 desc="kept service (samba) back up")
+    assert g.run("rc-service docker status").rc != 0, \
+        "supervisor started a service disabled via DATA_SERVICES"
+    st = g.run("nas status", timeout=180)
+    assert st.rc == 0, \
+        f"a deliberate disable must not fail status (rc={st.rc}):\n{st.out}"
+    assert "docker not running" not in st.out, st.out
+    assert "disabled by /etc/conf.d/mountnas" in st.out and "docker" in st.out, st.out
+
+
 # ---------------------------------------------------------------- ops log
 
 def test_ops_log_history_and_no_commit_persistence(dev_guest):

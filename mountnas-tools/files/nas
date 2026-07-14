@@ -229,7 +229,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -258,9 +258,17 @@ cmd_status() {
 	esac
 	# quiet success, loud failure: running services share ONE ok line (the
 	# per-service SVC records still feed --json); a stopped one stays its own
-	# warn line so it can't hide in a wall of green
+	# warn line so it can't hide in a wall of green.
+	# Data services DISABLED via DATA_SERVICES= in /etc/conf.d/mountnas (the
+	# supported way to turn off Docker/Samba/NFS — see the supervisor's header)
+	# are skipped, not warned: a deliberate off must not read as a failure.
+	ds_on=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; echo "${DATA_SERVICES:-docker samba nfs}")
+	ds_off=""
+	for s in docker samba nfs; do
+		case " $ds_on " in *" $s "*) ;; *) ds_off="$ds_off $s" ;; esac
+	done
 	svc_up=""
-	for s in docker samba nfs sshd avahi-daemon smartd crond chronyd; do
+	for s in $ds_on sshd avahi-daemon smartd crond chronyd; do
 		if rc-service "$s" status >/dev/null 2>&1; then
 			svc_up="$svc_up $s"; _rec SVC "$s" true
 		else
@@ -268,6 +276,7 @@ cmd_status() {
 		fi
 	done
 	[ -n "$svc_up" ] && ok "services:$svc_up"
+	[ -n "$ds_off" ] && hint "disabled by /etc/conf.d/mountnas:$ds_off (re-enable: edit DATA_SERVICES, nas restart)"
 	lbu_out=$(lbu status 2>/dev/null)
 	n=$(printf '%s' "$lbu_out" | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"

@@ -178,6 +178,42 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
 - **New admin user**: `adduser <name> wheel` (so `doas` works), then `nas commit`.
 
+## Disabling Unused Services
+
+Every service can be turned off permanently — a NAS that only serves Samba doesn't need Docker's RAM, and every listener you stop shrinks the attack surface. Two mechanisms, depending on how the service is started:
+
+**Data services (Docker, Samba, NFS)** are started by the `mountnas` supervisor, not a runlevel, so `rc-update del` does nothing for them. Set `DATA_SERVICES` in `/etc/conf.d/mountnas` to **only what you keep**:
+
+```sh
+rc-service docker stop                                     # stop it now
+echo 'DATA_SERVICES="samba nfs"' > /etc/conf.d/mountnas    # a box that doesn't use Docker
+nas status && nas commit
+```
+
+`nas status` (and the web dashboard) know about the override and won't warn about services you deliberately disabled — it lists them as disabled instead. Re-enable by editing the list back (or deleting the file) and running `nas restart`.
+
+**Runlevel services** (everything else) use the standard Alpine pattern — stop it, remove it from the runlevel, commit:
+
+```sh
+rc-service <name> stop && rc-update del <name> default && nas commit
+```
+
+What each one costs you if disabled:
+
+| Service | Safe to disable if… | You lose |
+| --- | --- | --- |
+| `avahi-daemon` | you use IPs or DNS instead of `mountnas.local` | mDNS discovery (also stop `dbus` if nothing else needs it) |
+| `chronyd` | never recommended | time sync — clock drift breaks SnapRAID timestamps, TLS, logs |
+| `crond` | ⚠️ **think twice** | scheduled jobs **including the 15-minute disk-loss watcher and your SnapRAID syncs** — alerting goes blind |
+| `smartd` | you accept no disk-failure early warning | SMART monitoring + alerts |
+| `rpcbind` | you don't serve NFS | nothing else uses it |
+| `acpid` | headless box you never power-button | clean shutdown on the power button |
+| `sshd` | ⚠️ console-only administration | **all remote access — be sure you have a monitor/keyboard** |
+
+**Optional services** (Tailscale, ZeroTier, NUT, the web dashboard) ship off. If you enabled one and want it gone: the same stop + `rc-update del` + commit (`nas web off && nas commit` for the dashboard; WireGuard has no service — `wg-quick down <iface>` and remove your local.d/cron hook).
+
+**Don't `apk del` baked-in packages to disable a service** — the base package set is restored by `nas upgrade`'s world reconciliation, so the binaries come back (deliberately). Disabling the *service* is the supported, upgrade-proof way; the idle binaries on disk cost nothing since the whole OS lives in RAM anyway.
+
 ## Web dashboard & built-in user guide
 
 MountNAS stays CLI-first, but a glanceable **read-only** status page is one command away:

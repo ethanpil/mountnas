@@ -74,6 +74,7 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
     <a href="#firstboot">First boot</a>
     <a href="#storage">Storage</a>
     <a href="#services">Sharing &amp; services</a>
+    <a href="#disable">Disabling services</a>
     <a href="#monitoring">Monitoring &amp; alerts</a>
     <a href="#failure">When a disk fails</a>
     <a href="#maintenance">Maintenance</a>
@@ -89,6 +90,7 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
     <a href="#firstboot">First boot</a>
     <a href="#storage">Storage</a>
     <a href="#services">Sharing &amp; services</a>
+    <a href="#disable">Disabling services</a>
     <a href="#monitoring">Monitoring &amp; alerts</a>
     <a href="#failure">When a disk fails</a>
     <a href="#maintenance">Maintenance</a>
@@ -254,6 +256,32 @@ nas commit</code></pre></li>
 <pre><code>adduser bob wheel &amp;&amp; nas commit    # wheel = doas (sudo) rights</code></pre>
 </section>
 
+<section id="disable">
+<h2>Disabling unused services <a class="top" href="#top">&uarr;</a></h2>
+<p>Everything can be turned off permanently — less RAM, fewer listeners, smaller attack surface. Two mechanisms, depending on how the service is started:</p>
+<h3>Docker / Samba / NFS (supervisor-managed)</h3>
+<p>These live in <b>no runlevel</b> — the <code>mountnas</code> supervisor starts them once the data disk mounts — so <code>rc-update del</code> does nothing for them. Set <code>DATA_SERVICES</code> in <code>/etc/conf.d/mountnas</code> to <b>only what you keep</b>:</p>
+<pre><code>rc-service docker stop                                     # stop it now
+echo 'DATA_SERVICES="samba nfs"' &gt; /etc/conf.d/mountnas    # a box that does not use Docker
+nas status &amp;&amp; nas commit</code></pre>
+<p><code>nas status</code> and this dashboard understand the override: a deliberately disabled service is listed as disabled, never warned about. Re-enable by editing the list back (or deleting the file), then <code>nas restart</code>.</p>
+<h3>Runlevel services</h3>
+<pre><code>rc-service &lt;name&gt; stop &amp;&amp; rc-update del &lt;name&gt; default &amp;&amp; nas commit</code></pre>
+<table>
+<tr><th>Service</th><th>Safe to disable if…</th><th>You lose</th></tr>
+<tr><td><code>avahi-daemon</code></td><td>you use IPs/DNS, not <code>.local</code></td><td>mDNS discovery (stop <code>dbus</code> too if nothing else needs it)</td></tr>
+<tr><td><code>chronyd</code></td><td>not recommended</td><td>time sync — drift breaks SnapRAID timestamps, TLS, logs</td></tr>
+<tr><td><code>crond</code></td><td>⚠️ think twice</td><td>scheduled jobs <b>including the 15-min disk-loss watcher and SnapRAID syncs</b></td></tr>
+<tr><td><code>smartd</code></td><td>you accept no early disk-failure warning</td><td>SMART monitoring + alerts</td></tr>
+<tr><td><code>rpcbind</code></td><td>you don't serve NFS</td><td>nothing else uses it</td></tr>
+<tr><td><code>acpid</code></td><td>headless, never power-buttoned</td><td>clean shutdown on the power button</td></tr>
+<tr><td><code>sshd</code></td><td>⚠️ console-only administration</td><td><b>all remote access</b> — have a monitor/keyboard first</td></tr>
+</table>
+<h3>Optional services</h3>
+<p>Tailscale, ZeroTier and NUT ship off; if you enabled one, the same stop + <code>rc-update del</code> + commit removes it. The dashboard: <code>nas web off &amp;&amp; nas commit</code>. WireGuard has no daemon — <code>wg-quick down &lt;iface&gt;</code> and remove your local.d/cron hook.</p>
+<div class="warn"><b>Don't <code>apk del</code> baked-in packages to disable a service</b> — <code>nas upgrade</code>'s world reconciliation restores the base package set, so the binaries return by design. Disabling the <i>service</i> is the supported, upgrade-proof way; idle binaries cost nothing (the OS lives in RAM regardless).</div>
+</section>
+
 <section id="monitoring">
 <h2>Monitoring &amp; alerts <a class="top" href="#top">&uarr;</a></h2>
 <h3>nas status — the pre-flight check</h3>
@@ -408,6 +436,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td><code>/etc/snapraid.conf</code></td><td>SnapRAID parity config.</td></tr>
 <tr><td><code>/etc/docker/daemon.json</code></td><td>Docker daemon (data-root on nasdata).</td></tr>
 <tr><td><code>/etc/mountnas/notify.conf</code></td><td>Notification sinks (email/ntfy/webhook/...).</td></tr>
+<tr><td><code>/etc/conf.d/mountnas</code></td><td>Data-service switch: <code>DATA_SERVICES=</code> lists what the supervisor starts (see <a href="#disable">Disabling services</a>).</td></tr>
 <tr><td><code>/etc/conf.d/mountnas-web</code></td><td>Dashboard port override (<code>PORT=</code>).</td></tr>
 <tr><td><code>/etc/smartd.conf</code></td><td>SMART monitoring + alert routing.</td></tr>
 <tr><td><code>/etc/msmtprc</code></td><td>Outbound email relay (mode 0600 — holds a password).</td></tr>

@@ -4,7 +4,15 @@ DATA=/mnt/nasdata
 STATE=/run/mountnas
 BOOTMNT=/media/mnasboot
 LOG=/var/log/mountnas.log
-DATA_SERVICES="docker samba nfs"
+# The data services this supervisor starts once /mnt/nasdata is mounted.
+# Overridable from /etc/conf.d/mountnas (OpenRC sources it before this file
+# runs): set DATA_SERVICES to ONLY what you keep, e.g.
+#   DATA_SERVICES="samba nfs"        # a box that does not use Docker
+# and 'nas commit'. That is the supported way to disable Docker/Samba/NFS —
+# they live in no runlevel, and 'apk del' does not survive an upgrade's
+# world reconciliation. 'nas status' reads the same override and will not
+# warn about services you deliberately disabled.
+DATA_SERVICES="${DATA_SERVICES:-docker samba nfs}"
 
 depend() { need localmount; after net; }
 
