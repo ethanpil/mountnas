@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [beta-5] — 2026-07-13
 
 ### Added
 - **Read-only web dashboard + built-in user guide** (`nas web on [port]`, off by default): overall health, storage state, services, per-disk temps/free space and the failing check lines, auto-refreshing every ~2 minutes at `http://<host>:8080/`. Deliberately unable to manage anything: a root-run job renders **static files into tmpfs** and busybox httpd (dropped to `nobody`) serves only those — no request-time code, no auth surface, no disk writes. The single page also carries hardware/CPU detail, load/memory (used·avail·total)/RAM-root fill, installed-package count, your added packages (world vs. the release base), and a collapsible tail of the last 100 syslog lines. `/guide.html` is a comprehensive user guide baked into each release (philosophy, how-tos, full `nas` manual, file map, baked-in package list, troubleshooting); `/status.json` feeds integrations. Adds `busybox-extras` (the httpd applet) to the image.
