@@ -93,6 +93,41 @@ _path_on_disk() {
 _boot_usb_disk() {
 	lsblk -no pkname "$(findfs LABEL=BOOT 2>/dev/null)" 2>/dev/null | head -n1
 }
+# ---------- append-only operations log (nas history) ----------
+# One line per destructive/notable operation, written DIRECTLY to /cfg (the
+# ext4 config partition) — NOT the RAM overlay, so it persists immediately
+# with no 'nas commit': an audit trail you had to remember to save would lose
+# the record of exactly the operation that mattered (or of the crash before
+# the commit). Lives on the boot stick, so the stick tells the whole story
+# even when the data disks are gone. Volume is a handful of entries a year;
+# a self-trim bounds the file with no logrotate dependency.
+# Record: UTCts<TAB>op<TAB>actor<TAB>details   (greppable; nas history renders it)
+OPSLOG=/cfg/mountnas-ops.log
+_ops_actor() {
+	local u t
+	u=${DOAS_USER:-$(id -un 2>/dev/null || echo root)}
+	if [ -n "${SSH_CONNECTION:-}" ]; then
+		printf '%s@ssh:%s' "$u" "${SSH_CONNECTION%% *}"
+	else
+		t=$(tty 2>/dev/null)
+		case "$t" in /dev/*) printf '%s@%s' "$u" "${t#/dev/}" ;; *) printf '%s@-' "$u" ;; esac
+	fi
+}
+_ops_log() {
+	local op
+	op=$1; shift
+	# best-effort by contract: never fail (or slow) the caller — skip silently
+	# when /cfg is absent or momentarily read-only (e.g. during nas backup)
+	mountpoint -q "$CFG" 2>/dev/null || return 0
+	printf '%s\t%s\t%s\t%s\n' \
+		"$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$op" "$(_ops_actor)" "$*" \
+		>> "$OPSLOG" 2>/dev/null || return 0
+	if [ "$(wc -l < "$OPSLOG" 2>/dev/null)" -gt 1200 ] 2>/dev/null; then
+		tail -n 1000 "$OPSLOG" > "$OPSLOG.new" 2>/dev/null \
+			&& mv "$OPSLOG.new" "$OPSLOG" 2>/dev/null || rm -f "$OPSLOG.new" 2>/dev/null
+	fi
+	return 0
+}
 # Refresh the prompt's unsaved-count cache. Called after every command so the
 # PS1 indicator stays current without ever running lbu from the prompt itself.
 # Commands that already counted changes write the cache themselves and set
@@ -134,6 +169,7 @@ ${C_HD}Recover${C_NO}
   ${C_B}rollback${C_NO}  Restore a previous committed config          [--list | <n>]
   ${C_B}backup${C_NO}    Image the boot USB to a file (see UPGRADE.md)  [--to <dir>]
   ${C_B}restart${C_NO}   Re-mount disks + (re)start services (no reboot)
+  ${C_B}history${C_NO}   Operations log: setups/commits/backups/upgrades   [-n N]
 
 ${C_HD}Maintain${C_NO}
   ${C_B}upgrade${C_NO}   Upgrade the OS from a release file/URL      [--check|--yes]
@@ -848,6 +884,29 @@ cmd_logs() {
 	esac
 }
 
+# nas history — render the append-only operations log (see _ops_log). Answers
+# "what happened to this box and when" in one read: setups, commits (with
+# their notes), rollbacks, backups, upgrades, shutdowns/reboots — each with a
+# UTC timestamp and who ran it. Zero setup, zero config, nothing to rotate.
+cmd_history() {
+	local hn
+	hn=25
+	case "${1:-}" in
+		-n) hn="${2:-}"; case "$hn" in ''|*[!0-9]*) usage "nas history [-n N | --all]"; return 1 ;; esac ;;
+		--all) hn=1000000 ;;
+		'') : ;;
+		*) usage "nas history [-n N | --all]"; return 1 ;;
+	esac
+	hdr "operations log"
+	if [ ! -s "$OPSLOG" ]; then
+		echo "  (empty — setups, commits, backups, upgrades and power events land here)"
+		hint "kept at $OPSLOG on the config partition; persists without a commit"
+		return 0
+	fi
+	tail -n "$hn" "$OPSLOG" | awk -F'\t' '{ printf "  %-20s  %-13s  %-20s  %s\n", $1, $2, $3, $4 }'
+	hint "showing the last $hn (of $(wc -l < "$OPSLOG")) — full file: $OPSLOG"
+}
+
 # nas notify — send through / inspect the notification sinks. The actual
 # fan-out lives in ONE place (/usr/libexec/mountnas/notify — also called by
 # data-watch, smartd-notify and the health digest); this command is the
@@ -915,6 +974,7 @@ cmd_report() {
 	cp /var/log/mountnas.log "$rpt_d/mountnas.log" 2>/dev/null || true
 	cp /var/log/messages "$rpt_d/messages" 2>/dev/null || true
 	cp /etc/fstab "$rpt_d/fstab" 2>/dev/null || true
+	cp "$OPSLOG" "$rpt_d/ops-history.log" 2>/dev/null || true
 	cat /proc/mounts > "$rpt_d/mounts.txt" 2>/dev/null || true
 	lsblk -o NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT > "$rpt_d/lsblk.txt" 2>/dev/null || true
 	df -h > "$rpt_d/df.txt" 2>/dev/null || true
@@ -1046,6 +1106,7 @@ cmd_commit() {
 	fi
 	sz=$(du -k "$CFG"/*.apkovl.tar.gz 2>/dev/null | awk '{s+=$1}END{print s}')
 	[ "${sz:-0}" -gt 51200 ] && warn "overlay is large (${sz}KB) — a big file in a tracked path (e.g. /root)?"
+	_ops_log commit "${note:-(no note)}"
 	ok "saved to $CFG${note:+  (note: $note)}"
 }
 
@@ -1125,6 +1186,7 @@ cmd_rollback() {
 	# stage + rename so a power cut cannot leave a torn active overlay
 	if cp "$sel" "$act.new" && mv "$act.new" "$act"; then
 		sync
+		_ops_log rollback "restored $(basename "$sel")${seln:+ — $seln}"
 		ok "restored $(basename "$sel") as the active saved config"
 		hint "Reboot to apply it:  nas reboot"
 	else
@@ -1192,6 +1254,7 @@ EOF
 		# can report backup age across reboots (saved with the next commit)
 		mkdir -p /etc/mountnas 2>/dev/null || true
 		printf '%s %s\n' "$(date +%s)" "$(date '+%Y-%m-%d %H:%M')" > /etc/mountnas/last-backup 2>/dev/null || true
+		_ops_log backup "verified -> $out"
 		warn "COPY THIS FILE TO ANOTHER COMPUTER — a backup stored only on this box can't save a dead box."
 	else
 		mount -o remount,rw "$CFG" 2>/dev/null \
@@ -1223,6 +1286,7 @@ _power() { act="$1"; word="$2"; shift 2
 			case "$a" in S|s) cmd_commit || return 1 ;; D|d) : ;; *) echo "Cancelled."; return 1 ;; esac
 		fi ;;
 	esac
+	_ops_log "$word" "requested (mode: $mode)"
 	# $act is always an absolute path (/sbin/poweroff|/sbin/reboot). exec of a
 	# pathname bypasses shell aliases/functions, and this script is non-interactive
 	# (never sources /etc/profile), so the reboot/poweroff aliases don't exist here
@@ -1320,6 +1384,7 @@ cmd_setup() {
 	# stops offering the wizard. Written before the commit so it persists with it.
 	mkdir -p /etc/mountnas
 	date '+%Y-%m-%d %H:%M' > /etc/mountnas/setup-done
+	_ops_log setup "wizard completed (hostname: $(hostname))"
 
 	printf '%s[5/5]%s Saving...\n' "$C_B" "$C_NO"; cmd_commit
 	# "Setup complete" stays a contiguous literal (CI expects it)
@@ -1505,6 +1570,7 @@ EOF
 		printf '  Type YES (uppercase) to confirm you have a backup and continue: '
 		read -r a; [ "$a" = YES ] || { echo "Aborted — no changes made."; return 1; }
 	fi
+	_ops_log upgrade-start "from $RELEASE, source: ${url:-$img}"
 
 	_mount_boot_rw || return 1
 
@@ -1662,6 +1728,7 @@ EOF
 	_cleanup; trap - EXIT HUP INT TERM
 	if [ "$ec" != 0 ]; then
 		bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."
+		_ops_log upgrade "FAILED after write — restore backup (was $RELEASE)"
 		# the one alert you most want pushed to your phone (best-effort)
 		/usr/libexec/mountnas/notify "UPGRADE FAILED — action required" \
 			"nas upgrade failed AFTER writing to the boot USB. Do NOT reboot until you have restored your 'nas backup' image (see UPGRADE.md)." \
@@ -1708,6 +1775,7 @@ EOF
 	# real ok() (the old heredoc faked an uncolored "[ OK ]"); the literal
 	# "Upgrade written successfully" is a CI expect string — keep it contiguous
 	ok "Upgrade written successfully. Config and data are untouched."
+	_ops_log upgrade "ok (was $RELEASE) — reboot pending"
 	/usr/libexec/mountnas/notify "upgrade written" \
 		"nas upgrade completed on $(hostname) (was $RELEASE). Reboot to run the new version." \
 		>/dev/null 2>&1 || true
@@ -1815,6 +1883,15 @@ nas report
   config) written to /tmp for attaching to bug reports.
 EOF
 ;;
+	history) cat <<EOF
+nas history [-n N | --all]
+  The append-only operations log: every setup, commit (with its note),
+  rollback, backup, upgrade and shutdown/reboot — UTC timestamp, who ran
+  it, and the outcome. Stored at /cfg/mountnas-ops.log on the config
+  partition: persists immediately, NO 'nas commit' needed, survives even
+  a box that comes up half-broken. Self-trimming (~1000 entries).
+EOF
+;;
 	notify) cat <<EOF
 nas notify [--test | <subject> [body]]
   Notification sinks: with no arguments, list what is configured in
@@ -1872,6 +1949,7 @@ case "${1:-help}" in
 	commit|save) shift; cmd_commit "$@" ;;
 	rollback) shift; cmd_rollback "$@" ;;
 	logs) shift; cmd_logs "$@" ;;
+	history) shift; cmd_history "$@" ;;
 	notify) shift; cmd_notify "$@" ;;
 	backup) shift; cmd_backup "$@" ;;
 	shutdown) shift; cmd_shutdown "$@" ;;

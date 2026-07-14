@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- **Operations log** (`nas history`): setups, commits (with their notes), rollbacks, backups, upgrades and shutdowns/reboots are recorded append-only to `/cfg/mountnas-ops.log` — UTC timestamp, who ran it (doas user, ssh origin or tty), outcome. Written directly to the config partition so it persists **without** `nas commit` and survives a box that comes up half-broken; self-trims to ~1000 entries; included in `nas report`. Zero setup, zero attention.
 - **Notification sinks** (`nas notify`, `/etc/mountnas/notify.conf`): every alert — disk-loss transitions, SMART trouble (via the new `smartd-notify` wrapper), failed upgrades, health digests — now fans out to any mix of `email`, `ntfy`, generic `webhook`, `slack`, `discord`, and `gotify` sinks. Push sinks need no SMTP relay, so phone notifications work with one config line. `nas notify --test` verifies the setup; `nas notify "subject"` sends ad-hoc messages from scripts/cron (body pipeable). The old `alert-email` file keeps working as an email sink; `nas status` now reports the overall sink count. Stateless: no daemon, zero overhead until an event actually fires, every network send time-bounded.
 
 ## [beta-4] — 2026-07-12
