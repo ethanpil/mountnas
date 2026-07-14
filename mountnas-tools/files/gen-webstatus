@@ -1,26 +1,35 @@
 #!/bin/sh
-# gen-webstatus — render the read-only status pages into the tmpfs webroot.
+# gen-webstatus — render the read-only status dashboard into the tmpfs webroot.
 #
 # Design (see CONTEXT.md): NO request-time code. A root-run refresher renders
-# static index.html + system.html + status.json into /run/mountnas/web every
-# ~2 minutes and busybox httpd serves only those files — the attack surface
-# is "serve static files", and tmpfs means zero disk writes (no drive
-# spin-up, no flash wear). Everything shown comes from 'nas status --json' +
-# 'nas disks --json' (no secrets by construction) plus /proc//sys/file reads
-# — nothing here may ever wake a sleeping disk or run request-driven logic.
+# static index.html + status.json into /run/mountnas/web every ~2 minutes and
+# busybox httpd serves only those files — the attack surface is "serve static
+# files", and tmpfs means zero disk writes (no drive spin-up, no flash wear).
+# Everything shown comes from 'nas status --json' + 'nas disks --json' (no
+# secrets by construction) plus /proc//sys/file reads — nothing here may ever
+# wake a sleeping disk (SMART is -n standby + cached; power state is an
+# ioctl; /cfg and /mnt/nasdata are always-awake by design) or run
+# request-driven logic.
 WEB=${WEB:-/run/mountnas/web}
 CFG=/cfg
+DATA=/mnt/nasdata
 mkdir -p "$WEB"
 
+esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+hum_kb() { # KB -> human
+	awk -v k="${1:-0}" 'BEGIN{ if (k>=1073741824) printf "%.1f TB", k/1073741824;
+		else if (k>=1048576) printf "%.1f GB", k/1048576;
+		else if (k>=1024) printf "%.0f MB", k/1024; else printf "%d KB", k }'
+}
+
 # status --json exits 1 when a check FAILs — the output is still the snapshot
-# we want. Guard with jq so a hard failure degrades to an "unknown" page, not
-# a broken one.
+# we want. Guard with jq so a hard failure degrades to an "unknown" page.
 sj=$(NO_COLOR=1 nas status --json 2>/dev/null) || true
 dj=$(NO_COLOR=1 nas disks --json 2>/dev/null) || true
 printf '%s' "$sj" | jq -e . >/dev/null 2>&1 || sj='{}'
 printf '%s' "$dj" | jq -e . >/dev/null 2>&1 || dj='{}'
 
-# machine-readable copy for integrations (atomic swap; also linked in the footer)
+# machine-readable copy for integrations (atomic swap; linked in the footer)
 printf '%s\n' "$sj" > "$WEB/status.json.new" && mv "$WEB/status.json.new" "$WEB/status.json"
 
 state=$(printf '%s' "$sj" | jq -r '
@@ -50,7 +59,7 @@ lastbk=$(printf '%s' "$sj" | jq -r '(.last_backup_epoch // 0) |
 	if . > 0 then (. | strflocaltime("%Y-%m-%d %H:%M")) else "never" end' 2>/dev/null || echo "never")
 gen_at=$(date '+%Y-%m-%d %H:%M:%S')
 
-# ---- cheap /proc//sys data points (no spin-up, no subprocess storms) -------
+# ---- cheap /proc//sys data points -------------------------------------------
 loadavg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "?")
 cores=$(nproc 2>/dev/null || echo "?")
 mem=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2}
@@ -74,6 +83,18 @@ for h in /sys/class/hwmon/hwmon*; do
 		cputemp="$((t / 1000))&deg;C"; break ;;
 	esac
 done
+# fan RPMs from any hwmon that exposes them (row omitted when none)
+fans=""
+for f in /sys/class/hwmon/hwmon*/fan*_input; do
+	[ -f "$f" ] || continue
+	r=$(cat "$f" 2>/dev/null)
+	case "$r" in ''|*[!0-9]*|0) continue ;; esac
+	fans="$fans${fans:+ &middot; }$r rpm"
+done
+fans_row=""
+[ -n "$fans" ] && fans_row="<dt>Fans</dt><dd class=\"num\">$fans</dd>"
+procs=$(find /proc -maxdepth 1 -name '[0-9]*' 2>/dev/null | grep -c .)
+logins=$(who 2>/dev/null | wc -l | tr -d ' ')
 lastcommit=$(date -r "$CFG/$(hostname).apkovl.tar.gz" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "never")
 sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null | grep -c . || echo 0)
 if [ "${sinks:-0}" -gt 0 ] 2>/dev/null; then
@@ -81,33 +102,54 @@ if [ "${sinks:-0}" -gt 0 ] 2>/dev/null; then
 else
 	sinks_html="<span class=\"pill p-off\">off</span>"
 fi
-# installed packages: apk's local DB read, a few ms, no network
 pkgcount=$(apk info 2>/dev/null | wc -l | tr -d ' ')
 : "${pkgcount:=?}"
+cpu_model=$(awk -F': *' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+[ -n "$cpu_model" ] || cpu_model="?"
+hw_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)
+hw_product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+hw="${hw_vendor:+$hw_vendor }${hw_product:-?}"
+now_tz=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
-case "$datastate" in
-	ok) data_cls=ok; data_word="mounted" ;;
-	fresh) data_cls=warn; data_word="not configured yet" ;;
-	*) data_cls=fail; data_word="$datastate" ;;
-esac
-if [ "${unsaved:-0}" -gt 0 ] 2>/dev/null; then
-	unsaved_html="<span class=\"pill p-warn\">$unsaved unsaved &mdash; nas commit</span>"
-else
-	unsaved_html="<span class=\"pill p-ok\">none</span>"
+# ---- config-partition footprint (always-awake USB, metadata reads only) ----
+ovl_kb=$(du -k "$CFG/$(hostname).apkovl.tar.gz" 2>/dev/null | cut -f1)
+cache_kb=$(du -sk "$CFG/cache" 2>/dev/null | cut -f1)
+ovl_sz=$([ -n "$ovl_kb" ] && hum_kb "$ovl_kb" || echo "-")
+cache_sz=$([ -n "$cache_kb" ] && hum_kb "$cache_kb" || echo "-")
+
+# ---- protection: backups on disk + snapraid parity age ----------------------
+bk_html='<span class="mut">none on disk</span>'
+if mountpoint -q "$DATA" 2>/dev/null; then
+	bk_n=$(find "$DATA/backups" -maxdepth 1 -name 'mountnas-backup-*.img.gz' 2>/dev/null | wc -l | tr -d ' ')
+	if [ "${bk_n:-0}" -gt 0 ] 2>/dev/null; then
+		bk_new=$(ls -t "$DATA"/backups/mountnas-backup-*.img.gz 2>/dev/null | head -n1)
+		bk_html="<span class=\"num\">$bk_n on disk &middot; newest $(date -r "$bk_new" '+%Y-%m-%d' 2>/dev/null)</span>"
+	fi
+fi
+sr_html='<span class="mut">not configured</span>'
+sr_content=$(awk '$1=="content"{print $2; exit}' /etc/snapraid.conf 2>/dev/null)
+if [ -n "$sr_content" ]; then
+	if [ -f "$sr_content" ]; then
+		sr_age=$(( ( $(date +%s) - $(date -r "$sr_content" +%s 2>/dev/null || date +%s) ) / 86400 ))
+		if [ "$sr_age" -ge 8 ]; then
+			sr_html="<span class=\"pill p-warn\">synced $sr_age day(s) ago</span>"
+		else
+			sr_html="<span class=\"pill p-ok\">synced $sr_age day(s) ago</span>"
+		fi
+	else
+		sr_html='<span class="pill p-warn">configured, never synced</span>'
+	fi
 fi
 
-# core services come from nas status --json (docker/samba/nfs/sshd/avahi/...)
+# ---- services (core from status --json; off-by-default probed here) --------
 services=$(printf '%s' "$sj" | jq -r '
 	[.services[]? |
 	  if .running then "<span class=\"pill p-ok\"><i></i>\(.name | @html)</span>"
 	  else "<span class=\"pill p-off\"><i></i>\(.name | @html)</span>" end
 	] | join(" ")')
 [ -n "$services" ] || services='<span class="mut">no service data</span>'
-
-# off-by-default services are probed here and folded into the same pill row
-# (a stopped one is a neutral "off", never a warning — that is exactly why
-# they cannot join the cmd_status service loop, which warns on stopped
-# entries)
+# a stopped optional service is a neutral "off", never a warning — exactly why
+# these cannot join the cmd_status service loop, which warns on stopped entries
 for s in tailscale zerotier-one nut-upsd nut-upsmon; do
 	if rc-service "$s" status >/dev/null 2>&1; then
 		services="$services <span class=\"pill p-ok\"><i></i>$s</span>"
@@ -115,13 +157,69 @@ for s in tailscale zerotier-one nut-upsd nut-upsmon; do
 		services="$services <span class=\"pill p-off\"><i></i>$s</span>"
 	fi
 done
-# WireGuard has no daemon — an existing wg interface means it is up
 wg_ifs=$(wg show interfaces 2>/dev/null | tr '\n' ' ')
 if [ -n "${wg_ifs% }" ]; then
 	services="$services <span class=\"pill p-ok\"><i></i>wireguard (${wg_ifs% })</span>"
 else
 	services="$services <span class=\"pill p-off\"><i></i>wireguard</span>"
 fi
+# context lines under the pills: VPN addresses + UPS state, only when up
+svc_extra=""
+if rc-service tailscale status >/dev/null 2>&1; then
+	ts_ip=$(tailscale ip -4 2>/dev/null | head -n1)
+	[ -n "$ts_ip" ] && svc_extra="$svc_extra<div class=\"mut svcx\">tailscale: <span class=\"num\">$ts_ip</span></div>"
+fi
+if rc-service zerotier-one status >/dev/null 2>&1; then
+	zt=$(zerotier-cli listnetworks 2>/dev/null | awk 'NR>1 && $NF ~ /\// {printf "%s%s", (c++?", ":""), $NF}')
+	[ -n "$zt" ] && svc_extra="$svc_extra<div class=\"mut svcx\">zerotier: <span class=\"num\">$(printf '%s' "$zt" | esc)</span></div>"
+fi
+if rc-service nut-upsd status >/dev/null 2>&1; then
+	ups_name=$(upsc -l 2>/dev/null | head -n1)
+	if [ -n "$ups_name" ]; then
+		ups_stat=$(upsc "$ups_name" ups.status 2>/dev/null)
+		ups_chg=$(upsc "$ups_name" battery.charge 2>/dev/null)
+		ups_rt=$(upsc "$ups_name" battery.runtime 2>/dev/null)
+		[ -n "$ups_rt" ] && ups_rt="$((ups_rt / 60)) min"
+		case "$ups_stat" in
+			OL*) ups_pill="<span class=\"pill p-ok\">on line</span>" ;;
+			OB*) ups_pill="<span class=\"pill p-fail\">ON BATTERY</span>" ;;
+			*)   ups_pill="<span class=\"pill p-off\">$(printf '%s' "${ups_stat:-?}" | esc)</span>" ;;
+		esac
+		svc_extra="$svc_extra<div class=\"mut svcx\">UPS $(printf '%s' "$ups_name" | esc): $ups_pill <span class=\"num\">${ups_chg:+$ups_chg%}${ups_rt:+ &middot; $ups_rt}</span></div>"
+	fi
+fi
+
+# ---- docker containers (guarded on the daemon; ~50 ms when up) --------------
+docker_html='<span class="mut">docker not running (held until the data disk is up)</span>'
+if rc-service docker status >/dev/null 2>&1; then
+	d_run=$(docker ps -q 2>/dev/null | wc -l | tr -d ' ')
+	d_all=$(docker ps -aq 2>/dev/null | wc -l | tr -d ' ')
+	d_list=$(docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | head -n 12 | esc \
+		| awk -F'\t' '{ st = ($2 ~ /^Up/) ? "c-ok" : "c-off";
+			printf "<li class=\"%s\"><b>%s</b> <span class=\"mut\">%s</span></li>\n", st, $1, $2 }')
+	if [ "${d_all:-0}" -gt 0 ] 2>/dev/null; then
+		docker_html="<div class=\"mut\" style=\"margin-bottom:6px\"><span class=\"num\">$d_run</span> running / <span class=\"num\">$d_all</span> total</div><ul class=\"checks\">$d_list</ul>"
+	else
+		docker_html='<span class="mut">daemon up &middot; no containers yet</span>'
+	fi
+fi
+
+# ---- network interfaces (pure /sys reads) ------------------------------------
+net_rows=""
+for n in /sys/class/net/*; do
+	i=${n##*/}
+	[ "$i" = lo ] && continue
+	oper=$(cat "$n/operstate" 2>/dev/null)
+	rx=$(cat "$n/statistics/rx_bytes" 2>/dev/null || echo 0)
+	tx=$(cat "$n/statistics/tx_bytes" 2>/dev/null || echo 0)
+	spd=$(cat "$n/speed" 2>/dev/null)
+	case "$spd" in ''|*[!0-9]*) spd="" ;; esac
+	rx_h=$(hum_kb $((rx / 1024))); tx_h=$(hum_kb $((tx / 1024)))
+	if [ "$oper" = up ]; then op="<span class=\"pill p-ok\"><i></i>up</span>"
+	else op="<span class=\"pill p-off\"><i></i>${oper:-down}</span>"; fi
+	net_rows="$net_rows<dt class=\"mono\">$i</dt><dd>$op ${spd:+<span class=\"num\">$spd Mb/s</span> &middot;} <span class=\"num mut\">&darr;$rx_h &uarr;$tx_h</span></dd>"
+done
+[ -n "$net_rows" ] || net_rows='<dt>-</dt><dd class="mut">no interfaces</dd>'
 
 checks=$(printf '%s' "$sj" | jq -r '
 	([.fail_lines[]? | "<li class=\"c-fail\">\(@html)</li>"] +
@@ -131,17 +229,11 @@ if [ -z "$checks" ]; then
 	else checks='<li class="mut">no check data</li>'; fi
 fi
 
-# recent operations (nas history) — ties the audit trail into the glance page
-recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null \
-	| sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null | esc \
 	| awk -F'\t' '{ printf "<li><span class=\"num mut\">%s</span> <b>%s</b> <span class=\"mut\">%s</span></li>\n", substr($1,1,16), $2, $4 }')
 [ -n "$recent_ops" ] || recent_ops='<li class="mut">none yet — commits, backups and upgrades land here</li>'
 
-# SMART overall health per disk, STANDBY-SAFE and cached: smartctl -n standby
-# returns without touching a spun-down drive (same discipline as smartd's
-# shipped config), and the verdicts are refreshed at most every 15 min so the
-# 2-minute page cycle never turns into a SMART polling loop. Cache lives
-# OUTSIDE the webroot.
+# ---- SMART overall health, STANDBY-SAFE and cached (15 min) ------------------
 SMART_CACHE=/run/mountnas/websmart
 if [ ! -f "$SMART_CACHE" ] || [ "$(( $(date +%s) - $(date -r "$SMART_CACHE" +%s 2>/dev/null || echo 0) ))" -ge 900 ]; then
 	printf '%s' "$dj" \
@@ -162,19 +254,39 @@ smart_map=$(awk -F'\t' '{printf "{\"k\":\"%s\",\"v\":\"%s\"}\n", $1, $2}' "$SMAR
 	| jq -s 'map({(.k): .v}) | add // {}')
 [ -n "$smart_map" ] || smart_map='{}'
 
-# every partition that carries a filesystem is listed (mounted ones with
-# their free space) — incl. the boot USB's BOOT/MNASCFG; junk devices
-# (floppy/cdrom/loop) are filtered out
-disk_rows=$(printf '%s' "$dj" | jq -r --argjson smart "$smart_map" '
+# ---- disk power state (hdparm -C is an ioctl; never wakes a drive) -----------
+power_map=$(printf '%s' "$dj" \
+	| jq -r '.disks[]? | select(.name | test("^(fd|sr|loop|ram|zram)") | not) | .name' \
+	| while IFS= read -r d; do
+		[ -n "$d" ] || continue
+		p=$(hdparm -C "/dev/$d" 2>/dev/null | awk -F': *' '/drive state/{print $2}')
+		case "$p" in
+			*active*|*idle*) v=active ;;
+			*standby*|*sleeping*) v=standby ;;
+			*) v=- ;;
+		esac
+		printf '{"k":"%s","v":"%s"}\n' "$d" "$v"
+	done | jq -s 'map({(.k): .v}) | add // {}')
+[ -n "$power_map" ] || power_map='{}'
+
+# every partition that carries a filesystem is listed (mounted ones with a
+# used-fill bar + free space); junk devices (floppy/cdrom/loop) filtered out
+disk_rows=$(printf '%s' "$dj" | jq -r --argjson smart "$smart_map" --argjson power "$power_map" '
 	def hum: if . == null then "?"
 		elif . >= 1099511627776 then "\(. / 1099511627776 * 10 | round / 10) TB"
 		elif . >= 1073741824 then "\(. / 1073741824 * 10 | round / 10) GB"
 		else "\(. / 1048576 | floor) MB" end;
+	def bar: (if . >= 90 then "b-fail" elif . >= 80 then "b-warn" else "" end) as $c |
+		"<span class=\"bar \($c)\"><i style=\"width:\(.)%\"></i></span>";
 	.disks[]? | select(.name | test("^(fd|sr|loop|ram|zram)") | not) |
 	"<tr><td class=\"mono\">\(.name | @html)\(if .boot_usb then " <span class=\"pill p-boot\">boot USB</span>" else "" end)</td>" +
 	"<td>\((.model // .vendor // "?") | @html)</td>" +
 	"<td class=\"num\">\(.size | hum)</td>" +
 	"<td>\(if .rotational then "HDD" else "SSD" end)</td>" +
+	"<td>\( ($power[.name] // "-") as $pv |
+		if $pv == "active" then "<span class=\"pill p-ok\">active</span>"
+		elif $pv == "standby" then "<span class=\"pill p-off\">standby</span>"
+		else "<span class=\"mut\">-</span>" end)</td>" +
 	"<td class=\"num\">\((.temp // "-") | @html)</td>" +
 	"<td>\( ($smart[.name] // "n/a") as $sv |
 		if $sv == "PASSED" then "<span class=\"pill p-ok\">PASSED</span>"
@@ -183,41 +295,55 @@ disk_rows=$(printf '%s' "$dj" | jq -r --argjson smart "$smart_map" '
 		else "<span class=\"mut\">n/a</span>" end)</td>" +
 	"<td>\([ .partitions[]? | select(.fstype != null) |
 		if .mountpoint != null then
-			"<span class=\"mnt\"><b>\((.label // .name) | @html)</b> &rarr; \(.mountpoint | @html) <span class=\"mut\">&middot; \(.fstype | @html) &middot; \(.fsavail | hum) free</span></span>"
+			((if (.size // 0) > 0 and .fsavail != null then (100 - (.fsavail * 100 / .size) | floor) else null end)) as $pct |
+			"<span class=\"mnt\"><b>\((.label // .name) | @html)</b> &rarr; \(.mountpoint | @html) \(if $pct != null then ($pct | bar) else "" end) <span class=\"mut\">&middot; \(.fstype | @html) &middot; \(.fsavail | hum) free</span></span>"
 		else
 			"<span class=\"mnt mut\"><b>\((.label // .name) | @html)</b> &middot; \(.fstype | @html) &middot; not mounted</span>"
 		end
 	  ] | if length == 0 then "<span class=\"mut\">no filesystem</span>" else join("<br>") end)</td></tr>"')
-[ -n "$disk_rows" ] || disk_rows='<tr><td colspan="7" class="mut">no disk data</td></tr>'
+[ -n "$disk_rows" ] || disk_rows='<tr><td colspan="8" class="mut">no disk data</td></tr>'
 
-# ---- deeper system facts + the syslog tail (bottom of the dashboard) -------
-cpu_model=$(awk -F': *' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
-[ -n "$cpu_model" ] || cpu_model="?"
-hw_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)
-hw_product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
-hw="${hw_vendor:+$hw_vendor }${hw_product:-?}"
-now_tz=$(date '+%Y-%m-%d %H:%M:%S %Z')
-# user-added packages = /etc/apk/world minus the release base (world.base on
-# the mounted boot media); base file absent -> just say so
+# mergerfs pools are fuse mounts (invisible to lsblk) — appended as rows
+pool_rows=$(awk '$3=="fuse.mergerfs"{print $2}' /proc/mounts 2>/dev/null \
+	| while IFS= read -r mp; do
+		df -kP "$mp" 2>/dev/null | awk -v mp="$mp" 'NR==2 {
+			pct = int($3 * 100 / $2);
+			cls = (pct >= 90) ? "b-fail" : (pct >= 80) ? "b-warn" : "";
+			printf "<tr><td class=\"mono\">pool</td><td>mergerfs</td><td class=\"num\">%.1f GB</td><td>POOL</td><td><span class=\"mut\">-</span></td><td class=\"num\">-</td><td><span class=\"mut\">-</span></td><td><span class=\"mnt\"><b>pool</b> &rarr; %s <span class=\"bar %s\"><i style=\"width:%d%%\"></i></span> <span class=\"mut\">&middot; fuse.mergerfs &middot; %.1f GB free</span></span></td></tr>\n",
+				$2/1048576, mp, cls, pct, $4/1048576 }'
+	done)
+disk_rows="$disk_rows$pool_rows"
+
+# ---- release-base diff + cron + unsaved list + syslog tail -------------------
 wb=$(find /media -maxdepth 2 -name world.base 2>/dev/null | head -n1)
 if [ -n "$wb" ] && [ -s "$wb" ]; then
 	extras=$(awk 'NR==FNR{a[$1];next} !($1 in a)' "$wb" /etc/apk/world 2>/dev/null \
-		| sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
-		| awk '{printf "<code>%s</code> ", $1}')
+		| esc | awk '{printf "<code>%s</code> ", $1}')
 	[ -n "$extras" ] || extras='<span class="mut">none — stock image</span>'
 else
 	extras='<span class="mut">(release package list not readable)</span>'
 fi
-# last 100 syslog lines, HTML-escaped. Honor a persisted target ('nas logs
-# --persist on' points syslogd's -O at the data disk — that disk is already
-# kept awake by the writes, so reading it here wakes nothing).
+cron_html=$(crontab -l 2>/dev/null | grep -vE '^[[:space:]]*(#|$)' | head -n 12 | esc)
+[ -n "$cron_html" ] || cron_html="(no scheduled jobs — snapraid sync and the health digest go here)"
+unsaved_list=$(lbu status 2>/dev/null | head -n 40 | esc)
+[ -n "$unsaved_list" ] || unsaved_list="(nothing — all changes are committed)"
 syslog_file=$(sed -n 's/.*-O \([^ "]*\).*/\1/p' /etc/conf.d/syslog 2>/dev/null | head -n1)
 [ -n "$syslog_file" ] && [ -f "$syslog_file" ] || syslog_file=/var/log/messages
-syslog_html=$(tail -n 100 "$syslog_file" 2>/dev/null \
-	| sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+syslog_html=$(tail -n 100 "$syslog_file" 2>/dev/null | esc)
 [ -n "$syslog_html" ] || syslog_html="(no syslog entries yet)"
 
-# ---- shared stylesheet ------------------------------------------------------
+case "$datastate" in
+	ok) data_cls=ok; data_word="mounted" ;;
+	fresh) data_cls=warn; data_word="not configured yet" ;;
+	*) data_cls=fail; data_word="$datastate" ;;
+esac
+if [ "${unsaved:-0}" -gt 0 ] 2>/dev/null; then
+	unsaved_html="<span class=\"pill p-warn\">$unsaved unsaved &mdash; nas commit</span>"
+else
+	unsaved_html="<span class=\"pill p-ok\">none</span>"
+fi
+
+# ---- stylesheet --------------------------------------------------------------
 css=$(cat <<'CSSEOF'
 :root{--bg:#eef2f6;--card:#fff;--ink:#16222e;--mut:#5c6b7a;--line:#d9e1e9;
 --navy:#043b62;--acc:#1273b8;--ok:#148a46;--okbg:#e2f3e9;--warn:#8a6100;
@@ -234,7 +360,6 @@ header{background:var(--navy);color:#fff;padding:14px 20px;display:flex;align-it
 header img{width:44px;height:44px;border-radius:9px}
 header h1{font-size:20px;line-height:1.2}
 header .sub{color:#a8c4dc;font-size:12.5px}
-header .sub a{color:#a8c4dc}
 header .spacer{flex:1}
 .state{font-weight:700;padding:7px 16px;border-radius:22px;font-size:14px}
 .state.ok{background:#1d9d55;color:#fff}.state.warn{background:#e0a93a;color:#3a2b00}
@@ -244,22 +369,26 @@ header .upd{color:#a8c4dc;font-size:11.5px;text-align:right}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .card h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
-.card h2.later{margin-top:12px}
 dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:13.5px}
-dt{color:var(--mut);white-space:nowrap}dd{text-align:right}
+dt{color:var(--mut);white-space:nowrap}dd{text-align:right;overflow-wrap:anywhere}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:14px;font-size:12px;font-weight:600}
 .pill i{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
 .p-ok{color:var(--ok);background:var(--okbg)}.p-warn{color:var(--warn);background:var(--warnbg)}
 .p-fail{color:var(--fail);background:var(--failbg)}.p-off{color:var(--off);background:var(--offbg)}
 .p-boot{color:var(--acc);background:var(--offbg);font-size:10.5px}
 .svc{display:flex;flex-wrap:wrap;gap:7px}
+.svcx{font-size:12.5px;margin-top:7px}
 ul.checks,ul.ops{list-style:none;font-size:13px}
 ul.checks li{padding:4px 0 4px 20px;position:relative}
 ul.checks li::before{content:"";position:absolute;left:4px;top:11px;width:8px;height:8px;border-radius:50%}
 .c-ok::before{background:var(--ok)}.c-warn::before{background:var(--warn)}.c-fail::before{background:var(--fail)}
+.c-off::before{background:var(--off)}
 .c-fail{color:var(--fail);font-weight:600}.c-warn{color:var(--warn)}
 ul.ops li{padding:4px 0;border-bottom:1px dashed var(--line)}
 ul.ops li:last-child{border-bottom:none}
+.bar{display:inline-block;width:64px;height:6px;background:var(--offbg);border-radius:3px;overflow:hidden;vertical-align:middle}
+.bar i{display:block;height:100%;background:var(--ok)}
+.bar.b-warn i{background:var(--warn)}.bar.b-fail i{background:var(--fail)}
 .tablecard{padding:0;overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
@@ -285,7 +414,6 @@ footer a:hover{text-decoration:underline}
 CSSEOF
 )
 
-# ---- page 1: the dashboard --------------------------------------------------
 cat > "$WEB/index.html.new" <<EOF
 <!DOCTYPE html>
 <html lang="en">
@@ -315,6 +443,7 @@ $css
         <dt>CPU</dt><dd>$cpu_model</dd>
         <dt>Cores</dt><dd class="num">$cores</dd>
         <dt>CPU temp</dt><dd class="num">$cputemp</dd>
+        $fans_row
         <dt>Memory</dt><dd class="num">$mem</dd>
         <dt>Box time</dt><dd class="num">$now_tz</dd>
       </dl>
@@ -325,6 +454,7 @@ $css
         <dt>Address</dt><dd class="num">$ips</dd>
         <dt>Load</dt><dd class="num">$loadavg <span class="mut">/ $cores cores</span></dd>
         <dt>RAM root</dt><dd>$ramroot_html</dd>
+        <dt>Processes</dt><dd class="num">$procs <span class="mut">&middot; $logins login(s)</span></dd>
         <dt>Kernel</dt><dd class="num">$kern</dd>
         <dt>Packages</dt><dd class="num">$pkgcount installed</dd>
         <dt>Release</dt><dd>$rel <span class="mut">($build)</span></dd>
@@ -336,21 +466,30 @@ $css
         <dt>Config partition</dt><dd><span class="pill p-$( [ "$cfgstate" = ok ] && echo ok || echo fail )"><i></i>$cfgstate</span></dd>
         <dt>Unsaved changes</dt><dd>$unsaved_html</dd>
         <dt>Last commit</dt><dd class="num">$lastcommit</dd>
+        <dt>Overlay size</dt><dd class="num">$ovl_sz <span class="mut">&middot; cache $cache_sz</span></dd>
+      </dl>
+    </div>
+    <div class="card"><h2>Protection</h2>
+      <dl>
         <dt>Last backup</dt><dd class="num">$lastbk</dd>
+        <dt>Backups</dt><dd>$bk_html</dd>
+        <dt>SnapRAID parity</dt><dd>$sr_html</dd>
         <dt>Alert sinks</dt><dd>$sinks_html</dd>
       </dl>
     </div>
-    <div class="card"><h2>Services</h2><div class="svc">$services</div></div>
+    <div class="card"><h2>Services</h2><div class="svc">$services</div>$svc_extra</div>
     <div class="card"><h2>Checks</h2><ul class="checks">
 $checks
     </ul></div>
+    <div class="card"><h2>Docker</h2>$docker_html</div>
+    <div class="card"><h2>Network</h2><dl>$net_rows</dl></div>
     <div class="card"><h2>Recent operations</h2><ul class="ops">
 $recent_ops
     </ul></div>
   </div>
   <div class="card tablecard" style="margin-bottom:14px">
     <table>
-      <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Temp</th><th>SMART</th><th>Filesystems</th></tr></thead>
+      <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Type</th><th>Power</th><th>Temp</th><th>SMART</th><th>Filesystems</th></tr></thead>
       <tbody>
 $disk_rows
       </tbody>
@@ -361,7 +500,14 @@ $disk_rows
       <div class="pkglist">$extras</div>
       <p class="mut" style="margin-top:8px;font-size:12px">Additions over the stock image (persist across reboots and upgrades once committed).</p>
     </div>
+    <div class="card"><h2>Scheduled jobs (cron)</h2>
+      <pre style="background:none;border:none;padding:0;font:12px/1.6 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word">$cron_html</pre>
+    </div>
   </div>
+  <details class="card">
+    <summary>Unsaved changes <span class="mut">($unsaved file(s) &mdash; what <span class="mono">nas commit</span> would save)</span></summary>
+    <pre class="log">$unsaved_list</pre>
+  </details>
   <details class="card">
     <summary>Syslog &mdash; last 100 lines <span class="mut">(newest at the bottom; RAM-only unless <span class="mono">nas logs --persist on</span>)</span></summary>
     <pre class="log">$syslog_html</pre>
@@ -376,6 +522,5 @@ $disk_rows
 </html>
 EOF
 mv "$WEB/index.html.new" "$WEB/index.html"
-# the short-lived separate system page is folded into the dashboard now —
-# clear a stale copy from the tmpfs webroot on boxes that rendered one
+# folded-in pages from earlier iterations must not linger in the webroot
 rm -f "$WEB/system.html" "$WEB/system.html.new"
