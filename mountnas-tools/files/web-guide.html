@@ -19,9 +19,19 @@ header img{width:48px;height:48px;border-radius:10px}
 header h1{font-size:21px}
 header .sub{color:#a8c4dc;font-size:12.5px}
 nav{position:sticky;top:0;background:var(--card);border-bottom:1px solid var(--line);
-padding:8px 20px;display:flex;gap:4px 16px;flex-wrap:wrap;font-size:13px;z-index:2}
+padding:8px 16px;font-size:13px;z-index:2}
 nav a{color:var(--acc);text-decoration:none;white-space:nowrap}
-nav a:hover{text-decoration:underline}
+.toc-row{display:flex;gap:6px;flex-wrap:wrap;max-width:880px;margin:0 auto}
+.toc-row a{padding:4px 11px;border-radius:15px;background:var(--code);font-size:12.5px}
+.toc-row a:hover{background:var(--acc);color:#fff}
+.toc-drop{display:none}
+.toc-drop summary{cursor:pointer;font-weight:600;color:var(--acc);padding:4px 2px;
+list-style:none;display:flex;align-items:center;gap:8px}
+.toc-drop summary::before{content:"\2630";font-size:14px}
+.toc-drop div{display:flex;flex-direction:column;padding:6px 2px 4px}
+.toc-drop a{padding:7px 10px;border-bottom:1px solid var(--line);font-size:14px}
+.toc-drop a:last-child{border-bottom:none}
+@media(max-width:760px){.toc-row{display:none}.toc-drop{display:block}}
 main{max-width:880px;margin:0 auto;padding:10px 20px 60px}
 section{margin-top:34px}
 h2{font-size:20px;padding-bottom:6px;border-bottom:2px solid var(--line);margin-bottom:14px}
@@ -58,17 +68,36 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
   <div class="sub">Ships with your release &middot; <a href="index.html" style="color:#a8c4dc">back to the dashboard</a></div></div>
 </header>
 <nav>
-  <a href="#philosophy">Philosophy</a>
-  <a href="#how">How it works</a>
-  <a href="#firstboot">First boot</a>
-  <a href="#storage">Storage</a>
-  <a href="#services">Sharing &amp; services</a>
-  <a href="#monitoring">Monitoring &amp; alerts</a>
-  <a href="#maintenance">Maintenance</a>
-  <a href="#commands">Command manual</a>
-  <a href="#files">File map</a>
-  <a href="#packages">Packages</a>
-  <a href="#troubleshooting">Troubleshooting</a>
+  <div class="toc-row">
+    <a href="#philosophy">Philosophy</a>
+    <a href="#how">How it works</a>
+    <a href="#firstboot">First boot</a>
+    <a href="#storage">Storage</a>
+    <a href="#services">Sharing &amp; services</a>
+    <a href="#monitoring">Monitoring &amp; alerts</a>
+    <a href="#failure">When a disk fails</a>
+    <a href="#maintenance">Maintenance</a>
+    <a href="#cheatsheet">Cheat sheet</a>
+    <a href="#commands">Command manual</a>
+    <a href="#files">File map</a>
+    <a href="#packages">Packages</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </div>
+  <details class="toc-drop"><summary>Contents</summary><div>
+    <a href="#philosophy">Philosophy</a>
+    <a href="#how">How it works</a>
+    <a href="#firstboot">First boot</a>
+    <a href="#storage">Storage</a>
+    <a href="#services">Sharing &amp; services</a>
+    <a href="#monitoring">Monitoring &amp; alerts</a>
+    <a href="#failure">When a disk fails</a>
+    <a href="#maintenance">Maintenance</a>
+    <a href="#cheatsheet">Cheat sheet</a>
+    <a href="#commands">Command manual</a>
+    <a href="#files">File map</a>
+    <a href="#packages">Packages</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </div></details>
 </nav>
 <main>
 
@@ -118,6 +147,14 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
 <li><b>Pre-seed an SSH key:</b> after flashing, drop a file named <code>authorized_keys</code> onto the FAT <code>BOOT</code> partition — it is installed at every boot.</li>
 <li>The fresh image permits passwordless root SSH so you can get in; the wizard disables that automatically once a password is set.</li>
 </ul>
+<h3>Choosing hardware</h3>
+<ul>
+<li><b>RAM is the resource that matters:</b> the whole OS unpacks into RAM at boot. 4&nbsp;GB is the working minimum; add headroom for your Docker stack (8&nbsp;GB is comfortable for a typical media box). More disks cost almost no RAM.</li>
+<li><b>USB stick:</b> a name-brand stick (A1/high-endurance class helps). It is only <i>read</i> at boot and written on <code>nas commit</code>/<code>upgrade</code>, so wear is low — the real enemy is counterfeit flash: verify a new stick with the baked-in <code>f3</code> (<code>f3probe /dev/sdX</code>) before trusting it.</li>
+<li><b>Disk controllers:</b> motherboard SATA ports are ideal. For many disks, a used LSI HBA flashed to IT mode is the community standard. USB disk enclosures work but are the least reliable path (bridge resets look like disk loss — the watcher will tell you).</li>
+<li><b>Network:</b> Intel NICs have the least-troublesome firmware/drivers. 2.5GbE is well supported.</li>
+<li><b>CPU:</b> anything x86_64 boots. For media transcoding in Docker, an Intel CPU with Quick Sync (or a cheap Arc/AMD GPU — firmware is baked in) goes a long way.</li>
+</ul>
 </section>
 
 <section id="storage">
@@ -147,8 +184,26 @@ nas commit                        # persist it</code></pre>
 </ol>
 <pre><code>crontab -e
 0 3 * * *  snapraid sync 2&gt;&amp;1 | nas notify "snapraid sync"
-0 5 * * 0  snapraid scrub 2&gt;&amp;1 | nas notify "snapraid scrub"</code></pre>
+0 5 * * 0  snapraid scrub -p 8 -o 20 2&gt;&amp;1 | nas notify "snapraid scrub"</code></pre>
 <p>SnapRAID gives parity (recover a failed disk), mergerfs gives one namespace — they compose well. Then <code>nas commit</code>.</p>
+<h3>Parity hygiene: sync vs scrub vs check</h3>
+<ul>
+<li><b><code>snapraid sync</code></b> updates parity to match today's data. <i>Files changed since the last sync are not protected</i> — run it nightly, and after any big copy.</li>
+<li><b><code>snapraid scrub</code></b> re-reads old blocks and verifies them against parity — this is what catches silent bit rot. <code>-p 8 -o 20</code> scrubs 8% of the array per run, oldest blocks first: weekly, the whole array gets verified roughly every 3 months.</li>
+<li><b><code>snapraid diff</code></b> previews what a sync would do (great before syncing after a mass delete — parity still holds the old data until you sync).</li>
+<li><b><code>snapraid check</code> / <code>fix</code></b> are the recovery tools — see <a href="#failure">When a disk fails</a>.</li>
+<li>Avoid syncing while files are being written (pause heavy Docker writers or schedule for quiet hours); the dashboard's Protection card shows how stale parity is.</li>
+</ul>
+<h3>Disk spin-down &amp; power</h3>
+<p>MountNAS is careful never to wake a sleeping disk (status checks, temps, SMART and the dashboard are all standby-safe). Spin-down itself is your call — set it per disk with hdparm and persist it as a boot script:</p>
+<pre><code>mkdir -p /etc/local.d
+cat &gt; /etc/local.d/spindown.start &lt;&lt;'SH'
+#!/bin/sh
+hdparm -S 241 /dev/disk/by-id/ata-WDC_...   # 241 = 30 min idle; 0 = never
+SH
+chmod +x /etc/local.d/spindown.start
+lbu include /etc/local.d/spindown.start &amp;&amp; nas commit</code></pre>
+<p>Use <code>/dev/disk/by-id/</code> paths (stable across reboots). Check a disk's state anytime with <code>hdparm -C /dev/sdX</code>. <b>What keeps disks awake:</b> Docker/appdata living on them (keep that on <code>/mnt/nasdata</code>), <code>nas logs --persist on</code> (targets nasdata), open Samba/NFS handles, and mergerfs create policies that touch every branch. The nasdata system disk is expected to stay awake — spin down the media disks, not that one.</p>
 </section>
 
 <section id="services">
@@ -170,8 +225,31 @@ rc-service nfs restart &amp;&amp; nas commit</code></pre>
 <li><b><a href="https://www.zerotier.com/">ZeroTier</a>:</b> <code>rc-update add zerotier-one default &amp;&amp; rc-service zerotier-one start &amp;&amp; zerotier-cli join &lt;net&gt; &amp;&amp; nas commit</code></li>
 <li><b><a href="https://www.wireguard.com/">WireGuard</a>:</b> plain kernel WireGuard, <code>wg</code>/<code>wg-quick</code> included.</li>
 </ul>
-<h3>UPS (<a href="https://networkupstools.org/">NUT</a>)</h3>
-<p>NUT is baked in, off by default. <a href="https://wiki.alpinelinux.org/wiki/Nut-ups">Determine your UPS USB parameters</a>, configure <code>/etc/nut/</code> (<code>nut.conf</code>, <code>ups.conf</code>, <code>upsd.conf</code>, <code>upsmon.conf</code>, with <code>SHUTDOWNCMD "/sbin/poweroff"</code>), then <code>rc-update add nut-upsd default &amp;&amp; rc-update add nut-upsmon default &amp;&amp; nas commit</code>. A power cut discards uncommitted changes — commit early and often either way.</p>
+<h3>UPS (<a href="https://networkupstools.org/">NUT</a>) — full walkthrough</h3>
+<p>NUT is baked in, off by default. A power cut discards uncommitted changes, so a UPS + clean shutdown is the natural completion of the commit model. Most consumer UPSes (APC, CyberPower, Eaton) speak <code>usbhid-ups</code> over USB:</p>
+<ol>
+<li>Plug in the UPS data cable and confirm the box sees it: <code>nut-scanner -U</code> (it prints a ready-made config block).</li>
+<li><code>/etc/nut/nut.conf</code>: <code>MODE=standalone</code></li>
+<li><code>/etc/nut/ups.conf</code> — paste the scanner's block, or the typical:
+<pre><code>[ups]
+  driver = usbhid-ups
+  port = auto
+  desc = "MountNAS UPS"</code></pre></li>
+<li><code>/etc/nut/upsd.conf</code>: <code>LISTEN 127.0.0.1</code></li>
+<li><code>/etc/nut/upsd.users</code>:
+<pre><code>[monuser]
+  password = pickone
+  upsmon primary</code></pre></li>
+<li><code>/etc/nut/upsmon.conf</code>:
+<pre><code>MONITOR ups@localhost 1 monuser pickone primary
+SHUTDOWNCMD "/sbin/poweroff"</code></pre></li>
+<li>Enable and verify:
+<pre><code>rc-update add nut-upsd default &amp;&amp; rc-update add nut-upsmon default
+rc-service nut-upsd start &amp;&amp; rc-service nut-upsmon start
+upsc ups            # shows status, charge, runtime
+nas commit</code></pre></li>
+</ol>
+<p>The dashboard's Services card shows charge/runtime once it's running. Dry-run the shutdown path with <code>upsmon -c fsd</code> <b>only when you mean it</b> — it powers the box off.</p>
 <h3>Admin users</h3>
 <pre><code>adduser bob wheel &amp;&amp; nas commit    # wheel = doas (sudo) rights</code></pre>
 </section>
@@ -204,6 +282,34 @@ DEVICESCAN -n standby,q -m you@example.com                                    # 
 <p><code>nas logs --persist on</code> moves syslog to <code>/mnt/nasdata/logs</code> (rotated automatically) so a crash leaves history behind — tradeoff: periodic writes keep that disk awake.</p>
 </section>
 
+<section id="failure">
+<h2>When a disk fails <a class="top" href="#top">&uarr;</a></h2>
+<p><b>Don't panic:</b> the OS runs from RAM, so a failed data disk never takes the system down — the box stays up, holds Docker/Samba/NFS off the broken storage, and tells you. You'll hear about it three ways: a push through your <a href="#monitoring">notification sinks</a> (once, on the transition), a red <code>[FAIL]</code> in <code>nas status</code>, and the dashboard turning red.</p>
+<h3>What the state means, and what to do</h3>
+<table>
+<tr><th>State</th><th>It means</th><th>Do this</th></tr>
+<tr><td><b>disconnected</b></td><td>The device itself is gone (died, yanked, USB reset)</td><td>Check power/cabling/enclosure. Reattach, then <code>nas restart</code>. If the disk is truly dead → replacement drill below.</td></tr>
+<tr><td><b>mountfail</b></td><td>Device present but the filesystem won't mount (or the mount went dead)</td><td><code>dmesg | tail</code> for the reason. Unmounted repair: <code>e2fsck -f /dev/sdX1</code> (or <code>xfs_repair</code>), then <code>nas restart</code>. Repeated failures = a dying disk — replace it.</td></tr>
+<tr><td><b>read-only</b></td><td>The filesystem hit errors and protected itself (<code>errors=remount-ro</code>)</td><td>Treat as pre-failure. <b>Copy anything irreplaceable off it now</b>, then fsck offline; SMART (<code>smartctl -a</code>) usually names the culprit. Plan a replacement.</td></tr>
+</table>
+<h3>Replace a failed data disk (SnapRAID)</h3>
+<p>This is the drill parity exists for — the array can rebuild the lost disk's contents:</p>
+<pre><code>1  stop writers:  docker stop $(docker ps -q)         # keep the array quiet
+2  swap hardware; format the new disk:  mkfs.ext4 -L disk1 /dev/sdX1
+3  /etc/fstab: point the SAME mountpoint (/mnt/disk1) at the new disk's UUID/label
+4  nas restart                                        # new empty disk mounts
+5  snapraid fix -d d1 -l /root/fix.log                # rebuild d1 from parity (hours)
+6  snapraid check -d d1                               # verify the rebuild
+7  snapraid sync &amp;&amp; nas commit</code></pre>
+<p><code>d1</code> is the data name from <code>/etc/snapraid.conf</code>, not the device. Anything written after your last sync is not in parity — that gap is why the nightly sync matters.</p>
+<h3>Replace or grow the parity disk</h3>
+<p>Parity holds no user data — swap it freely: mount the new (equal-or-larger) disk at the same <code>/mnt/parity1</code> path, then <code>snapraid sync</code> rebuilds parity from scratch. <b>Growing a data disk</b> works the same way: parity disks must always be at least as large as the largest data disk.</p>
+<h3>Add a disk to the array</h3>
+<pre><code>mkfs + fstab + nas restart                 # like any disk (Storage section)
+echo "data d3 /mnt/disk3" &gt;&gt; /etc/snapraid.conf
+snapraid sync &amp;&amp; nas commit</code></pre>
+</section>
+
 <section id="maintenance">
 <h2>Maintenance <a class="top" href="#top">&uarr;</a></h2>
 <h3>Committing &amp; rolling back config</h3>
@@ -213,6 +319,19 @@ nas rollback --list                # previous saved configs (with your labels)
 nas rollback 1 &amp;&amp; nas reboot       # restore one (applies at next boot)</code></pre>
 <h3>Backup (the rollback net)</h3>
 <p><code>nas backup</code> images the <b>whole boot USB</b> (OS + saved config) to a verified gzip file — default <code>/mnt/nasdata/backups</code>. <b>Copy it off the box.</b> Recovery = write it to a different stick and boot. Data disks are separate — back those up with <a href="https://restic.net/">restic</a>/<a href="https://rclone.org/">rclone</a> (both included).</p>
+<h3>Off-box data backup (restic)</h3>
+<p><a href="https://restic.net/">restic</a> gives encrypted, deduplicated, versioned backups to SFTP, S3/B2, or any <a href="https://rclone.org/">rclone</a> remote. One-time setup — keep the credentials in <code>/root</code> (it persists via lbu):</p>
+<pre><code>cat &gt; /root/.restic.env &lt;&lt;'ENV'
+export RESTIC_REPOSITORY=sftp:backup@othernas:/backups/mountnas
+export RESTIC_PASSWORD='a-long-passphrase-you-saved-somewhere-safe'
+ENV
+chmod 600 /root/.restic.env
+. /root/.restic.env &amp;&amp; restic init          # once per repository</code></pre>
+<p>For S3/B2 instead: <code>RESTIC_REPOSITORY=s3:s3.amazonaws.com/bucket</code> plus <code>AWS_ACCESS_KEY_ID</code>/<code>AWS_SECRET_ACCESS_KEY</code> lines in the same file. Then schedule it, piped into your alert sinks:</p>
+<pre><code>crontab -e
+30 2 * * *  . /root/.restic.env &amp;&amp; restic backup /mnt/disk1/photos /mnt/nasdata/appdata 2&gt;&amp;1 | nas notify "restic backup"
+0  6 * * 0  . /root/.restic.env &amp;&amp; restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune 2&gt;&amp;1 | nas notify "restic prune"</code></pre>
+<p>Then <code>nas commit</code> (saves the env file and the crontab). Restore anywhere with <code>restic restore latest --target /tmp/r</code> — test that once <i>before</i> you need it. <b>Remember:</b> restic protects your <i>data</i>; <code>nas backup</code> protects the <i>boot stick</i>; SnapRAID protects against <i>disk loss</i>. The three cover different failures.</p>
 <h3>Upgrading</h3>
 <pre><code>nas upgrade --check                                  # is a newer release out?
 nas backup                                           # required first — no automatic rollback
@@ -226,6 +345,30 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <li><b>Lost root password:</b> mount <code>MNASCFG</code> on another Linux box, unpack the overlay, blank the root hash in <code>etc/shadow</code>, repack, boot, <code>passwd</code>, <code>nas commit</code>. (Full steps in the README.)</li>
 </ul>
 <div class="danger"><b>Never</b> re-flash the release image over a running box (it erases the saved config — the image is for first install; upgrades go through <code>nas upgrade</code>), and <b>never</b> boot with two MountNAS sticks attached (their disk labels collide).</div>
+</section>
+
+<section id="cheatsheet">
+<h2>Cheat sheet <a class="top" href="#top">&uarr;</a></h2>
+<p>The daily moves, one line each:</p>
+<table>
+<tr><th>I want to…</th><th>Run</th></tr>
+<tr><td>Check the box is healthy</td><td><code>nas status</code></td></tr>
+<tr><td>See my disks + paste-ready fstab lines</td><td><code>nas disks</code></td></tr>
+<tr><td>Add a disk</td><td><code>mkfs.ext4 -L name /dev/sdX1</code> → edit <code>/etc/fstab</code> → <code>nas status</code> → <code>nas restart</code></td></tr>
+<tr><td>Save my changes (do this often)</td><td><code>nas commit -m "what I changed"</code></td></tr>
+<tr><td>See what's unsaved / review it</td><td><code>nas changes</code> &nbsp;/&nbsp; <code>nas changes --diff</code></td></tr>
+<tr><td>Undo a bad commit</td><td><code>nas rollback --list</code> → <code>nas rollback 1 &amp;&amp; nas reboot</code></td></tr>
+<tr><td>Add a Samba share user</td><td><code>adduser -D alice &amp;&amp; smbpasswd -a alice &amp;&amp; rc-service samba restart</code></td></tr>
+<tr><td>Install software</td><td><code>apk add &lt;pkg&gt; &amp;&amp; nas commit</code></td></tr>
+<tr><td>Get alerts on my phone</td><td>add <code>ntfy:https://ntfy.sh/topic</code> to <code>/etc/mountnas/notify.conf</code> → <code>nas notify --test</code></td></tr>
+<tr><td>Turn the dashboard on</td><td><code>nas web on &amp;&amp; nas commit</code></td></tr>
+<tr><td>Protect the boot stick</td><td><code>nas backup</code> — then copy the file OFF the box</td></tr>
+<tr><td>Upgrade MountNAS</td><td><code>nas upgrade --check</code> → <code>nas backup</code> → <code>nas upgrade &lt;url&gt;</code> → <code>nas reboot</code></td></tr>
+<tr><td>See what happened on this box</td><td><code>nas history</code></td></tr>
+<tr><td>Watch the log live</td><td><code>nas logs -f</code></td></tr>
+<tr><td>Reboot without losing work</td><td><code>nas reboot --save</code></td></tr>
+<tr><td>Verify parity is current</td><td>dashboard Protection card, or <code>snapraid status</code></td></tr>
+</table>
 </section>
 
 <section id="commands">

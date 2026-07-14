@@ -13,7 +13,15 @@
 # SC3045 ('read -s' — supported by busybox ash).
 set -eu
 cd "$(dirname "$0")/.."
-files=$(grep -rlE '^#!/(bin/sh|sbin/openrc-run)' mountnas-tools/files)
+# a shebang is by definition LINE 1 — grep -rl would also match scripts whose
+# CONTENT quotes a shebang (web-guide.html embeds "#!/bin/sh" in a code
+# example, and shellcheck then chokes trying to parse HTML)
+files=$(for f in mountnas-tools/files/*; do
+	[ -f "$f" ] || continue
+	# `|| :` so a non-matching last file cannot fail the $() under set -e
+	head -n1 "$f" | grep -qE '^#!/(bin/sh|sbin/openrc-run)' && printf '%s\n' "$f" || :
+done)
+[ -n "$files" ] || { echo "FAIL: shebang discovery found no scripts"; exit 1; }
 # shellcheck disable=SC2086  # $files is a newline list of repo paths (no spaces)
 shellcheck -s sh -S warning -e SC2034,SC3043,SC3045 \
 	$files mountnas-tools/files/profile-*.sh scripts/*.sh
