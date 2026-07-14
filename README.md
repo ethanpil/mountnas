@@ -187,10 +187,11 @@ Every service can be turned off permanently — a NAS that only serves Samba doe
 ```sh
 rc-service docker stop                                     # stop it now
 echo 'DATA_SERVICES="samba nfs"' > /etc/conf.d/mountnas    # a box that doesn't use Docker
-nas status && nas commit
+nas status                                                 # verify: docker now listed as disabled
+nas commit                                                 # REQUIRED — the setting is RAM-only until committed
 ```
 
-`nas status` (and the web dashboard) know about the override and won't warn about services you deliberately disabled — it lists them as disabled instead. Re-enable by editing the list back (or deleting the file) and running `nas restart`.
+`nas status` (and the web dashboard) know about the override and won't warn about services you deliberately disabled — it lists them as disabled instead. Re-enable by editing the list back (or deleting the file), then `nas restart` **and `nas commit`** again.
 
 **Runlevel services** (everything else) use the standard Alpine pattern — stop it, remove it from the runlevel, commit:
 

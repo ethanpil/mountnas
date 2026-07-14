@@ -263,8 +263,9 @@ nas commit</code></pre></li>
 <p>These live in <b>no runlevel</b> — the <code>mountnas</code> supervisor starts them once the data disk mounts — so <code>rc-update del</code> does nothing for them. Set <code>DATA_SERVICES</code> in <code>/etc/conf.d/mountnas</code> to <b>only what you keep</b>:</p>
 <pre><code>rc-service docker stop                                     # stop it now
 echo 'DATA_SERVICES="samba nfs"' &gt; /etc/conf.d/mountnas    # a box that does not use Docker
-nas status &amp;&amp; nas commit</code></pre>
-<p><code>nas status</code> and this dashboard understand the override: a deliberately disabled service is listed as disabled, never warned about. Re-enable by editing the list back (or deleting the file), then <code>nas restart</code>.</p>
+nas status                                                 # verify: docker now listed as disabled
+nas commit                                                 # REQUIRED — the setting is RAM-only until committed</code></pre>
+<p><code>nas status</code> and this dashboard understand the override: a deliberately disabled service is listed as disabled, never warned about. Re-enable by editing the list back (or deleting the file), then <code>nas restart</code> <b>and <code>nas commit</code></b> again.</p>
 <h3>Runlevel services</h3>
 <pre><code>rc-service &lt;name&gt; stop &amp;&amp; rc-update del &lt;name&gt; default &amp;&amp; nas commit</code></pre>
 <table>
