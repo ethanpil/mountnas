@@ -152,6 +152,7 @@ The `nas` tool has been designed to help you manage the system.
 | `nas commit` | Saves your in-RAM `/etc` changes to the USB config partition. `-m "note"` labels the snapshot for `nas rollback --list`. Alias: `nas save`. |
 | `nas rollback` | The config time machine: `--list` shows the previous committed overlays lbu keeps on `/cfg` (with the notes from `nas commit -m`); `nas rollback <n>` restores one (crash-safe swap, applies at the next boot, the replaced config stays available for rolling forward). |
 | `nas logs` | View the system log (`-f` follows). `nas logs --persist on` moves syslog onto `/mnt/nasdata/logs` so a crash or power cut leaves history behind; rotation is automatic (1 MB × 10 files via syslogd — nothing to manage). Opt-in because periodic writes keep that disk awake. |
+| `nas notify` | Notification sinks: with no arguments lists what's configured in `/etc/mountnas/notify.conf` (email, ntfy, webhook, Slack, Discord, gotify — one `type:target` per line); `--test` sends a test message to every sink; `nas notify "subject" [body]` sends ad-hoc messages from scripts/cron (body can be piped in). Disk-loss alerts, SMART trouble, and health digests fan out to all sinks. |
 | `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
 | `nas upgrade` | Rewrites the OS on the USB **in place** from a release image — a local `mountnas-<tag>.img.gz` or an `https://` release URL (verified against the release's `SHA256SUMS` when present) — then reboot. Requires a `nas backup` first (see `UPGRADE.md`). `nas upgrade --check` asks GitHub whether a newer release is published and prints the exact upgrade command. |
 | `nas report` | Writes a diagnostics bundle (`/tmp/mountnas-report-*.tar.gz`) with status, logs, and storage/service config for bug reports. No secrets (no shadow, ssh keys, or samba passwords) — but review before sharing. |
@@ -186,20 +187,37 @@ MountNAS is a *diskless, run-from-RAM* Alpine system: every boot the OS is rebui
 - **Small boot helpers.** `mountnas-net` brings up wired DHCP dynamically; `mountnas-sshkey` installs an `authorized_keys` file dropped on the BOOT partition (headless first login); `mountnas-issue` shows the live IP + hostname on the console *before* login; and the `nas-resize` profile snippet fixes terminal size on serial consoles (`qm terminal`, IPMI serial-over-LAN).
 - **One image, in-place upgrades.** A single `.img.gz` is both the installer and the upgrade payload: `nas upgrade` rewrites the OS partition in place and `nas backup` images the whole USB as the rollback net — no A/B slots to reason about.
 
-## Disk health (smartd), email alerts, and UPS (nut)
+## Disk health (smartd), alerts & notifications, and UPS (nut)
 
 **smartd** runs out of the box and never wakes spun-down disks (`-n standby,q` in the shipped `/etc/smartd.conf`).
 
-**Email alerts** work once you point msmtp at your SMTP relay — a NAS that can't tell you a disk is dying isn't monitoring anything:
+**Notification sinks** — one config, every alert. List your sinks in `/etc/mountnas/notify.conf` (one `type:target` per line), test with `nas notify --test`, then `nas commit`:
+
+```text
+ntfy:https://ntfy.sh/your-secret-topic
+email:you@example.com
+webhook:https://example.com/hook
+```
+
+Supported: `email` (via msmtp), `ntfy`, generic `webhook` (JSON POST), `slack` (also Mattermost-compatible), `discord`, `gotify`. Push sinks like ntfy need **no mail relay at all** — the fastest path from zero to phone notifications. Everything that alerts (the disk-loss watcher, SMART via the wrapper below, failed upgrades, health digests, your own `nas notify` calls) fans out to *all* configured sinks. No sinks configured = silently off; nothing to tend.
+
+**Email specifically** still needs msmtp pointed at your SMTP relay:
 
 1. Edit `/etc/msmtprc` (a commented template ships; keep it mode 0600 — it holds a password).
 2. Test it: `echo test | mail -s "MountNAS test" you@example.com`
-3. Add your address to `/etc/smartd.conf`: `DEVICESCAN -n standby,q -m you@example.com`
-4. `rc-service smartd restart && nas commit`
+3. `nas commit`
 
-**Disk-loss alerts** (detachment, dead mount, filesystem gone read-only): put your address in `/etc/mountnas/alert-email` (one line) and `nas commit` — the 15-minute watcher then emails you on the transition, once, and tells you the recovery command. SMART covers a disk *warning* it will fail; this covers a disk that already *vanished*.
+**SMART failure alerts**: either the classic direct-mail route — add your address in `/etc/smartd.conf` (`DEVICESCAN -n standby,q -m you@example.com`) — or route smartd through your notification sinks instead:
 
-The same `mail` command works from cron — pipe your SnapRAID sync/scrub output through it.
+```text
+DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify
+```
+
+then `rc-service smartd restart && nas commit`.
+
+**Disk-loss alerts** (detachment, dead mount, filesystem gone read-only): fire automatically through your sinks — the 15-minute watcher notifies on the transition, once, and tells you the recovery command. (The old `/etc/mountnas/alert-email` file keeps working as one more email sink.) SMART covers a disk *warning* it will fail; this covers a disk that already *vanished*.
+
+From cron, pipe anything into a notification: `snapraid sync 2>&1 | nas notify "snapraid sync"`.
 
 **UPS:** nut is installed; configure `/etc/nut/*`, enable nut-upsd + nut-upsmon, set `SHUTDOWNCMD "/sbin/poweroff"`, then `nas commit`.
 

@@ -10,17 +10,17 @@ STATE=/run/mountnas
 DATA=/mnt/nasdata
 LOG=/var/log/mountnas.log
 log() { printf '%s data-watch: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
-# Email the alert when /etc/mountnas/alert-email holds an address (and msmtp
-# is configured — see the msmtprc template). Fires only on the ok->bad
+# Push the alert through the notification sinks (/etc/mountnas/notify.conf:
+# email/ntfy/webhook/slack/... — the legacy /etc/mountnas/alert-email address
+# keeps working as an email sink inside the helper). Fires only on the ok->bad
 # TRANSITION: this script exits early unless the state is 'ok', so a flip
-# here can never repeat-spam on later runs.
+# here can never repeat-spam on later runs. The helper bounds every network
+# send, so a dead sink cannot hang this watcher.
 _alert() {
-	to=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /etc/mountnas/alert-email 2>/dev/null | head -n1)
-	[ -n "$to" ] || return 0
-	command -v mail >/dev/null 2>&1 || return 0
 	printf '%s\n\nHost: %s\nTime: %s\n\nCheck it:  nas status\nRecover:   nas restart\n' \
 		"$1" "$(hostname)" "$(date '+%F %T')" \
-		| mail -s "[$(hostname)] MountNAS ALERT: $1" "$to" 2>>"$LOG" || log "alert mail failed"
+		| /usr/libexec/mountnas/notify "MountNAS ALERT: $1" 2>>"$LOG" \
+		|| log "alert notification failed (some or all sinks)"
 }
 
 [ "$(cat "$STATE/data" 2>/dev/null)" = ok ] || exit 0

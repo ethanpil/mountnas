@@ -1,0 +1,82 @@
+#!/bin/sh
+# notify — fan an alert out to every configured notification sink.
+#
+#   notify <subject> [body]        body falls back to stdin when piped
+#   notify --list                  print the active sinks, one per line
+#
+# Sinks live in /etc/mountnas/notify.conf, one per line as  type:target
+# (see the shipped template). /etc/mountnas/alert-email keeps working as a
+# plain email sink so pre-existing setups need no change. No sinks configured
+# means this is a silent no-op — every caller can invoke it unconditionally.
+#
+# Stateless by design: no daemon, nothing resident. It runs only when an
+# event fires (data-watch transition, smartd trouble, failed upgrade, digest,
+# 'nas notify'), sends, and exits. Every network send is bounded (--max-time)
+# so a dead sink can never hang a caller like the 15-minute watcher.
+# Exit: 0 when every attempted sink succeeded (or none configured), 1 otherwise.
+CONF=/etc/mountnas/notify.conf
+LEGACY=/etc/mountnas/alert-email
+LOG=/var/log/mountnas.log
+CURL="curl -fsS --max-time 10"
+
+log() { printf '%s notify: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
+
+# Active sinks = non-comment notify.conf lines + the legacy alert-email address
+# (deduped: an address present in both is sent to once).
+_sinks() {
+	{
+		sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$CONF" 2>/dev/null
+		la=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY" 2>/dev/null | head -n1)
+		[ -n "$la" ] && printf 'email:%s\n' "$la"
+	} | sort -u
+}
+
+if [ "${1:-}" = "--list" ]; then _sinks; exit 0; fi
+
+[ -n "${1:-}" ] || { echo "usage: notify <subject> [body]   |   notify --list" >&2; exit 1; }
+subject="$1"; shift
+body="$*"
+# body from stdin when not given as arguments (and stdin is not a terminal)
+if [ -z "$body" ] && [ ! -t 0 ]; then body=$(cat); fi
+[ -n "$body" ] || body="$subject"
+# one uniform subject: every sink shows which box is talking
+subj="[$(hostname)] $subject"
+
+fails=0; sent=0
+while IFS= read -r sink; do
+	[ -n "$sink" ] || continue
+	kind=${sink%%:*}; target=${sink#*:}
+	rc=0
+	case "$kind" in
+	email)
+		if command -v mail >/dev/null 2>&1; then
+			printf '%s\n' "$body" | mail -s "$subj" "$target" 2>>"$LOG" || rc=1
+		else
+			log "email sink $target skipped: mail(1) unavailable (configure msmtp)"; rc=1
+		fi ;;
+	ntfy)
+		$CURL -H "Title: $subj" --data-binary "$body" "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
+	webhook)
+		jq -n --arg t "$subj" --arg m "$body" --arg h "$(hostname)" \
+			'{title:$t, message:$m, host:$h}' \
+			| $CURL -H 'Content-Type: application/json' --data-binary @- "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
+	slack)
+		jq -n --arg t "$subj" --arg m "$body" '{text:("*\($t)*\n\($m)")}' \
+			| $CURL -H 'Content-Type: application/json' --data-binary @- "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
+	discord)
+		# Discord rejects messages over 2000 chars — trim the body, keep the subject
+		jq -n --arg t "$subj" --arg m "$(printf '%s' "$body" | head -c 1800)" \
+			'{content:("**\($t)**\n\($m)")}' \
+			| $CURL -H 'Content-Type: application/json' --data-binary @- "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
+	gotify)
+		$CURL -F "title=$subj" -F "message=$body" "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
+	*)
+		log "unknown sink type '$kind' in $CONF — skipped"; rc=1 ;;
+	esac
+	if [ "$rc" = 0 ]; then sent=$((sent + 1)); else fails=$((fails + 1)); log "sink $kind:$target failed"; fi
+done <<EOF
+$(_sinks)
+EOF
+
+[ "$fails" = 0 ] || exit 1
+exit 0

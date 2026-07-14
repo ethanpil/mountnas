@@ -1,0 +1,14 @@
+#!/bin/sh
+# smartd-notify — route smartd trouble through the MountNAS notification sinks
+# (email + ntfy/webhook/slack/... — see /etc/mountnas/notify.conf).
+#
+# Enable it in /etc/smartd.conf (then: nas commit):
+#   DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify
+# (-m is required by smartd's syntax when -M exec is used; the address is
+#  ignored — delivery happens through the sinks.)
+#
+# smartd exports SMARTD_* in the environment; the fallbacks keep the message
+# useful even on older smartmontools that set fewer of them.
+exec /usr/libexec/mountnas/notify \
+	"SMART: ${SMARTD_FAILTYPE:-trouble} on ${SMARTD_DEVICE:-unknown device}" \
+	"${SMARTD_FULLMESSAGE:-${SMARTD_MESSAGE:-smartd reported a problem. Run: smartctl -a ${SMARTD_DEVICE:-<device>}}}"

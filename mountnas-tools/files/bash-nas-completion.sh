@@ -12,8 +12,9 @@ _nas_complete() {
 	case "$prev" in
 	# command list: keep in sync with the dispatcher in files/nas AND the zsh
 	# compdef (files/zsh-nas-completion)
-	nas)             COMPREPLY=($(compgen -W "setup status disks restart changes changed commit save rollback backup logs report shutdown reboot upgrade version about help" -- "$cur")) ;;
+	nas)             COMPREPLY=($(compgen -W "setup status disks restart changes changed commit save rollback backup logs notify report shutdown reboot upgrade version about help" -- "$cur")) ;;
 	status)          COMPREPLY=($(compgen -W "--deep --json" -- "$cur")) ;;
+	notify)          COMPREPLY=($(compgen -W "--test" -- "$cur")) ;;
 	disks)           COMPREPLY=($(compgen -W "--json" -- "$cur")) ;;
 	changes|changed) COMPREPLY=($(compgen -W "--diff" -- "$cur")) ;;
 	commit|save)     COMPREPLY=($(compgen -W "-m" -- "$cur")) ;;

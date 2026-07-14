@@ -137,6 +137,7 @@ ${C_HD}Recover${C_NO}
 
 ${C_HD}Maintain${C_NO}
   ${C_B}upgrade${C_NO}   Upgrade the OS from a release file/URL      [--check|--yes]
+  ${C_B}notify${C_NO}    List/test alert sinks; send a message     [--test|<subject>]
   ${C_B}report${C_NO}    Diagnostics bundle for bug reports (status+logs, no secrets)
   ${C_B}setup${C_NO}     Guided setup (hostname, network, password, timezone)
 
@@ -193,7 +194,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -254,15 +255,20 @@ cmd_status() {
 		*[!0-9]*) ok "last backup: $lbk" ;;
 		*) ok "last backup: ${lbk#* } ($(( ( $(date +%s) - ${lbk%% *} ) / 86400 )) day(s) ago)" ;;
 	esac
-	# disk-loss email alerts (data-watch): surface whether alerting is wired and
-	# can actually send, so a misconfig is caught now — not when a disk dies.
-	# Parse the address exactly as data-watch does (strip comments/blank lines).
-	alto=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /etc/mountnas/alert-email 2>/dev/null | head -n1)
+	# alerting (data-watch / smartd / upgrades): surface whether any notification
+	# sink is wired and can actually send, so a misconfig is caught now — not
+	# when a disk dies. The notify helper is the single source for the active
+	# sink list (notify.conf + the legacy alert-email address).
+	alto=$(/usr/libexec/mountnas/notify --list 2>/dev/null)
 	if [ -n "$alto" ]; then
-		if command -v mail >/dev/null 2>&1; then ok "disk-loss email alerts -> $alto"
-		else warn "disk-loss alerts: $alto set but 'mail' unavailable — configure msmtp"; fi
+		alto_n=$(printf '%s\n' "$alto" | grep -c .)
+		if printf '%s\n' "$alto" | grep -q '^email:' && ! command -v mail >/dev/null 2>&1; then
+			warn "alerts: email sink set but 'mail' unavailable — configure msmtp"
+		else
+			ok "alerts -> $alto_n notification sink(s)  (test: nas notify --test)"
+		fi
 	else
-		hint "disk-loss email alerts off (set /etc/mountnas/alert-email)"
+		hint "alerts off (add sinks to /etc/mountnas/notify.conf — email/ntfy/webhook/...)"
 	fi
 
 	# JSON mode skips the sensors block: its data has no JSON representation,
@@ -839,6 +845,49 @@ cmd_logs() {
 		tail -n "$nn" "$t" 2>/dev/null || warn "no log file at $t yet"
 		;;
 	*) usage "nas logs [-n N | -f | --persist on|off|status]"; return 1 ;;
+	esac
+}
+
+# nas notify — send through / inspect the notification sinks. The actual
+# fan-out lives in ONE place (/usr/libexec/mountnas/notify — also called by
+# data-watch, smartd-notify and the health digest); this command is the
+# user-facing front: list what is configured, test it, or send ad-hoc
+# messages from scripts and cron jobs.
+cmd_notify() {
+	case "${1:-}" in
+	""|--list|status)
+		sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null)
+		hdr "notification sinks"
+		if [ -n "$sinks" ]; then
+			printf '%s\n' "$sinks" | sed 's/^/  /'
+			hint "test them: nas notify --test"
+		else
+			echo "  (none configured)"
+			hint "add sinks to /etc/mountnas/notify.conf — email, ntfy, webhook,"
+			hint "slack, discord, gotify. Then: nas notify --test && nas commit"
+		fi
+		;;
+	--test)
+		sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null)
+		[ -n "$sinks" ] || { bad "no sinks configured — edit /etc/mountnas/notify.conf first"; return 1; }
+		step "Sending a test notification to $(printf '%s\n' "$sinks" | grep -c .) sink(s)..."
+		if /usr/libexec/mountnas/notify "MountNAS test notification" \
+			"This is a test from 'nas notify --test'. If you can read this, the sink works."; then
+			ok "test notification sent to every sink"
+		else
+			bad "at least one sink failed — see /var/log/mountnas.log"
+			return 1
+		fi
+		;;
+	-*)
+		usage "nas notify [--test | <subject> [body]]"; return 1
+		;;
+	*)
+		nsub=$1; shift
+		/usr/libexec/mountnas/notify "$nsub" "$*" \
+			&& ok "notification sent" \
+			|| { bad "at least one sink failed — see /var/log/mountnas.log"; return 1; }
+		;;
 	esac
 }
 
@@ -1611,7 +1660,14 @@ EOF
 	for d in $sdirs; do _commit_dir "$BOOTMNT/$d" || ec=1; done
 	sync
 	_cleanup; trap - EXIT HUP INT TERM
-	[ "$ec" = 0 ] || { bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."; return 1; }
+	if [ "$ec" != 0 ]; then
+		bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."
+		# the one alert you most want pushed to your phone (best-effort)
+		/usr/libexec/mountnas/notify "UPGRADE FAILED — action required" \
+			"nas upgrade failed AFTER writing to the boot USB. Do NOT reboot until you have restored your 'nas backup' image (see UPGRADE.md)." \
+			>/dev/null 2>&1 || true
+		return 1
+	fi
 
 	# ---- reconcile /etc/apk/world (preserve user-added pkgs across the version bump) ----
 	# extras = current world - the OLD release's base ; new world = NEW base ∪ extras.
@@ -1652,6 +1708,9 @@ EOF
 	# real ok() (the old heredoc faked an uncolored "[ OK ]"); the literal
 	# "Upgrade written successfully" is a CI expect string — keep it contiguous
 	ok "Upgrade written successfully. Config and data are untouched."
+	/usr/libexec/mountnas/notify "upgrade written" \
+		"nas upgrade completed on $(hostname) (was $RELEASE). Reboot to run the new version." \
+		>/dev/null 2>&1 || true
 	hint "Reboot to run the new version:   nas reboot"
 	hint "If the new version misbehaves, restore your 'nas backup' image"
 	hint "to another USB and boot from it."
@@ -1756,6 +1815,19 @@ nas report
   config) written to /tmp for attaching to bug reports.
 EOF
 ;;
+	notify) cat <<EOF
+nas notify [--test | <subject> [body]]
+  Notification sinks: with no arguments, list what is configured in
+  /etc/mountnas/notify.conf (email, ntfy, webhook, slack, discord,
+  gotify — one 'type:target' per line; alert-email still works too).
+  Disk-loss alerts, SMART trouble and health digests fan out to ALL sinks.
+  --test              send a test message to every sink
+  <subject> [body]    send an ad-hoc message (cron/script friendly)
+Examples:
+  nas notify --test
+  snapraid sync 2>&1 | nas notify "snapraid sync finished"
+EOF
+;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -1800,6 +1872,7 @@ case "${1:-help}" in
 	commit|save) shift; cmd_commit "$@" ;;
 	rollback) shift; cmd_rollback "$@" ;;
 	logs) shift; cmd_logs "$@" ;;
+	notify) shift; cmd_notify "$@" ;;
 	backup) shift; cmd_backup "$@" ;;
 	shutdown) shift; cmd_shutdown "$@" ;;
 	reboot) shift; cmd_reboot "$@" ;;

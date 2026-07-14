@@ -153,12 +153,33 @@ EOF
 # Disk-loss alert recipient: when this file holds an address (and msmtprc is
 # configured), the 15-minute data-watch emails on data-disk disconnect/dead
 # mount/read-only transitions. SMART pre-failure alerts are separate: the -m
-# address in /etc/smartd.conf.
+# address in /etc/smartd.conf. (Kept for compatibility — notify.conf below is
+# the richer mechanism; this address is treated as one more email sink.)
 mk root:root 0644 "$tmp/etc/mountnas/alert-email" <<'EOF'
 # MountNAS disk-loss alerts — you own this file (edit, then: nas commit).
 # Put ONE email address on a line by itself to enable alert mails from the
 # data-disk watcher (requires /etc/msmtprc to be configured first).
+# Prefer /etc/mountnas/notify.conf — it takes email AND push sinks; an
+# address here keeps working as one more email sink.
 # you@example.com
+EOF
+
+# ---- notification sinks: alerts beyond email (ntfy/webhook/slack/...) ----
+# Every alert (disk loss, SMART trouble via smartd-notify, failed upgrades,
+# health digests, 'nas notify') fans out to ALL sinks listed here — the
+# /usr/libexec/mountnas/notify helper is the single delivery path. No sinks
+# configured = alerts silently off; nothing to tend.
+mk root:root 0644 "$tmp/etc/mountnas/notify.conf" <<'EOF'
+# MountNAS notification sinks — you own this file (edit, then: nas commit).
+# One sink per line as  type:target  — every alert goes to ALL active sinks.
+# Test your setup with:  nas notify --test
+#
+#   email:you@example.com                        (needs /etc/msmtprc configured)
+#   ntfy:https://ntfy.sh/your-secret-topic
+#   webhook:https://example.com/hook             (generic JSON POST: title/message/host)
+#   slack:https://hooks.slack.com/services/...   (Slack/Mattermost-compatible)
+#   discord:https://discord.com/api/webhooks/...
+#   gotify:https://gotify.example.com/message?token=...
 EOF
 
 # msmtprc holds an SMTP password once configured -> mode 0600, root-owned.
