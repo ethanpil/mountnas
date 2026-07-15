@@ -197,6 +197,172 @@ def test_user_packages_survive_upgrade(upgrade_guest, prev_base, golden):
                      desc="figlet reinstalled post-upgrade")
 
 
+# Files a user edits that MUST survive an upgrade untouched (the "code in the
+# apk, editable config in the overlay" invariant). Each maps to a full-line
+# sentinel the harness appends -- so even a fresh image has real drift to
+# validate. /etc/nut/ups.conf is apk-shipped (not seeded), so this doubles as
+# proof that the overlay copy wins over the package's fresh config on reinstall.
+_CONFIG_SENTINELS = {
+    "/etc/samba/smb.conf":   "# upgrade-survive-smb",
+    "/etc/snapraid.conf":    "# upgrade-survive-snapraid",
+    "/etc/ssh/sshd_config":  "# upgrade-survive-sshd",
+    "/etc/nut/ups.conf":     "# upgrade-survive-nut",
+    "/etc/fstab":            "# upgrade-survive-fstab",
+    "/etc/apk/repositories": "# upgrade-survive-repo",
+}
+
+
+def test_user_changes_survive_upgrade(upgrade_guest, golden):
+    """A fresh install carrying realistic USER drift -- edited service
+    configs, a root password, a samba user, a custom repo line, an added
+    package -- must come through a self-upgrade with every bit intact.
+
+    The harness CREATES all the drift itself (nothing here relies on a
+    pre-configured box), so this guards the whole 'nas upgrade preserves my
+    setup' promise even against the pristine image."""
+    guest, _, _ = upgrade_guest(golden.base_img, name="drift")
+    guest.wait_ssh(timeout=420)
+
+    # --- create the drift: editable config in the overlay ---
+    for path, marker in _CONFIG_SENTINELS.items():
+        guest.run(f"printf '%s\\n' '{marker}' >> {path}", check=True)
+    # a root password: seed ships an EMPTY root hash (first-boot passwordless);
+    # busybox passwd reads the two prompts from stdin (as the wizard does)
+    guest.run("printf 'upgpw12345\\nupgpw12345\\n' | passwd root",
+              timeout=60, check=True)
+    shadow_before = guest.run(
+        "awk -F: '$1==\"root\"{print $2}' /etc/shadow", check=True).out.strip()
+    assert shadow_before and shadow_before not in ("!", "*"), \
+        f"root password did not take: {shadow_before!r}"
+    # a samba user (passdb is var/lib/samba -> an explicit lbu include)
+    guest.run("adduser -D -H upgsmb", check=True)
+    guest.run("printf 'smbpw123\\nsmbpw123\\n' | smbpasswd -s -a upgsmb",
+              timeout=60, check=True)
+    # an extra installed package (best-effort -- reinstall needs the CDN, but
+    # world membership after upgrade is what reconciliation actually promises)
+    pkg_added = guest.run("apk add figlet", timeout=300).rc == 0
+
+    guest.run("nas commit -m 'user drift before upgrade'", timeout=180,
+              check=True)
+
+    _run_upgrade(guest)
+    _reboot_pristine(guest)
+
+    # --- every edit survived ---
+    for path, marker in _CONFIG_SENTINELS.items():
+        assert guest.run(f"grep -qxF '{marker}' {path}").rc == 0, \
+            f"{path} lost its user edit across upgrade"
+    # the CDN re-pin is surgery, not a rewrite: the custom line stays AND a
+    # pinned dl-cdn version line remains
+    repo = guest.run("cat /etc/apk/repositories", check=True).out
+    assert "dl-cdn.alpinelinux.org/alpine/v" in repo, repo
+    shadow_after = guest.run(
+        "awk -F: '$1==\"root\"{print $2}' /etc/shadow", check=True).out.strip()
+    assert shadow_after == shadow_before, \
+        "root password hash changed across upgrade"
+    assert "upgsmb" in guest.run("pdbedit -L", check=True).out, \
+        "samba user lost across upgrade"
+    if pkg_added:
+        assert guest.run("grep -qx figlet /etc/apk/world").rc == 0, \
+            "added package dropped from world by the upgrade reconciliation"
+    guest.screenshot("user-drift-survived-upgrade")
+
+
+@pytest.fixture
+def upgrade_golden_guest(guest_factory, overlay_disks, payload_dir, golden,
+                         tmp_path):
+    """A CONFIGURED guest (nasdata mounted, docker/samba running) PLUS a
+    payload disk -- upgrade tests that need real services and data on
+    /mnt/nasdata. Disks: vda=golden system, vdb=nasdata, vdc=payload
+    (mounted by its by-id serial, not device order)."""
+    def make(*, name="upgg", mem_mb=8192):
+        sysd, datad = overlay_disks(name)
+        payd = images.create_overlay(payload_dir, "raw",
+                                     tmp_path / f"{name}-pay.qcow2")
+        disks = [DiskSpec(str(sysd)),
+                 DiskSpec(str(datad), serial="NASDATA0"),
+                 DiskSpec(str(payd), serial="PAYLOAD")]
+        guest = guest_factory(disks, name=name, mem_mb=mem_mb,
+                              ssh_key=golden.ssh_key,
+                              throwaway=[sysd, datad, payd])
+        guest.wait_ssh(timeout=420)
+        guest.wait_ready()      # docker + samba converged on /mnt/nasdata
+        return guest
+    return make
+
+
+def test_docker_survives_upgrade(upgrade_golden_guest, golden):
+    """`nas upgrade` CANNOT harm installed Docker. A running container, its
+    data on /mnt/nasdata, the imported image, and a customized daemon.json
+    must all be intact after an upgrade -- docker's data-root lives on the
+    data disk (which the upgrade never opens) and daemon.json is
+    overlay-owned. The container is --restart unless-stopped, so it must come
+    back by itself; the DATA marker is written host-side (NOT by the
+    container) so its survival proves the disk, not a re-run."""
+    g = upgrade_golden_guest(name="dockup")
+    g.poll_until("rc-service docker status", timeout=300, desc="docker up")
+
+    # customize daemon.json (docker config -> overlay) with a sentinel. Engine
+    # labels MUST be key=value or dockerd refuses to start -- use a valid one.
+    g.run("jq '.labels=[\"upgrade-survive-docker=yes\"]' /etc/docker/daemon.json "
+          "> /etc/docker/daemon.json.new && "
+          "mv /etc/docker/daemon.json.new /etc/docker/daemon.json", check=True)
+
+    # a container whose image + definition live in the data-root on
+    # /mnt/nasdata (docker import = no registry needed)
+    g.run("mkdir -p /tmp/rootfs/bin && cp /bin/busybox /tmp/rootfs/bin/ && "
+          "ln -sf busybox /tmp/rootfs/bin/sh && "
+          "tar -c -C /tmp/rootfs . | docker import - mnq-busybox",
+          timeout=120, check=True)
+    g.run("mkdir -p /mnt/nasdata/appdata", check=True)
+    g.run("docker run -d --name persist -v /mnt/nasdata/appdata:/data "
+          "--restart unless-stopped mnq-busybox /bin/busybox sleep 2147483",
+          timeout=120, check=True)
+    g.poll_until("docker ps --format '{{.Names}}' | grep -qx persist",
+                 timeout=60, desc="container running")
+    # marker written HOST-side onto the data disk (not by the container)
+    g.run("echo UPGRADE-MARKER > /mnt/nasdata/appdata/marker", check=True)
+
+    g.run("nas commit -m 'docker state before upgrade'", timeout=180,
+          check=True)
+
+    # upgrade with TMPDIR on the 12G payload disk (mounted by by-id serial)
+    g.run(f"mkdir -p {PAYLOAD_MOUNT} && "
+          f"mount /dev/disk/by-id/virtio-PAYLOAD {PAYLOAD_MOUNT}", check=True)
+    r = g.run(f"TMPDIR={PAYLOAD_MOUNT} nas upgrade --yes "
+              f"{PAYLOAD_MOUNT}/new.img.gz", timeout=2400)
+    assert r.rc == 0 and "Upgrade written successfully" in r.out, r.out[-3000:]
+    g.reboot(timeout=420)
+    g.wait_ready()
+
+    # docker, its config, its image, its container, and its data all survived.
+    # daemon.json is overlay-owned; check it first (a plain file read, no
+    # docker API needed).
+    assert "upgrade-survive-docker" in \
+        g.run("cat /etc/docker/daemon.json", check=True).out, \
+        "daemon.json customization lost across upgrade"
+    # the host-written marker is on the data disk -- proves the DATA survived
+    # independently of docker (the disk the upgrade never opens)
+    assert "UPGRADE-MARKER" in \
+        g.run("cat /mnt/nasdata/appdata/marker", check=True).out, \
+        "data on /mnt/nasdata lost across upgrade"
+    # dockerd's OpenRC 'started' precedes its socket being ready; poll the API
+    # (as category G does with docker ps) before querying it -- a single-shot
+    # query races the daemon's post-reboot startup.
+    g.poll_until("rc-service docker status", timeout=300,
+                 desc="docker service back after upgrade")
+    g.poll_until("docker info >/dev/null 2>&1", timeout=180,
+                 desc="docker API ready after upgrade")
+    assert g.poll_until("docker images --format '{{.Repository}}' "
+                        "| grep -qx mnq-busybox", timeout=60,
+                        desc="imported image present").rc == 0, \
+        "docker image (data-root on /mnt/nasdata) lost across upgrade"
+    got = g.poll_until("docker ps --format '{{.Names}}' | grep -qx persist",
+                       timeout=180, desc="container restarted after upgrade")
+    assert got.rc == 0, "unless-stopped container did not restart after upgrade"
+    g.screenshot("docker-survived-upgrade")
+
+
 def test_gzip_sniff_accepts_wrong_extension(upgrade_guest, golden):
     """Filenames lie (a beta-2 tester's browser saved .img.tgz): the upgrade
     must sniff the 1f8b magic, not trust the extension."""

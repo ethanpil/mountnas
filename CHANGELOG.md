@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Testing
+- **Upgrade-safety coverage for user drift** (`tests/qemu`, now 81 tests). Two new category-D tests where the harness *creates* realistic drift before upgrading, so even a fresh image has something to validate: `test_user_changes_survive_upgrade` edits `smb.conf`/`snapraid.conf`/`sshd_config`/`/etc/nut/ups.conf`/`fstab` + a custom `/etc/apk/repositories` line, sets a root password, adds a samba user and a package, then self-upgrades and asserts every edit survived (incl. the CDN re-pin keeping the custom repo line, and the overlay config winning over the apk-shipped `nut` default); `test_docker_survives_upgrade` runs a `--restart unless-stopped` container with data on `/mnt/nasdata` and a customized `daemon.json`, upgrades, and asserts the container, its image, its data, and the config all came through — confirming `nas upgrade` cannot harm installed Docker.
+
 ### Added
 - **Disabling unused services is now documented and fully supported.** New "Disabling Unused Services" sections in the README and the built-in guide cover every service. The one enabling change: the `mountnas` supervisor's data-service list is overridable via `DATA_SERVICES=` in `/etc/conf.d/mountnas` (list only what you keep) — previously Docker/Samba/NFS could not be permanently disabled at all (they live in no runlevel, `apk del` is undone by upgrade world-reconciliation, and init.d edits don't persist on a diskless system). `nas status` and the web dashboard understand the override and report deliberately disabled services as disabled instead of warning forever.
 

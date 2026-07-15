@@ -221,7 +221,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (79 tests)
+## 4. The complete test catalog (81 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -275,10 +275,12 @@ exactly as a new user at a monitor would experience it.
 | `test_logs_persist_token_surgery` | `nas logs --persist on/off` edits ONLY the `-O/-s/-b` tokens in `SYSLOGD_OPTS`; a custom user token survives both transitions (beta-1 fix for the wholesale-rewrite bug). |
 | `test_backup_produces_valid_image` **[slow]** | `nas backup` writes a gzip-valid image whose payload starts with a boot-sector magic (55aa), records last-backup (surfaced by the upgrade gate), and leaves `/cfg` read-write afterwards. |
 
-### D — In-place upgrade (`test_d_upgrade.py`, 11 tests, all [upgrade])
+### D — In-place upgrade (`test_d_upgrade.py`, 13 tests, all [upgrade])
 
 The crown jewels. Guest layout mirrors the CI upgrade test: system disk +
 a 12 GB payload disk carrying `new.img.gz` that doubles as TMPDIR scratch.
+Two tests deliberately create realistic **user drift** first, so a fresh
+image always has something to test the upgrade against.
 
 | Test | What it verifies |
 |---|---|
@@ -288,6 +290,8 @@ a 12 GB payload disk carrying `new.img.gz` that doubles as TMPDIR scratch.
 | `test_powercut_during_staging_old_system_boots` **[faults]** | Power cut while payloads are being staged to `.new` names: phase 1 changes nothing, so the OLD system must boot untouched with `/apks` intact. |
 | `test_powercut_late_window_boots_old_or_new` **[faults]** | Power cut deep in the write phase (staging tail / rename commit): the box must boot with either version — never a mixed kernel/modloop pair (which does not boot) and never a missing `/apks` (`_commit_dir`'s `.old` restore). |
 | `test_user_packages_survive_upgrade` **[network] [needs_prev]** | A user-installed package (extras = world − old base) rides across the version bump and reinstalls. |
+| `test_user_changes_survive_upgrade` | The harness edits `smb.conf`, `snapraid.conf`, `sshd_config`, `/etc/nut/ups.conf`, `fstab` and a custom `/etc/apk/repositories` line, sets a root password, adds a samba user, and installs a package — commits, self-upgrades, reboots, and asserts **every** edit survived (incl. the CDN re-pin being surgery that keeps the custom repo line, and the overlay config winning over the apk-shipped `nut` default). |
+| `test_docker_survives_upgrade` | On a configured guest with `/mnt/nasdata` mounted: a running `--restart unless-stopped` container, its imported image, a host-written data marker on the data disk, and a customized `daemon.json` must ALL survive an upgrade — docker's data-root lives on the untouched data disk and `daemon.json` is overlay-owned. Proves "`nas upgrade` cannot harm installed Docker". |
 | `test_gzip_sniff_accepts_wrong_extension` | An image saved as `.img.tgz` still upgrades — gzip is detected by the `1f8b` magic, never the filename (beta-2 tester's browser rename). |
 | `test_rejects_non_gzip_payload` | Random bytes named `.img.gz` are rejected cleanly ("cannot mount the image's BOOT partition"), with version and boot files untouched. |
 | `test_upgrade_from_url` | `nas upgrade https://...` downloads into TMPDIR, re-sniffs the bytes, upgrades, reboots into the right version (served by a suite-local HTTP server). |
