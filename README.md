@@ -169,7 +169,7 @@ The `nas` tool has been designed to help you manage the system.
 These start automatically (unless noted). Docker, Samba, and NFS are held by the `mountnas` supervisor until `/mnt/nasdata` is mounted, so a missing disk can never fill RAM.
 
 - **SSH** (`sshd`, on): see [First boot](#first-boot) for first-login access. Manage keys in `/root/.ssh/authorized_keys`, harden `/etc/ssh/sshd_config`, then `nas commit`.
-- **mDNS / discovery** (`avahi`, on): reach the box at `mountnas.local` without knowing its IP.
+- **mDNS / discovery** (`avahi`, on): reach the box at `mountnas.local` without knowing its IP. The shipped `/etc/avahi/avahi-daemon.conf` denies the Docker bridge (`docker0`) so `.local` resolves to your LAN address, not the unreachable `172.17.x`; add custom docker network bridges (`br-…`) to the `deny-interfaces` line if you create them.
 - **Time sync** (`chronyd`, on): on an isolated LAN, point it at a local source in `/etc/chrony/chrony.conf`, then `nas commit`.
 - **Network UPS Tools (NUT)** (`nut`, off by default): [Determine the UPS USB params](https://wiki.alpinelinux.org/wiki/Nut-ups) and update in `/etc/nut/`: `nut.conf`,`ups.conf`,`upsd.conf`, then `rc-update add nut-upsd` then nas commit`.
 - **Docker** (started once `/mnt/nasdata` is up): data-root is `/mnt/nasdata/docker`. Put compose files and appdata under `/mnt/nasdata` so they survive a dead USB and travel with the data.

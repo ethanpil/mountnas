@@ -232,6 +232,22 @@ auto lo
 iface lo inet loopback
 EOF
 
+# ---- avahi: publish <hostname>.local on the LAN, NOT the docker bridge ----
+# By default avahi advertises the hostname's A record on EVERY interface,
+# including docker0 (172.17.0.1) once Docker is running — so a LAN client
+# resolving <host>.local can get an address only reachable on the box itself
+# (verified: avahi-browse published docker0, eth0 AND lo; avahi-resolve
+# returned the docker0 address first). Deny the default docker bridge so
+# discovery returns the real LAN address. A minimal file is enough — avahi
+# defaults every other setting.
+mk root:root 0644 "$tmp/etc/avahi/avahi-daemon.conf" <<'EOF'
+[server]
+# Do not advertise <hostname>.local on the Docker bridge (unreachable off the
+# box). Add custom docker network bridges (br-xxxxxxxx) here, comma-separated,
+# if you create them and see .local resolving to the wrong address.
+deny-interfaces=docker0
+EOF
+
 # ---- motd: drop Alpine's stock 'setup-alpine' recommendation ----
 # Post-login guidance comes from /etc/profile.d/nas-welcome.sh, so keep motd empty.
 mk root:root 0644 "$tmp/etc/motd" <<'EOF'

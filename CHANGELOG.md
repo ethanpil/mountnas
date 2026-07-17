@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **`mountnas.local` no longer resolves to the Docker bridge.** With Docker running, avahi advertised the hostname's A record on *every* interface — including `docker0` (`172.17.0.1`), which it handed out first — so a LAN client resolving `mountnas.local` could get an address only reachable on the box itself (confirmed via `avahi-browse`: docker0, eth0 **and** loopback were all published). The shipped `/etc/avahi/avahi-daemon.conf` now denies `docker0`, so discovery returns the real LAN address (verified: resolution flips from `172.17.0.1` to the eth0 address). Users with custom docker networks can extend the `deny-interfaces` line. Regression-guarded: the mDNS test now asserts resolution matches the default-route (LAN-reachable) address, not just any box address.
+
 ## [1.0rc1] — 2026-07-17
 
 **First 1.0 release candidate.** Feature-complete: the diskless RAM-root

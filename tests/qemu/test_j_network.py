@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from lib import config as C
@@ -30,23 +32,32 @@ def test_mdns_daemon_advertises_hostname(golden_guest):
         if r.rc != 0:
             pytest.skip("avahi-tools not shipped and CDN unreachable; "
                         "daemon-status check only")
-    # resolution must succeed and return an address the box ACTUALLY holds
-    # (not asserting WHICH interface: with docker up the box legitimately has
-    # both eth0 and the docker0 bridge, and avahi may answer with either --
-    # the interface-preference nuance is tracked separately). This closes the
-    # real gap: that <host>.local resolves end-to-end, which was only ever
-    # skipped before avahi-tools shipped.
-    r = g.run("avahi-resolve-host-name -4 \"$(hostname).local\"", timeout=60)
-    # rc==0 alone is not enough: avahi-resolve can exit 0 with EMPTY output
-    # (observed when the daemon answers with no address) — guard it so an
-    # empty result is a legible failure, not an IndexError on split()[-1]
-    assert r.rc == 0 and r.out.split(), \
-        f"mDNS resolution failed or empty: rc={r.rc} {r.out!r}"
-    resolved = r.out.split()[-1].strip()
-    box_ips = g.run("ip -4 -o addr show | awk '{print $4}' | cut -d/ -f1",
-                    check=True).out.split()
-    assert resolved in box_ips, \
-        f"mountnas.local resolved to {resolved!r}, not a box address {box_ips}"
+    # discovery must return the LAN-REACHABLE address, not the docker bridge:
+    # by default avahi advertises <host>.local on docker0 too (172.17.0.1),
+    # unreachable off the box, and hands it out first (verified via
+    # avahi-browse). The seed ships deny-interfaces=docker0 from 1.0rc2 —
+    # apply it here against older images so the FIXED behavior is asserted
+    # either way.
+    if g.run("grep -rq 'deny-interfaces.*docker0' /etc/avahi/ 2>/dev/null").rc != 0:
+        g.run("mkdir -p /etc/avahi && printf '[server]\\ndeny-interfaces=docker0"
+              "\\n' > /etc/avahi/avahi-daemon.conf", check=True)
+        g.run("rc-service avahi-daemon restart", timeout=60, check=True)
+    # the address a LAN client would actually use == the default-route source
+    primary = g.run("ip -4 route get 1.1.1.1 2>/dev/null "
+                    "| sed -n 's/.*src \\([0-9.]*\\).*/\\1/p'", check=True).out.strip()
+    assert primary, "no default-route source address on the guest"
+    # poll: avahi re-probes the hostname after a config restart (~1-2s)
+    resolved = ""
+    for _ in range(20):
+        r = g.run("avahi-resolve-host-name -4 \"$(hostname).local\"", timeout=30)
+        if r.rc == 0 and r.out.split():
+            resolved = r.out.split()[-1].strip()
+            if resolved == primary:
+                break
+        time.sleep(1)
+    assert resolved == primary, \
+        f"mountnas.local resolved to {resolved!r}, not the LAN address {primary!r} " \
+        "(avahi advertising the docker bridge?)"
 
 
 def test_hostname_change_regenerates_banner(golden_guest):

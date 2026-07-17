@@ -362,7 +362,7 @@ user networking.
 | Test | What it verifies |
 |---|---|
 | `test_banner_shows_dhcp_ip` | `/etc/issue` carries the box's DHCP address — the banner a headless user reads off the monitor to find the box. Screenshot taken. |
-| `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` **actually resolves** to an address the box holds (avahi-tools ships from beta-7; against older images the test fetches it from the CDN, and only skips when offline). Closes the never-verified resolution gap. |
+| `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` resolves to the **LAN-reachable** address (the default-route source), not the Docker bridge — avahi otherwise advertises the hostname on `docker0` (`172.17.0.1`) too and hands it out first. The seed ships `deny-interfaces=docker0` from 1.0rc2; the test self-applies it against older images so the fixed behavior is asserted either way. (avahi-tools ships from beta-7; fetched from the CDN otherwise, skips only when offline.) |
 | `test_hostname_change_regenerates_banner` | `gen-issue` picks up a hostname change and rewrites the banner (the wizard and if-up hook both lean on it). |
 
 ### K — Newest features (`test_k_features.py`, 8 tests)
