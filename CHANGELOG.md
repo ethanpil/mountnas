@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.0rc2] — 2026-07-17
+
+**Second 1.0 release candidate.** A round of correctness and robustness fixes
+from a full-codebase review — no feature changes, no behavior a healthy box
+would notice, and validated end-to-end by the QEMU suite before publishing.
+The theme is the appliance's own promises: backups land where you point them
+and are flagged when stale, an interrupted upgrade truly leaves the running
+system untouched, SMART alerts work the moment a sink exists, and the
+`DATA_SERVICES` opt-out no longer trips its own health checks.
+
 ### Fixed
 - **The setup wizard validates static-network input before writing it.** A typo'd IP or gateway went verbatim into `/etc/network/interfaces` and only surfaced when networking restarted — potentially as a headless box that dropped off the network. Malformed values now warn and fall back to DHCP (the same validate-or-keep-the-safe-default pattern the hostname step uses).
 - **Only one setup wizard can run at a time.** On first boot both consoles auto-start it (tty1 + ttyS0 — noVNC and `qm terminal` are commonly open together on Proxmox), and two interleaved `passwd`/commit runs could corrupt each other. A `/run` lock (crash-stale locks clear at reboot) turns the second wizard into a clear message instead.
