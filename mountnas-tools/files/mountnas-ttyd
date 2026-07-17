@@ -3,9 +3,9 @@
 # 'nas ttyd on' is the opt-in switch (same pattern as mountnas-web).
 #
 # Serves a REAL /bin/login prompt — never a bare shell: credentials are
-# required, exactly like the physical console. Note that /etc/securetty has
-# no pts/* entries, so ROOT cannot log in here — use a wheel user
-# (adduser <name> wheel), which is the right posture for a browser terminal.
+# required, exactly like the physical console. Root login works because
+# 'nas ttyd on' appends pts/* entries to /etc/securetty (busybox login
+# refuses root on unlisted ttys; the shipped file has no pts lines).
 # Plain HTTP on the trusted LAN (credentials transit in cleartext on the
 # wire — same trust model as Samba); 'nas ttyd on' says so out loud.
 #

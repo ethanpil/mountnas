@@ -223,7 +223,7 @@ rc-service nfs restart &amp;&amp; nas commit</code></pre>
 <p>Runs with <code>data-root = /mnt/nasdata/docker</code>. Keep compose files and appdata under <code>/mnt/nasdata</code> so they survive a dead USB and travel with the data. <a href="https://docs.docker.com/compose/"><code>docker compose</code></a> is included.</p>
 <h3>Remote access (all off by default)</h3>
 <ul>
-<li><b>Browser terminal (<a href="https://github.com/tsl0922/ttyd">ttyd</a>):</b> <code>nas ttyd on &amp;&amp; nas commit</code> — a real login prompt at <code>http://&lt;box&gt;:22222/</code> (the dashboard links to it when running). Plain HTTP on the trusted LAN, so the password transits in cleartext; root is blocked on web terminals (<code>/etc/securetty</code>) — log in as a wheel user.</li>
+<li><b>Browser terminal (<a href="https://github.com/tsl0922/ttyd">ttyd</a>):</b> <code>nas ttyd on &amp;&amp; nas commit</code> — a real login prompt at <code>http://&lt;box&gt;:22222/</code> (the dashboard links to it when running). Root login works: <code>on</code> whitelists ptys in <code>/etc/securetty</code> once. Plain HTTP on the trusted LAN, so the password transits in cleartext.</li>
 <li><b><a href="https://tailscale.com/">Tailscale</a>:</b> <code>rc-update add tailscale default &amp;&amp; rc-service tailscale start &amp;&amp; tailscale up &amp;&amp; nas commit</code></li>
 <li><b><a href="https://www.zerotier.com/">ZeroTier</a>:</b> <code>rc-update add zerotier-one default &amp;&amp; rc-service zerotier-one start &amp;&amp; zerotier-cli join &lt;net&gt; &amp;&amp; nas commit</code></li>
 <li><b><a href="https://www.wireguard.com/">WireGuard</a>:</b> plain kernel WireGuard, <code>wg</code>/<code>wg-quick</code> included.</li>
@@ -418,7 +418,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td><code>history [-n N|--all]</code></td><td>Append-only operations log: setups, commits, rollbacks, backups, upgrades, power events — with who and when.</td></tr>
 <tr><td><code>notify [--test|&lt;subject&gt; [body]]</code></td><td>List/test notification sinks, or send an ad-hoc message (body pipeable) — cron friendly.</td></tr>
 <tr><td><code>web [on [port]|off|status]</code></td><td>This read-only dashboard + guide. Off by default; default port 8080. <b><code>nas commit</code> after on/off</b> or the setting is lost at reboot (the command warns).</td></tr>
-<tr><td><code>ttyd [on [port]|off|status]</code></td><td>Browser terminal serving a real login prompt (wheel users only — root is securetty-blocked). Off by default; port 22222; same <code>nas commit</code> rule.</td></tr>
+<tr><td><code>ttyd [on [port]|off|status]</code></td><td>Browser terminal serving a real login prompt (root works — <code>on</code> whitelists ptys in securetty once). Off by default; port 22222; same <code>nas commit</code> rule.</td></tr>
 <tr><td><code>logs [-n N|-f|--persist ...]</code></td><td>View syslog; optionally persist it to the data disk with rotation.</td></tr>
 <tr><td><code>report</code></td><td>Secrets-free diagnostics bundle in /tmp for bug reports.</td></tr>
 <tr><td><code>shutdown / reboot [--yes|--save]</code></td><td>Power off / reboot with an unsaved-changes gate; <code>--save</code> commits first.</td></tr>

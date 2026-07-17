@@ -959,10 +959,15 @@ cmd_web() {
 
 # nas ttyd — the browser terminal (mountnas-ttyd service: ttyd serving a
 # REAL /bin/login prompt, never a bare shell). OFF by default; same opt-in +
-# persistence-honesty pattern as nas web. Root cannot log in here
-# (/etc/securetty has no pts entries) — that is deliberate; use a wheel user.
+# persistence-honesty pattern as nas web.
+#
+# Root login: busybox login consults /etc/securetty, which ships with no
+# pts/* entries — so root would be silently refused on the web terminal.
+# 'on' appends pts/0..15 (idempotent, maintainer decision). Scope is narrow:
+# securetty only gates login(1), and only ttyd spawns login on a pty here —
+# SSH has its own PermitRootLogin and the consoles are already listed.
 _ttyd_unsaved() {
-	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-ttyd|conf\.d/mountnas-ttyd)'
+	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-ttyd|conf\.d/mountnas-ttyd|securetty)'
 }
 cmd_ttyd() {
 	local tport
@@ -977,14 +982,19 @@ cmd_ttyd() {
 		fi
 		command -v ttyd >/dev/null 2>&1 \
 			|| { bad "ttyd missing — run: apk add ttyd && nas commit"; return 1; }
+		if [ -f /etc/securetty ] && ! grep -qx 'pts/0' /etc/securetty; then
+			{
+				echo "# pts entries added by 'nas ttyd on' (root login on the web terminal)"
+				i=0; while [ "$i" -le 15 ]; do echo "pts/$i"; i=$((i + 1)); done
+			} >> /etc/securetty
+			ok "root login enabled on web terminals (pts entries added to /etc/securetty)"
+		fi
 		rc-update -q add mountnas-ttyd default 2>/dev/null || true
 		rc-service mountnas-ttyd restart >/dev/null 2>&1 \
 			|| { bad "mountnas-ttyd failed to start — check: rc-service mountnas-ttyd status"; return 1; }
 		_ops_log ttyd "enabled (port $tport)"
 		ok "browser terminal ON -> http://$(hostname).local:$tport/  (login prompt)"
 		warn "plain HTTP on your LAN: the password transits in cleartext (trusted-LAN posture)"
-		hint "root logins are blocked on web terminals (/etc/securetty) — log in as a"
-		hint "wheel user: adduser <name> wheel && nas commit"
 		if _ttyd_unsaved; then
 			warn "setting NOT saved — the terminal is OFF again after a reboot unless you run: nas commit"
 		fi
@@ -2041,8 +2051,8 @@ nas ttyd [on [port] | off | status]
   on [port]   enable (default port 22222) and start it now
   off         stop + disable
   status      is it enabled/running/saved, and on which URL
-  Root logins are blocked on web terminals (/etc/securetty has no pts
-  entries) — log in as a wheel user: adduser <name> wheel.
+  Root login works: 'on' adds pts entries to /etc/securetty once
+  (busybox login refuses root on unlisted ttys otherwise).
   IMPORTANT: on/off lives in RAM until 'nas commit' (the command warns).
 EOF
 ;;
