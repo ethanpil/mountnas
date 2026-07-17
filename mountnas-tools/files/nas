@@ -263,6 +263,10 @@ cmd_status() {
 	# supported way to turn off Docker/Samba/NFS — see the supervisor's header)
 	# are skipped, not warned: a deliberate off must not read as a failure.
 	ds_on=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; echo "${DATA_SERVICES:-docker samba nfs}")
+	# a conf.d that errors under sourcing (set -u on an unset var, a stray
+	# exit) empties the subshell — the data services must not silently
+	# vanish from the checks because of a config typo
+	[ -n "$ds_on" ] || ds_on="docker samba nfs"
 	ds_off=""
 	for s in docker samba nfs; do
 		case " $ds_on " in *" $s "*) ;; *) ds_off="$ds_off $s" ;; esac
@@ -906,9 +910,10 @@ _web_unsaved() {
 	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-web|conf\.d/mountnas-web)'
 }
 cmd_web() {
-	local wport
+	local wport wp_i
 	wport=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-web 2>/dev/null | head -n1)
-	: "${wport:=8080}"
+	# a hand-edited conf.d can hold garbage; never propagate it into URLs
+	case "$wport" in ''|*[!0-9]*) wport=8080 ;; esac
 	case "${1:-status}" in
 	on)
 		if [ -n "${2:-}" ]; then
@@ -921,6 +926,15 @@ cmd_web() {
 		rc-update -q add mountnas-web default 2>/dev/null || true
 		rc-service mountnas-web restart >/dev/null 2>&1 \
 			|| { bad "mountnas-web failed to start — check: rc-service mountnas-web status"; return 1; }
+		# start-stop-daemon --background reports success once the process
+		# forks — a failed bind (port already taken) dies AFTER that. Probe
+		# the port so "ON" is never claimed over a dead listener.
+		wp_i=0
+		until curl -fsS --max-time 2 "http://127.0.0.1:$wport/" >/dev/null 2>&1; do
+			wp_i=$((wp_i + 1))
+			[ "$wp_i" -ge 6 ] && { warn "started, but nothing answers on port $wport — port already in use? check: rc-service mountnas-web status"; break; }
+			sleep 0.5
+		done
 		_ops_log web "enabled (port $wport)"
 		ok "web dashboard ON -> http://$(hostname).local:$wport/  (read-only, plain HTTP, LAN)"
 		hint "built-in user guide: http://$(hostname).local:$wport/guide.html"
@@ -970,9 +984,10 @@ _ttyd_unsaved() {
 	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-ttyd|conf\.d/mountnas-ttyd|securetty)'
 }
 cmd_ttyd() {
-	local tport
+	local tport tp_i
 	tport=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-ttyd 2>/dev/null | head -n1)
-	: "${tport:=22222}"
+	# a hand-edited conf.d can hold garbage; never propagate it into URLs
+	case "$tport" in ''|*[!0-9]*) tport=22222 ;; esac
 	case "${1:-status}" in
 	on)
 		if [ -n "${2:-}" ]; then
@@ -982,7 +997,9 @@ cmd_ttyd() {
 		fi
 		command -v ttyd >/dev/null 2>&1 \
 			|| { bad "ttyd missing — run: apk add ttyd && nas commit"; return 1; }
-		if [ -f /etc/securetty ] && ! grep -qx 'pts/0' /etc/securetty; then
+		# key on ANY pts line: if one exists the user manages the policy —
+		# re-appending would duplicate; if none exist, add the block once
+		if [ -f /etc/securetty ] && ! grep -q '^pts/' /etc/securetty; then
 			{
 				echo "# pts entries added by 'nas ttyd on' (root login on the web terminal)"
 				i=0; while [ "$i" -le 15 ]; do echo "pts/$i"; i=$((i + 1)); done
@@ -992,6 +1009,13 @@ cmd_ttyd() {
 		rc-update -q add mountnas-ttyd default 2>/dev/null || true
 		rc-service mountnas-ttyd restart >/dev/null 2>&1 \
 			|| { bad "mountnas-ttyd failed to start — check: rc-service mountnas-ttyd status"; return 1; }
+		# same bind-probe rationale as cmd_web: --background masks EADDRINUSE
+		tp_i=0
+		until curl -fsS --max-time 2 "http://127.0.0.1:$tport/" >/dev/null 2>&1; do
+			tp_i=$((tp_i + 1))
+			[ "$tp_i" -ge 6 ] && { warn "started, but nothing answers on port $tport — port already in use? check: rc-service mountnas-ttyd status"; break; }
+			sleep 0.5
+		done
 		_ops_log ttyd "enabled (port $tport)"
 		ok "browser terminal ON -> http://$(hostname).local:$tport/  (login prompt)"
 		warn "plain HTTP on your LAN: the password transits in cleartext (trusted-LAN posture)"

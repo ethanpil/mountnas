@@ -200,7 +200,15 @@ fi
 # {{.Size}} (docker walks the rw layers to compute it — the one genuinely
 # expensive field) and `docker stats` (samples for a full second per call).
 # Everything shown is daemon metadata the CLI returns in one round-trip.
-docker_html='<span class="mut">docker not running (held until the data disk is up)</span>'
+# a deliberately disabled docker (DATA_SERVICES= in /etc/conf.d/mountnas)
+# must not read as "held waiting for the disk" — same override-awareness as
+# nas status, incl. its empty-on-source-error fallback
+ds_on=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; echo "${DATA_SERVICES:-docker samba nfs}")
+[ -n "$ds_on" ] || ds_on="docker samba nfs"
+case " $ds_on " in
+	*" docker "*) docker_html='<span class="mut">docker not running (held until the data disk is up)</span>' ;;
+	*) docker_html='<span class="mut">docker disabled via /etc/conf.d/mountnas</span>' ;;
+esac
 docker_table=""
 if rc-service docker status >/dev/null 2>&1; then
 	d_ps=$(timeout 10 docker ps -a --no-trunc=false --format \
@@ -209,9 +217,14 @@ if rc-service docker status >/dev/null 2>&1; then
 	if [ -n "$d_ps" ]; then
 		d_run=$(printf '%s\n' "$d_ps" | awk -F'\t' '$3=="running"' | grep -c .)
 		d_pau=$(printf '%s\n' "$d_ps" | awk -F'\t' '$3=="paused"' | grep -c .)
+		d_res=$(printf '%s\n' "$d_ps" | awk -F'\t' '$3=="restarting"' | grep -c .)
 		d_all=$(printf '%s\n' "$d_ps" | grep -c .)
-		d_oth=$((d_all - d_run - d_pau))
-		docker_html="<div class=\"svc\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span> <span class=\"pill p-off\"><i></i>$d_oth stopped</span></div><p class=\"mut\" style=\"margin-top:9px;font-size:12.5px\">$d_all container(s) &mdash; expand the Docker containers section below for detail.</p>"
+		d_oth=$((d_all - d_run - d_pau - d_res))
+		# restarting = an ACTIVE failure (crash loop) — its own amber pill,
+		# shown only when nonzero; it must never hide inside "stopped"
+		d_res_pill=""
+		[ "$d_res" -gt 0 ] && d_res_pill=" <span class=\"pill p-warn\"><i></i>$d_res restarting</span>"
+		docker_html="<div class=\"svc\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span>$d_res_pill <span class=\"pill p-off\"><i></i>$d_oth stopped</span></div><p class=\"mut\" style=\"margin-top:9px;font-size:12.5px\">$d_all container(s) &mdash; expand the Docker containers section below for detail.</p>"
 		d_rows=$(printf '%s\n' "$d_ps" | awk -F'\t' '{
 			state=$3; cls="p-off"
 			if (state == "running") cls="p-ok"
@@ -224,7 +237,8 @@ if rc-service docker status >/dev/null 2>&1; then
 		}')
 		# collapsible like the hardware inventory / syslog: a compose stack
 		# makes this table LONG, and the summary line still carries the counts
-		docker_table="<details class=\"card\"><summary>Docker containers <span class=\"mut\">($d_run running &middot; $d_pau paused &middot; $d_oth stopped)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
+		d_res_sum=""; [ "$d_res" -gt 0 ] && d_res_sum=" &middot; $d_res restarting"
+		docker_table="<details class=\"card\"><summary>Docker containers <span class=\"mut\">($d_run running &middot; $d_pau paused$d_res_sum &middot; $d_oth stopped)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
 	else
 		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers yet</span>'
 	fi

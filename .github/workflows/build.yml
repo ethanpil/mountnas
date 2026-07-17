@@ -48,6 +48,10 @@ jobs:
         run: |
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
+          # API calls from shared runners MUST be authenticated: anonymous
+          # api.github.com is 60 req/hr per IP and runner IPs are chronically
+          # rate-limited — an unauthenticated 403 would flakily kill the build.
+          GHTOKEN="${{ github.token }}"
           # aports_ref MUST match the installed Alpine's version (a mkimage.sh from
           # the wrong aports fails against the installed apk-tools). Deriving it
           # here removes the update-both-inputs footgun on a new Alpine release;
@@ -149,7 +153,8 @@ jobs:
             # the tag from the API, sed it into pkgver, and REGENERATE the
             # checksums — the committed sums are a local-build fallback, not a
             # pin (unlike snapraid/mergerfs/zerotier/duf, deliberately).
-            CMKFS_VER=$(curl -fsS https://api.github.com/repos/ethanpil/cmkfs/releases/latest \
+            CMKFS_VER=$(curl -fsS -H "Authorization: Bearer '"$GHTOKEN"'" \
+              https://api.github.com/repos/ethanpil/cmkfs/releases/latest \
               | sed -n "s/.*\"tag_name\": \"v\([0-9][0-9.]*\)\".*/\1/p")
             [ -n "$CMKFS_VER" ] || { echo "ERROR: could not resolve the latest cmkfs release tag"; exit 1; }
             echo "cmkfs latest release: $CMKFS_VER"

@@ -137,6 +137,12 @@ def test_disable_data_service_via_conf(dev_guest):
         f"a deliberate disable must not fail status (rc={st.rc}):\n{st.out}"
     assert "docker not running" not in st.out, st.out
     assert "disabled by /etc/conf.d/mountnas" in st.out and "docker" in st.out, st.out
+    # the dashboard must agree: a deliberate off is "disabled via ...", never
+    # the misleading "held until the data disk is up"
+    g.run("/usr/libexec/mountnas/gen-webstatus", timeout=180, check=True)
+    idx = g.run("cat /run/mountnas/web/index.html", check=True).out
+    assert "disabled via /etc/conf.d/mountnas" in idx, \
+        "dashboard docker card shows the wrong reason for a deliberate disable"
 
 
 # ---------------------------------------------------------------- ttyd

@@ -628,13 +628,19 @@ def import_busybox_image(guest: "Guest", tag: str = "mnq-busybox") -> None:
 
 
 def assert_container_stable(guest: "Guest", name: str,
-                            timeout: float = 120.0) -> None:
-    """The container is Up AND has never restarted -- a crash-looper can
-    pass a bare 'Up' grep during its brief running windows."""
-    guest.poll_until(
-        f"docker ps --format '{{{{.Names}}}} {{{{.Status}}}}' "
-        f"| grep -E '{name} Up'", timeout=timeout,
-        desc=f"container {name} up")
+                            timeout: float = 120.0,
+                            settle: float = 5.0) -> None:
+    """The container is Up, STAYS Up across a settle window, and has never
+    restarted -- a crash-looper can pass a bare 'Up' grep during its brief
+    running windows, and even an immediate RestartCount read can land inside
+    the FIRST pre-crash Up window while the count is still 0."""
+    up_cmd = (f"docker ps --format '{{{{.Names}}}} {{{{.Status}}}}' "
+              f"| grep -E '{name} Up'")
+    guest.poll_until(up_cmd, timeout=timeout, desc=f"container {name} up")
+    time.sleep(guest.cfg.scaled(settle))
+    r2 = guest.run(up_cmd)
+    assert r2.rc == 0, \
+        f"container {name} did not stay Up through the settle window"
     r = guest.run(
         f"docker inspect --format '{{{{.RestartCount}}}}' {name}", check=True)
     assert r.out.strip() == "0", \
