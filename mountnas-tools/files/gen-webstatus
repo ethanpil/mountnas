@@ -193,21 +193,38 @@ if rc-service nut-upsd status >/dev/null 2>&1; then
 	fi
 fi
 
-# ---- docker containers (guarded on the daemon; ~50 ms when up) --------------
-# Every docker call is time-bounded: a wedged dockerd (e.g. the data disk died
-# underneath it) otherwise blocks this renderer forever and the dashboard
-# freezes at its last healthy render — exactly when it must not.
+# ---- docker containers (guarded on the daemon) -------------------------------
+# ONE time-bounded `docker ps -a` feeds both the summary card and the full
+# containers table (a wedged dockerd — e.g. the data disk died underneath it —
+# would otherwise block this renderer forever). Deliberately NOT requested:
+# {{.Size}} (docker walks the rw layers to compute it — the one genuinely
+# expensive field) and `docker stats` (samples for a full second per call).
+# Everything shown is daemon metadata the CLI returns in one round-trip.
 docker_html='<span class="mut">docker not running (held until the data disk is up)</span>'
+docker_table=""
 if rc-service docker status >/dev/null 2>&1; then
-	d_run=$(timeout 10 docker ps -q 2>/dev/null | wc -l | tr -d ' ')
-	d_all=$(timeout 10 docker ps -aq 2>/dev/null | wc -l | tr -d ' ')
-	d_list=$(timeout 10 docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | head -n 12 | esc \
-		| awk -F'\t' '{ st = ($2 ~ /^Up/) ? "c-ok" : "c-off";
-			printf "<li class=\"%s\"><b>%s</b> <span class=\"mut\">%s</span></li>\n", st, $1, $2 }')
-	if [ "${d_all:-0}" -gt 0 ] 2>/dev/null; then
-		docker_html="<div class=\"mut\" style=\"margin-bottom:6px\"><span class=\"num\">$d_run</span> running / <span class=\"num\">$d_all</span> total</div><ul class=\"checks\">$d_list</ul>"
+	d_ps=$(timeout 10 docker ps -a --no-trunc=false --format \
+		'{{.Names}}\t{{.ID}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}\t{{.RunningFor}}' \
+		2>/dev/null | esc)
+	if [ -n "$d_ps" ]; then
+		d_run=$(printf '%s\n' "$d_ps" | awk -F'\t' '$3=="running"' | grep -c .)
+		d_pau=$(printf '%s\n' "$d_ps" | awk -F'\t' '$3=="paused"' | grep -c .)
+		d_all=$(printf '%s\n' "$d_ps" | grep -c .)
+		d_oth=$((d_all - d_run - d_pau))
+		docker_html="<div class=\"svc\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span> <span class=\"pill p-off\"><i></i>$d_oth stopped</span></div><p class=\"mut\" style=\"margin-top:9px;font-size:12.5px\">$d_all container(s) &mdash; full detail in the table below.</p>"
+		d_rows=$(printf '%s\n' "$d_ps" | awk -F'\t' '{
+			state=$3; cls="p-off"
+			if (state == "running") cls="p-ok"
+			else if (state == "paused" || state == "restarting") cls="p-warn"
+			else if ($4 ~ /^Exited \([1-9]/) cls="p-fail"
+			ports=$6; if (ports == "") ports="<span class=\"mut\">&mdash;</span>"
+			printf "<tr><td><b>%s</b><br><span class=\"mono mut\" style=\"font-size:11px\">%s</span></td>", $1, $2
+			printf "<td><span class=\"pill %s\"><i></i>%s</span><br><span class=\"mut\" style=\"font-size:11.5px\">%s</span></td>", cls, state, $4
+			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, $7
+		}')
+		docker_table="<div class=\"card tablecard\" style=\"margin-bottom:14px\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div>"
 	else
-		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers</span>'
+		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers yet</span>'
 	fi
 fi
 
@@ -543,6 +560,7 @@ $disk_rows
       </tbody>
     </table>
   </div>
+  $docker_table
   <details class="card">
     <summary>Hardware inventory <span class="mut">(USB tree &middot; PCI devices &middot; memory modules)</span></summary>
     <pre class="log">== USB (lsusb -tv) ==

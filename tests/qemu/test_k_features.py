@@ -152,9 +152,17 @@ def test_ttyd_browser_terminal(dev_guest):
     on = g.run("nas ttyd on", timeout=180)
     assert on.rc == 0, f"nas ttyd on rc={on.rc}:\n{on.out}"
     assert "22222" in on.out
-    # the enable must say the quiet parts out loud: cleartext + wheel-user
-    assert "cleartext" in on.out and "wheel" in on.out, on.out
+    # the enable must say the quiet part out loud: cleartext on the wire
+    assert "cleartext" in on.out, on.out
     assert "NOT saved" in on.out, "missing commit-honesty warning"
+    # root login: 'on' whitelists ptys in securetty exactly once (idempotent)
+    assert "securetty" in on.out, on.out
+    g.run("grep -qx pts/0 /etc/securetty && grep -qx pts/15 /etc/securetty",
+          check=True)
+    n_before = g.run("grep -c '^pts/' /etc/securetty", check=True).out.strip()
+    g.run("nas ttyd on", timeout=180, check=True)   # second run must not re-append
+    n_after = g.run("grep -c '^pts/' /etc/securetty", check=True).out.strip()
+    assert n_before == n_after == "16", f"{n_before} -> {n_after}"
 
     g.poll_until("curl -fsS http://127.0.0.1:22222/ | grep -qi ttyd",
                  timeout=90, desc="ttyd serving")
@@ -216,6 +224,16 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
     if r.rc != 0:
         pytest.skip(f"apk add busybox-extras failed (offline?): {r.out[-300:]}")
 
+    # a real container so the docker table has a row to render (registry-free:
+    # import the guest's own busybox, as category G does)
+    g.poll_until("docker info >/dev/null 2>&1", timeout=300, desc="docker api up")
+    g.run("mkdir -p /tmp/rootfs/bin && cp /bin/busybox /tmp/rootfs/bin/ && "
+          "ln -sf busybox /tmp/rootfs/bin/sh && "
+          "tar -c -C /tmp/rootfs . | docker import - mnq-busybox",
+          timeout=120, check=True)
+    g.run("docker run -d --name dashprobe mnq-busybox /bin/busybox "
+          "sleep 2147483", timeout=120, check=True)
+
     on = g.run("nas web on", timeout=180)
     assert on.rc == 0, f"nas web on rc={on.rc}:\n{on.out}"
     assert "8080" in on.out
@@ -231,6 +249,10 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
     for marker in ("Syslog", "Your added packages", "Machine", "<details",
                    "Hardware inventory", "lsusb -tv", "lspci"):
         assert marker in page, f"{marker!r} missing from dashboard"
+    # the docker containers table: our probe container with its state pill,
+    # image and created columns
+    for marker in ("dashprobe", "mnq-busybox", "running", "Container"):
+        assert marker in page, f"docker table marker {marker!r} missing"
 
     sj = g.run("curl -fsS http://127.0.0.1:8080/status.json", check=True)
     data = json.loads(sj.out)
