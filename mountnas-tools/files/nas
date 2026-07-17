@@ -164,7 +164,7 @@ ${C_HD}Everyday${C_NO}
   ${C_B}changes${C_NO}   List unsaved changes; --diff shows content  (alias: changed)
   ${C_B}commit${C_NO}    Save changes to the USB; label: -m "note"     (alias: save)
   ${C_B}logs${C_NO}      View the system log  [-n N | -f | --persist on|off|status]
-  ${C_B}web${C_NO}       Read-only dashboard + user guide      [on [port]|off|status]
+  ${C_B}web${C_NO} / ${C_B}ttyd${C_NO} Dashboard + guide / browser terminal  [on [port]|off|status]
 
 ${C_HD}Recover${C_NO}
   ${C_B}rollback${C_NO}  Restore a previous committed config          [--list | <n>]
@@ -954,6 +954,67 @@ cmd_web() {
 		fi
 		;;
 	*) usage "nas web [on [port] | off | status]"; return 1 ;;
+	esac
+}
+
+# nas ttyd — the browser terminal (mountnas-ttyd service: ttyd serving a
+# REAL /bin/login prompt, never a bare shell). OFF by default; same opt-in +
+# persistence-honesty pattern as nas web. Root cannot log in here
+# (/etc/securetty has no pts entries) — that is deliberate; use a wheel user.
+_ttyd_unsaved() {
+	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-ttyd|conf\.d/mountnas-ttyd)'
+}
+cmd_ttyd() {
+	local tport
+	tport=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-ttyd 2>/dev/null | head -n1)
+	: "${tport:=22222}"
+	case "${1:-status}" in
+	on)
+		if [ -n "${2:-}" ]; then
+			case "$2" in *[!0-9]*) usage "nas ttyd [on [port] | off | status]"; return 1 ;; esac
+			tport=$2
+			printf 'PORT=%s\n' "$tport" > /etc/conf.d/mountnas-ttyd
+		fi
+		command -v ttyd >/dev/null 2>&1 \
+			|| { bad "ttyd missing — run: apk add ttyd && nas commit"; return 1; }
+		rc-update -q add mountnas-ttyd default 2>/dev/null || true
+		rc-service mountnas-ttyd restart >/dev/null 2>&1 \
+			|| { bad "mountnas-ttyd failed to start — check: rc-service mountnas-ttyd status"; return 1; }
+		_ops_log ttyd "enabled (port $tport)"
+		ok "browser terminal ON -> http://$(hostname).local:$tport/  (login prompt)"
+		warn "plain HTTP on your LAN: the password transits in cleartext (trusted-LAN posture)"
+		hint "root logins are blocked on web terminals (/etc/securetty) — log in as a"
+		hint "wheel user: adduser <name> wheel && nas commit"
+		if _ttyd_unsaved; then
+			warn "setting NOT saved — the terminal is OFF again after a reboot unless you run: nas commit"
+		fi
+		;;
+	off)
+		rc-service mountnas-ttyd stop >/dev/null 2>&1 || true
+		rc-update -q del mountnas-ttyd default 2>/dev/null || true
+		_ops_log ttyd "disabled"
+		ok "browser terminal OFF"
+		if _ttyd_unsaved; then
+			warn "setting NOT saved — the terminal comes BACK at reboot unless you run: nas commit"
+		fi
+		;;
+	status)
+		if rc-service mountnas-ttyd status >/dev/null 2>&1; then
+			ok "browser terminal running -> http://$(hostname).local:$tport/"
+			if _ttyd_unsaved; then
+				warn "running now but NOT saved — off after a reboot unless: nas commit"
+			fi
+			hint "disable: nas ttyd off"
+		elif rc-update show default 2>/dev/null | grep -q mountnas-ttyd; then
+			warn "browser terminal enabled but not running — try: rc-service mountnas-ttyd start"
+		else
+			if _ttyd_unsaved; then
+				warn "off now but NOT saved — comes back at reboot unless: nas commit"
+			fi
+			hint "browser terminal off (enable: nas ttyd on [port] — default port 22222)"
+		fi
+		;;
+	*) usage "nas ttyd [on [port] | off | status]"; return 1 ;;
 	esac
 }
 
@@ -1972,6 +2033,19 @@ nas web [on [port] | off | status]
   syslog tail), /guide.html (user guide), /status.json (machine-readable).
 EOF
 ;;
+	ttyd) cat <<EOF
+nas ttyd [on [port] | off | status]
+  Browser-based terminal (ttyd) serving a REAL login prompt — never a
+  bare shell. Off by default; plain HTTP on your trusted LAN (the
+  password transits in cleartext, same trust model as Samba).
+  on [port]   enable (default port 22222) and start it now
+  off         stop + disable
+  status      is it enabled/running/saved, and on which URL
+  Root logins are blocked on web terminals (/etc/securetty has no pts
+  entries) — log in as a wheel user: adduser <name> wheel.
+  IMPORTANT: on/off lives in RAM until 'nas commit' (the command warns).
+EOF
+;;
 	history) cat <<EOF
 nas history [-n N | --all]
   The append-only operations log: every setup, commit (with its note),
@@ -2039,6 +2113,7 @@ case "${1:-help}" in
 	rollback) shift; cmd_rollback "$@" ;;
 	logs) shift; cmd_logs "$@" ;;
 	web) shift; cmd_web "$@" ;;
+	ttyd) shift; cmd_ttyd "$@" ;;
 	history) shift; cmd_history "$@" ;;
 	notify) shift; cmd_notify "$@" ;;
 	backup) shift; cmd_backup "$@" ;;

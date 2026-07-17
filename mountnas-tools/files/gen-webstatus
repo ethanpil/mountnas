@@ -236,6 +236,17 @@ if [ -z "$checks" ]; then
 	else checks='<li class="mut">no check data</li>'; fi
 fi
 
+# browser terminal (mountnas-ttyd): when it is running, the footer links to
+# it by the box's first IP — the one address guaranteed reachable from any
+# client that can see this page (mDNS names do not resolve everywhere)
+ttyd_link=""
+if rc-service mountnas-ttyd status >/dev/null 2>&1; then
+	ttyd_port=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-ttyd 2>/dev/null | head -n1)
+	: "${ttyd_port:=22222}"
+	ttyd_ip=$(printf '%s' "$sj" | jq -r '.ips[0] // empty')
+	[ -n "$ttyd_ip" ] && ttyd_link="<a href=\"http://$ttyd_ip:$ttyd_port/\">Web terminal</a>"
+fi
+
 recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null | esc \
 	| awk -F'\t' '{ printf "<li><span class=\"num mut\">%s</span> <b>%s</b> <span class=\"mut\">%s</span></li>\n", substr($1,1,16), $2, $4 }')
 [ -n "$recent_ops" ] || recent_ops='<li class="mut">none yet — commits, backups and upgrades land here</li>'
@@ -532,6 +543,7 @@ $disk_rows
 </main>
 <footer>
   <a href="guide.html">User guide</a>
+  $ttyd_link
   <a href="status.json">status.json</a>
   <span>Read-only &mdash; manage over SSH with the <span class="mono">nas</span> CLI</span>
 </footer>
