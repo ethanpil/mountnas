@@ -1613,6 +1613,23 @@ _mount_boot_rw() {
 	mount -o remount,rw "$BOOTMNT" 2>/dev/null || true
 	[ -f "$BOOTMNT/.nas-boot" ] || { bad "BOOT partition missing .nas-boot marker — refusing"; return 1; }
 }
+# Undo what cmd_upgrade did to the RUNNING system on its way out: re-establish
+# the offline-apk bind it released (an aborted upgrade otherwise silently
+# breaks offline 'apk add' until the next reboot) and put BOOT back read-only
+# (the supervisor mounts it ro; _mount_boot_rw flipped it). The rebind is
+# skipped once the phase-2 renames began (upg_committed=1): at that point the
+# on-USB repo is the NEW release's, and binding it under the still-running OLD
+# system could mix package generations — after a successful upgrade the reboot
+# re-binds it, after a failed one the box needs a restore anyway. Idempotent.
+_boot_restore() {
+	if [ "${upg_committed:-0}" = 0 ] && [ -d "$BOOTMNT/apks" ] \
+		&& ! mountpoint -q "$STATE/apks" 2>/dev/null; then
+		mkdir -p "$STATE/apks"
+		mount --bind "$BOOTMNT/apks" "$STATE/apks" 2>/dev/null || true
+	fi
+	mount -o remount,ro "$BOOTMNT" 2>/dev/null || true
+	return 0
+}
 
 # Staged, crash-safe in-place replace — two phases:
 #   _stage_*  : copy the payload to <target>.new (slow; the system on the USB
@@ -1793,13 +1810,16 @@ EOF
 	# without a trap an interrupted upgrade leaks them (temp space usually lives
 	# on the data disk). Idempotent: every step is guarded, so running it again
 	# on the EXIT trap after an explicit call is harmless.
-	raw=""; m=""; loop=""
+	raw=""; m=""; loop=""; upg_committed=0
 	_cleanup() {
 		[ -n "$m" ] && umount "$m" 2>/dev/null
 		[ -n "$loop" ] && losetup -d "$loop" 2>/dev/null
 		[ -n "$raw" ] && rm -f "$raw"
 		[ -n "$dlf" ] && rm -f "$dlf"
 		[ -n "$m" ] && rmdir "$m" 2>/dev/null
+		# every exit (failure return via the EXIT trap, signal, success) also
+		# restores the running system's state: apks bind + BOOT read-only
+		_boot_restore
 		return 0
 	}
 	# HUP included: an upgrade started over SSH must clean up its multi-GB temp
@@ -1894,7 +1914,7 @@ EOF
 	# tree) and does its own headroom pre-check — fits comfortably on 4 GB
 	# boxes, unlike Alpine's copy-modloop (see the function comment).
 	step "Freeing the live modloop (copying kernel modules to RAM) ..."
-	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks
+	umount "$STATE/apks" 2>/dev/null || true   # release the mountnas bind on $BOOTMNT/apks (re-bound by _boot_restore on abort)
 	_free_modloop || { bad "could not free the modloop — aborting (nothing on the USB was changed yet)"; _cleanup; return 1; }
 
 	# ---- overwrite boot files in place, crash-safe (stage all, then rename) ----
@@ -1936,11 +1956,12 @@ EOF
 	# push all staged data to the stick so the rename window carries no
 	# pending writes, then commit with back-to-back renames (phase 2)
 	sync
+	upg_committed=1   # from here the on-USB repo may be the new release's — no apks rebind (see _boot_restore)
 	for f in $sfiles; do _commit_file "$BOOTMNT/$f" || ec=1; done
 	for d in $sdirs; do _commit_dir "$BOOTMNT/$d" || ec=1; done
 	sync
-	_cleanup; trap - EXIT HUP INT TERM
 	if [ "$ec" != 0 ]; then
+		_cleanup; trap - EXIT HUP INT TERM
 		bad "some files failed to write — RESTORE YOUR BACKUP before rebooting."
 		_ops_log upgrade "FAILED after write — restore backup (was $RELEASE)"
 		# the one alert you most want pushed to your phone (best-effort)
@@ -1983,6 +2004,11 @@ EOF
 
 	# ---- regenerate the (single-slot) bootloader config + persist config ----
 	"$WBCFG" "$BOOTMNT"; sync
+	# BOOT writes are done: release the temp resources and put BOOT back ro.
+	# _cleanup ends in _boot_restore (remount ro), so it must run AFTER
+	# write-bootcfg — the last step that writes to $BOOTMNT — not right after
+	# the renames as it used to.
+	_cleanup; trap - EXIT HUP INT TERM
 	cmd_commit
 
 	echo
