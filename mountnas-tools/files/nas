@@ -897,7 +897,15 @@ cmd_logs() {
 		;;
 	-f|--follow)
 		t=$(_syslog_target); : "${t:=/var/log/messages}"
-		exec tail -f "$t"
+		# -F (follow by NAME, not fd): persistent logging rotates the file
+		# (-s/-b in SYSLOGD_OPTS: messages -> messages.0, new file created),
+		# and a plain -f keeps reading the rotated-away fd — the live view
+		# silently freezes, exactly during the long watches it exists for.
+		# -F also waits for a target that does not exist yet (persistence
+		# configured but the data disk not mounted); say so instead of
+		# leaving a silent blank screen.
+		[ -f "$t" ] || warn "no log file at $t yet — waiting for it to appear"
+		exec tail -F "$t"
 		;;
 	''|-n)
 		nn=100
