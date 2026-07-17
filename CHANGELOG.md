@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [beta-6] — 2026-07-16
 
 ### Testing
 - **Upgrade-safety coverage for user drift** (`tests/qemu`, now 81 tests). Two new category-D tests where the harness *creates* realistic drift before upgrading, so even a fresh image has something to validate: `test_user_changes_survive_upgrade` edits `smb.conf`/`snapraid.conf`/`sshd_config`/`/etc/nut/ups.conf`/`fstab` + a custom `/etc/apk/repositories` line, sets a root password, adds a samba user and a package, then self-upgrades and asserts every edit survived (incl. the CDN re-pin keeping the custom repo line, and the overlay config winning over the apk-shipped `nut` default); `test_docker_survives_upgrade` runs a `--restart unless-stopped` container with data on `/mnt/nasdata` and a customized `daemon.json`, upgrades, and asserts the container, its image, its data, and the config all came through — confirming `nas upgrade` cannot harm installed Docker.
