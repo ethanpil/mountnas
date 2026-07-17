@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- **`nas web on <port>` no longer clobbers `/etc/conf.d/mountnas-web`.** Setting a port rewrote the entire file, wiping a hand-set `WEB_REFRESH_SEC=` (documented in that same file). Only the `PORT=` line is rewritten now, every other line preserved — the same never-clobber contract `nas logs --persist` honors. `nas ttyd on <port>` uses the same helper.
 - **`nas backup` rejects unrecognized arguments instead of silently ignoring them.** `nas backup /mnt/usb/backup.img.gz` (forgetting `--to`) used to discard the path entirely and image to the default `/mnt/nasdata/backups` — a backup that isn't where you think it is, discovered at restore time. Unknown arguments, extra arguments, and a missing `--to` value are now usage errors, like every other subcommand.
 
 ### Changed

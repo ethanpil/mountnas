@@ -917,6 +917,20 @@ cmd_logs() {
 _web_unsaved() {
 	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-web|conf\.d/mountnas-web)'
 }
+# Rewrite ONLY the PORT= line of a conf.d file, preserving every other line —
+# mountnas-web documents WEB_REFRESH_SEC= in the same file, and this appliance
+# is built on hand-edited config, so setting a port must never clobber a
+# user's additions (same never-clobber contract as _syslog_set_persist).
+_conf_set_port() {   # $1=conf.d file  $2=port
+	f=$1
+	[ -f "$f" ] || : > "$f"
+	tmpf=$(mktemp) || return 1
+	NP="$2" awk 'BEGIN{done=0}
+		/^PORT=/{ printf "PORT=%s\n", ENVIRON["NP"]; done=1; next }
+		{print}
+		END{ if(!done) printf "PORT=%s\n", ENVIRON["NP"] }' "$f" > "$tmpf" || { rm -f "$tmpf"; return 1; }
+	cat "$tmpf" > "$f" && rm -f "$tmpf"
+}
 cmd_web() {
 	local wport wp_i
 	wport=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-web 2>/dev/null | head -n1)
@@ -927,7 +941,8 @@ cmd_web() {
 		if [ -n "${2:-}" ]; then
 			case "$2" in *[!0-9]*) usage "nas web [on [port] | off | status]"; return 1 ;; esac
 			wport=$2
-			printf 'PORT=%s\n' "$wport" > /etc/conf.d/mountnas-web
+			_conf_set_port /etc/conf.d/mountnas-web "$wport" \
+				|| { bad "could not update /etc/conf.d/mountnas-web"; return 1; }
 		fi
 		command -v httpd >/dev/null 2>&1 \
 			|| { bad "busybox httpd missing — run: apk add busybox-extras && nas commit"; return 1; }
@@ -1001,7 +1016,8 @@ cmd_ttyd() {
 		if [ -n "${2:-}" ]; then
 			case "$2" in *[!0-9]*) usage "nas ttyd [on [port] | off | status]"; return 1 ;; esac
 			tport=$2
-			printf 'PORT=%s\n' "$tport" > /etc/conf.d/mountnas-ttyd
+			_conf_set_port /etc/conf.d/mountnas-ttyd "$tport" \
+				|| { bad "could not update /etc/conf.d/mountnas-ttyd"; return 1; }
 		fi
 		command -v ttyd >/dev/null 2>&1 \
 			|| { bad "ttyd missing — run: apk add ttyd && nas commit"; return 1; }
