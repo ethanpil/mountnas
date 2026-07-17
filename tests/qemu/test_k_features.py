@@ -215,8 +215,14 @@ def test_supervisor_settles_rpcbind_before_nfs(dev_guest):
     g = dev_guest
     g.run("grep -q 'after net rpcbind' /etc/init.d/mountnas", check=True)
     g.wait_ready()
-    assert "nfs" in g.run("cat /etc/conf.d/mountnas 2>/dev/null; echo",
-                          check=False).out or True  # default set includes nfs
+    # premise: nfs must be a managed data service or this test exercises
+    # nothing. Read the conf.d DATA_SERVICES line DIRECTLY — never source it
+    # (a missing conf.d aborts busybox ash even behind `|| :`). No line / no
+    # file => the default set (docker samba nfs) applies.
+    ds_line = g.run("sed -n 's/^DATA_SERVICES=//p' /etc/conf.d/mountnas "
+                    "2>/dev/null | tr -d '\"' | tail -n1", check=False).out.strip()
+    assert (not ds_line) or ("nfs" in ds_line.split()), \
+        f"conf.d DATA_SERVICES excludes nfs ({ds_line!r}) — premise void"
     # recreate the prerequisite gap: both down, then let the supervisor bring
     # the data plane back — it must settle rpcbind first and get nfs up
     g.run("rc-service nfs stop; rc-service rpcbind stop", timeout=120)

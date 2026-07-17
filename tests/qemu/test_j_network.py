@@ -37,7 +37,11 @@ def test_mdns_daemon_advertises_hostname(golden_guest):
     # real gap: that <host>.local resolves end-to-end, which was only ever
     # skipped before avahi-tools shipped.
     r = g.run("avahi-resolve-host-name -4 \"$(hostname).local\"", timeout=60)
-    assert r.rc == 0, f"mDNS resolution failed: rc={r.rc} {r.out}"
+    # rc==0 alone is not enough: avahi-resolve can exit 0 with EMPTY output
+    # (observed when the daemon answers with no address) — guard it so an
+    # empty result is a legible failure, not an IndexError on split()[-1]
+    assert r.rc == 0 and r.out.split(), \
+        f"mDNS resolution failed or empty: rc={r.rc} {r.out!r}"
     resolved = r.out.split()[-1].strip()
     box_ips = g.run("ip -4 -o addr show | awk '{print $4}' | cut -d/ -f1",
                     check=True).out.split()

@@ -254,12 +254,13 @@ def test_backup_restore_drill(golden_guest, guest_factory, golden, tmp_path):
     g2.screenshot("restored-from-backup")
 
 
-def test_released_image_ships_expected_files(golden_guest):
+def test_released_image_ships_expected_files(wired_shared_guest):
     """Packaging integrity, against the PURE released image (no dev pushes —
     the dev_guest pattern would mask an APKBUILD that forgot a file). Every
     mountnas-tools artifact and every baked-in tool the docs promise must
-    actually exist in the booted image."""
-    g = golden_guest
+    actually exist in the booted image. Read-only, so it reuses the shared
+    CLI guest rather than boot its own."""
+    g = wired_shared_guest
     manifest = [
         "/usr/sbin/nas",
         "/etc/init.d/mountnas", "/etc/init.d/mountnas-mkdirs",
