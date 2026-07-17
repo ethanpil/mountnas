@@ -41,6 +41,9 @@ openssh-sftp-server
 # mosh: roaming, low-latency remote shell over UDP (60000-61000). No daemon —
 # mosh-server is spawned per-session over SSH, so nothing to enable.
 mosh
+# ttyd: browser-based terminal (the 'nas ttyd' service, OFF by default) —
+# serves a real /bin/login prompt over HTTP on the trusted LAN, port 22222
+ttyd
 
 # --- mesh VPN (services OFF by default) ---
 tailscale
@@ -93,6 +96,9 @@ gptfdisk
 sgdisk
 cfdisk
 sfdisk
+# cmkfs: guided TUI for mkfs (built locally from ethanpil/cmkfs — always the
+# latest upstream release, repackaged under our signing key; see /cmkfs)
+cmkfs
 
 # --- disk health / recovery / benchmarking ---
 smartmontools
@@ -123,6 +129,8 @@ xz
 # --- hardware identification ---
 pciutils
 usbutils
+# cyme: modern lsusb replacement — readable USB tree with power/speed detail
+cyme
 dmidecode
 lshw
 lm-sensors
@@ -137,8 +145,13 @@ bind-tools
 
 # --- monitoring ---
 btop
+# bottom (btm): btop-alternative system monitor with per-process I/O
+bottom
 iotop
 ncdu
+# duf: a better df — per-mount usage in a readable table (built locally from
+# muesli/duf, repackaged under our signing key; NOT in Alpine v3.24)
+duf
 sysstat
 fastfetch
 

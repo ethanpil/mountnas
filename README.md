@@ -362,6 +362,7 @@ __Disk Partitioning__
 * gptfdisk
 * cfdisk
 * sfdisk
+* cmkfs (guided TUI for mkfs, from [ethanpil/cmkfs](https://github.com/ethanpil/cmkfs) — every MountNAS release ships the latest cmkfs release)
 
 __Parity / Volume Management__
 
@@ -405,6 +406,7 @@ __Networking / Transfer__
 * openssh-client
 * openssh-sftp-server
 * mosh (roaming, low-latency remote shell over UDP; spawned per-session over SSH, no daemon)
+* ttyd (browser-based terminal serving a real login prompt — off by default; `nas ttyd on`, port 22222)
 
 __Overlay / Mesh VPN (services OFF by default)__
 
@@ -443,6 +445,7 @@ __Hardware Identification__
 
 * pciutils
 * usbutils
+* cyme (modern `lsusb` replacement — readable USB tree with power/speed detail)
 * dmidecode
 * lshw
 * lm-sensors
@@ -459,8 +462,10 @@ __Network Diagnostics__
 __System Monitoring__
 
 * btop
+* bottom (`btm` — btop-alternative system monitor with per-process I/O)
 * iotop
 * ncdu
+* duf (a better `df`: per-mount usage in a readable table — from [muesli/duf](https://github.com/muesli/duf), not in Alpine v3.24)
 * sysstat
 * fastfetch
 

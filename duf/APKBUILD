@@ -1,0 +1,32 @@
+# Maintainer: MountNAS <ethan@piliavin.com>
+# duf (github.com/muesli/duf) — a better df: disk usage/free per mount in a
+# readable table. It is NOT in Alpine v3.24 (only the unrelated dufs file
+# server), and upstream publishes goreleaser-built apks that mkimage's build
+# root does not trust — so the payload is repackaged under OUR build key
+# (the zerotier-one pattern). PINNED: bump pkgver + `abuild checksum` to
+# update (upstream releases rarely).
+pkgname=duf
+pkgver=0.9.1
+pkgrel=0
+pkgdesc="Disk Usage/Free utility - a better df"
+url="https://github.com/muesli/duf"
+arch="x86_64"
+license="MIT"
+options="!check"
+source="duf-$pkgver-amd64.apk::https://github.com/muesli/duf/releases/download/v$pkgver/duf_${pkgver}_linux_amd64.apk"
+builddir="$srcdir"
+
+build() { :; }
+
+package() {
+	# The upstream apk is itself a tarball; unpack its payload (usr/bin/duf)
+	# and install it, skipping the apk metadata. Static Go binary.
+	mkdir -p "$pkgdir"
+	tar -xzf "$srcdir/duf-$pkgver-amd64.apk" -C "$srcdir" 2>/dev/null || true
+	cp -a "$srcdir/usr" "$pkgdir/usr"
+	rm -rf "$pkgdir/usr/share/man"
+}
+
+sha512sums="
+b7115f5ca9717daac2420c56640cfc222a3f817c2f6e2e0da2278ed0a2a31b5c82c5a0cc25ba5fc15ef0d292791788895b47a75008dc3770e8719e488b09358a  duf-0.9.1-amd64.apk
+"

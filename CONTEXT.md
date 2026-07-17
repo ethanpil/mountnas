@@ -11,8 +11,8 @@ that will silently regress if "cleaned up" without understanding it.
 
 ## 1. Status at a glance (as of beta-4 + unreleased features, 2026-07-13)
 
-- **Build: GREEN, releases through beta-4 published.** The workflow assembles
-  everything end-to-end: 4 local apks, `mkimage` ISO, single-slot 3.5 GiB
+- **Build: GREEN, releases through beta-5 published.** The workflow assembles
+  everything end-to-end: 6 local apks, `mkimage` ISO, single-slot 3.5 GiB
   `.img.gz` (~1 GB compressed). Signing key is a fixed secret since alpha-7
   (§6) — the published `.rsa.pub` is a stable trust anchor now.
 - **CI-verified per release, all blocking:** boot-to-login under SeaBIOS *and*
@@ -68,16 +68,21 @@ mountnas/
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
+├── cmkfs/           APKBUILD          # LOCAL apk: repackaged; CI resolves the LATEST release
+├── duf/             APKBUILD          # LOCAL apk: repackaged (not in v3.24), pinned
 ├── tests/qemu/                       # self-hosted QEMU suite (78 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
 ```
 
-There are **four locally-built apks**, all signed by the per-build key and served
+There are **six locally-built apks**, all signed by the per-build key and served
 from the on-media local repo: `mountnas-tools`, `snapraid`, `mergerfs`,
-`zerotier-one`. They are excluded from the upstream preflight resolve and are why
-several CI steps exist.
+`zerotier-one`, `cmkfs`, `duf`. They are excluded from the upstream preflight
+resolve and are why several CI steps exist. `cmkfs` is special: by maintainer
+decision it always ships the LATEST upstream release — build.yml resolves the
+tag from the GitHub API, seds pkgver, and regenerates its checksums (the only
+package whose committed sha512sums are a fallback, not a pin).
 
 ---
 
@@ -224,8 +229,9 @@ latest-stable. Corrected:
   (libstdc++ ABI). Upstream ships **fully-static** binaries → repackaged into a
   local apk (`mergerfs/APKBUILD`).
 
-The CI **preflight** (`apk add --simulate`) excludes all four local packages
-(`mountnas-tools|snapraid|mergerfs|zerotier-one`) since they aren't upstream.
+The CI **preflight** (`apk add --simulate`) excludes all six local packages
+(`mountnas-tools|snapraid|mergerfs|zerotier-one|cmkfs|duf`) since they aren't
+upstream.
 
 Package additions after the plan (alpha-3…: zsh/mosh, curated firmware set,
 msmtp/mailx, restic, testdisk, f3, wireguard-tools, zstd/lz4/xz, xxhash,
@@ -427,7 +433,7 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 
 ## 8. What's verified vs. open
 
-**Verified (all in CI, per release):** full build assembles; all 4 local apks
+**Verified (all in CI, per release):** full build assembles; all 6 local apks
 build & sign; boot-to-login under SeaBIOS and OVMF; the first-install story
 end-to-end (wizard, storage registration, docker/samba gating, commit, reboot
 persistence — supervisor smoke test); a real in-place upgrade from the previous
