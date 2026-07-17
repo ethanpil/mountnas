@@ -429,10 +429,14 @@ cmd_status() {
 	fi
 	# data services must NOT be in a runlevel — mountnas owns them. A user who runs
 	# 'rc-update add docker default' would start Docker before the disk mounts.
+	# Only the services the supervisor actually manages ($ds_on) are checked: a
+	# service removed from DATA_SERVICES is no longer mountnas-owned, and running
+	# it from a runlevel is the user's only remaining mechanism — that must not
+	# read as a FAIL forever.
 	# One rc-update dump; clean services share one ok line, offenders stay loud.
 	rlv=$(rc-update show 2>/dev/null)
 	rl_ok=""
-	for s in docker samba nfs; do
+	for s in $ds_on; do
 		if printf '%s\n' "$rlv" | grep -qE "^\s*$s\b"; then
 			bad "$s is in a runlevel — mountnas must own it. Remove: rc-update del $s default"
 		else rl_ok="$rl_ok${rl_ok:+/}$s"; fi
@@ -805,7 +809,13 @@ cmd_restart() {
 		# it ends up running. For each, wait (bounded ~5s) for it to finish coming
 		# up, THEN stop it. A service that never comes up (wasn't restored) just
 		# waits out the loop and the stop is a harmless no-op.
-		for s in docker samba nfs; do
+		# Hold only what the supervisor manages: a service removed from
+		# DATA_SERVICES (the supported disable/opt-out) is the user's to run —
+		# stopping it here would kill a service mountnas does not own. Same
+		# override-sourcing (incl. the empty-on-error fallback) as cmd_status.
+		rs_ds=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; echo "${DATA_SERVICES:-docker samba nfs}")
+		[ -n "$rs_ds" ] || rs_ds="docker samba nfs"
+		for s in $rs_ds; do
 			i=0
 			while ! rc-service "$s" status >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
 				sleep 0.25; i=$((i+1))
