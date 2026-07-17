@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **NFS now starts reliably at boot.** When the `mountnas` supervisor won the boot ordering, its `rc-service nfs start` collided with rpcbind's own default-runlevel start (rpcbind still mid-start) — nfs failed ("cannot start nfs as rpcbind would not start") and **stayed down until a manual `nas restart`**. Caught by the beta-6 validation run's own dashboard render (nfs a grey "off" pill on an otherwise healthy box — the suite's docker/samba-biased assertions had never looked). The supervisor now **settles rpcbind (bounded ~10s) before starting nfs** — it already owns data-service ordering, so this is the right altitude — plus `after rpcbind` in its `depend()` for the boot sequence. Regression-guarded in category K.
+
+### Added
+- **`avahi-tools` baked in** — `avahi-resolve`/`avahi-browse` for verifying and debugging `.local` discovery. Also un-skips the suite's mDNS resolution test, which had silently skipped in every full run (only the daemon's existence was ever checked — now `<host>.local` resolution is verified end-to-end).
+
+### Testing
+- **The backup restore drill, finally automated** (`tests/qemu`, now 85 tests): back up a configured box, pull the image out, write it to a fresh virtual stick, **boot it**, and prove the OS + saved config came back — until now the only rollback net for upgrades was gzip-verified but had never been booted.
+- **Packaging-integrity test**: asserts the pure released image (no dev pushes) actually ships the full mountnas-tools manifest and every baked-in tool the docs promise — closing the blind spot where the dev_guest test pattern could mask an APKBUILD that forgot a file.
+
 ## [beta-6] — 2026-07-16
 
 ### Testing

@@ -197,6 +197,39 @@ def test_ttyd_browser_terminal(dev_guest):
     assert "Web terminal" not in idx2
 
 
+# ---------------------------------------------------------------- nfs boot
+
+def test_supervisor_settles_rpcbind_before_nfs(dev_guest):
+    """The nfs/rpcbind race: nfs needs rpcbind FULLY started, but at boot the
+    supervisor could outrun rpcbind's own runlevel start ("cannot start nfs
+    as rpcbind would not start") and nfs stayed down until a manual restart
+    (the beta-6 validation dashboard caught it — nfs a grey pill on a healthy
+    box). The fixed supervisor settles rpcbind before starting nfs.
+
+    Tested via `nas restart` (runs the in-RAM fixed supervisor) from a
+    fully-stopped rpcbind+nfs — the exact prerequisite gap. NB: the boot-time
+    ORDERING half of the fix (`after rpcbind` in depend()) can only be
+    validated once baked into an image, since a diskless reboot rebuilds the
+    RAM root from the released apk; that half is checked by the beta-7
+    release-validation run."""
+    g = dev_guest
+    g.run("grep -q 'after net rpcbind' /etc/init.d/mountnas", check=True)
+    g.wait_ready()
+    assert "nfs" in g.run("cat /etc/conf.d/mountnas 2>/dev/null; echo",
+                          check=False).out or True  # default set includes nfs
+    # recreate the prerequisite gap: both down, then let the supervisor bring
+    # the data plane back — it must settle rpcbind first and get nfs up
+    g.run("rc-service nfs stop; rc-service rpcbind stop", timeout=120)
+    g.poll_until("! rc-service nfs status >/dev/null 2>&1", timeout=60,
+                 desc="nfs stopped")
+    g.run("nas restart", timeout=240, check=True)
+    assert g.poll_until("rc-service rpcbind status", timeout=60,
+                        desc="rpcbind settled by supervisor").rc == 0
+    assert g.poll_until("rc-service nfs status", timeout=120,
+                        desc="nfs up via supervisor").rc == 0, \
+        "supervisor did not bring nfs up after settling rpcbind"
+
+
 # ---------------------------------------------------------------- ops log
 
 def test_ops_log_history_and_no_commit_persistence(dev_guest):

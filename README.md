@@ -419,6 +419,7 @@ __Overlay / Mesh VPN (services OFF by default)__
 __Name Resolution / Discovery__
 
 * avahi
+* avahi-tools (`avahi-resolve`/`avahi-browse` — verify and debug `.local` discovery)
 * dbus
 
 __File Sharing Servers__

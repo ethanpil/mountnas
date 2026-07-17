@@ -14,7 +14,13 @@ LOG=/var/log/mountnas.log
 # warn about services you deliberately disabled.
 DATA_SERVICES="${DATA_SERVICES:-docker samba nfs}"
 
-depend() { need localmount; after net; }
+# after rpcbind: nfs's dependency start collides with rpcbind's own
+# default-runlevel start when this service wins the boot ordering — nfs then
+# fails ("cannot start nfs as rpcbind would not start") and STAYS down until
+# a 'nas restart'. Observed routinely on QEMU validation guests (the beta-6
+# dashboard render showed nfs off on an otherwise healthy box). Ordering
+# after rpcbind removes the collision; harmless when rpcbind is disabled.
+depend() { need localmount; after net rpcbind; }
 
 log() { printf '%s mountnas: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
 # fstab fstype for a mountpoint; "" if not declared
@@ -208,8 +214,30 @@ start() {
 		fi
 		echo ok > "$STATE/data"; log "$DATA mounted; starting data services"
 		einfo "$DATA mounted — starting data services."
+		# nfs needs rpcbind FULLY started. At boot the supervisor can outrun
+		# rpcbind's own default-runlevel start (rpcbind still in the 'starting'
+		# state) — OpenRC then refuses with "cannot start nfs as rpcbind would
+		# not start" and nfs stays down until a manual 'nas restart'. The
+		# supervisor owns data-service ordering, so it settles rpcbind here
+		# (bounded ~10s) rather than trust boot-time luck. Skipped when nfs is
+		# not among the services to start.
+		case " $DATA_SERVICES " in
+			*" nfs "*)
+				i=0
+				while ! rc-service rpcbind status >/dev/null 2>&1; do
+					rc-service rpcbind start >/dev/null 2>&1 || true
+					i=$((i + 1)); [ "$i" -ge 10 ] && { log "rpcbind not up after 10s — nfs start may fail"; break; }
+					sleep 1
+				done ;;
+		esac
 		for s in $DATA_SERVICES; do
-			rc-service "$s" status >/dev/null 2>&1 || rc-service "$s" start 2>>"$LOG" || log "$s failed to start"
+			rc-service "$s" status >/dev/null 2>&1 && continue
+			rc-service "$s" start 2>>"$LOG" && continue
+			# one bounded retry: a first start can transiently refuse while a
+			# dependency's own start is mid-flight
+			sleep 2
+			rc-service "$s" status >/dev/null 2>&1 || rc-service "$s" start 2>>"$LOG" \
+				|| log "$s failed to start"
 		done
 		return 0
 	fi

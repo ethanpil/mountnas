@@ -2,7 +2,7 @@
 
 This document covers the self-hosted QEMU test suite in `tests/qemu/`:
 what hardware/VM you need, how to run it on a freshly installed Alpine
-Linux system, how to read the results, and **what every one of the 79
+Linux system, how to read the results, and **what every one of the 85
 tests actually verifies**.
 
 The suite complements — it does not replace — the blocking CI smoke tests
@@ -221,7 +221,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (82 tests)
+## 4. The complete test catalog (85 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -256,7 +256,7 @@ exactly as a new user at a monitor would experience it.
 | `test_wizard_not_rerun_after_commit_reboot` | After the wizard's closing commit and a reboot, login asks for the password — the wizard does NOT run again. |
 | `test_doas_config_root_owned_and_valid` | `/etc/doas.conf` is root:root and parses — guards the genapkovl/fakeroot lesson where overlay files carried the build uid and doas refused its own config at runtime. |
 
-### C — The `nas` CLI (`test_c_cli.py`, 14 tests)
+### C — The `nas` CLI (`test_c_cli.py`, 16 tests)
 
 | Test | What it verifies |
 |---|---|
@@ -274,6 +274,8 @@ exactly as a new user at a monitor would experience it.
 | `test_rollback_across_reboot` | Two commits → `nas rollback 1` → reboot → the older config is live; the pre-rollback overlay is preserved as a snapshot (roll-forward possible). |
 | `test_logs_persist_token_surgery` | `nas logs --persist on/off` edits ONLY the `-O/-s/-b` tokens in `SYSLOGD_OPTS`; a custom user token survives both transitions (beta-1 fix for the wholesale-rewrite bug). |
 | `test_backup_produces_valid_image` **[slow]** | `nas backup` writes a gzip-valid image whose payload starts with a boot-sector magic (55aa), records last-backup (surfaced by the upgrade gate), and leaves `/cfg` read-write afterwards. |
+| `test_backup_restore_drill` **[slow]** | THE restore drill, finally automated: back up a configured box (committed probe file), pull the image to the host, write it to a fresh "stick", **boot it**, and prove the OS + hostname + saved config + release all came back. Until this test, the only rollback net for upgrades had never been booted. |
+| `test_released_image_ships_expected_files` | Packaging integrity against the PURE released image (no dev pushes — the dev_guest pattern would mask an APKBUILD that forgot a file): the full mountnas-tools manifest, the baked-in tools (`cmkfs`/`duf`/`btm`/`cyme`/`ttyd`/httpd), and (once shipped) avahi-tools. |
 
 ### D — In-place upgrade (`test_d_upgrade.py`, 13 tests, all [upgrade])
 
@@ -360,10 +362,10 @@ user networking.
 | Test | What it verifies |
 |---|---|
 | `test_banner_shows_dhcp_ip` | `/etc/issue` carries the box's DHCP address — the banner a headless user reads off the monitor to find the box. Screenshot taken. |
-| `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` resolves to the box's address. |
+| `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` **actually resolves** to an address the box holds (avahi-tools ships from beta-7; against older images the test fetches it from the CDN, and only skips when offline). Closes the never-verified resolution gap. |
 | `test_hostname_change_regenerates_banner` | `gen-issue` picks up a hostname change and rewrites the banner (the wizard and if-up hook both lean on it). |
 
-### K — Newest features (`test_k_features.py`, 7 tests)
+### K — Newest features (`test_k_features.py`, 8 tests)
 
 These exercise features that exist in the repo but not yet in a published
 image, so each runs on `dev_guest`: a golden guest with the repo's current
@@ -377,6 +379,7 @@ post-reboot assertions read raw files instead of invoking new commands.
 | `test_notify_lists_sinks_and_takes_piped_body` | `nas notify` with no args lists the configured sinks; a body piped into `nas notify "subject"` arrives intact in the delivered message. |
 | `test_data_watch_alerts_through_sinks` | The disk-loss watcher routes through the sink fan-out: with a webhook-only config (no msmtp at all), hot-unplugging the data disk still lands a DISCONNECTED alert as a JSON POST. |
 | `test_disable_data_service_via_conf` | The documented "Disabling Unused Services" recipe works: with `DATA_SERVICES="samba nfs"` in `/etc/conf.d/mountnas`, the supervisor keeps Docker off across a restart, and `nas status` stays exit-0, listing docker as *disabled* rather than warning "not running". |
+| `test_supervisor_settles_rpcbind_before_nfs` | The nfs/rpcbind race is fixed: from a fully-stopped rpcbind+nfs (the exact boot-time gap), the fixed supervisor settles rpcbind first and brings nfs up via `nas restart` — previously nfs failed at boot and stayed down until a manual restart (caught by the beta-6 validation dashboard render). The boot-*ordering* half (`after rpcbind` in `depend()`) is validated by the beta-7 release run, since a diskless reboot rebuilds the RAM root from the released apk. |
 | `test_ops_log_history_and_no_commit_persistence` | A commit lands in `nas history` with a well-formed record (UTC ts, op, actor with `@`, details), and `/cfg/mountnas-ops.log` survives a reboot **without** any commit — the direct-to-/cfg design. |
 | `test_web_dashboard_guide_and_json` **[network]** | `nas web on` serves the dashboard (hostname, services, disks, the docker containers table with a live probe container, the hardware-inventory collapsible with `lsusb -tv`/`lspci`/DIMMs), valid `/status.json`, the full `/guide.html`, and the logo; `nas web status` reports running; the enable is in the ops log; `nas web off` stops serving. Installs busybox-extras from the CDN, hence the marker. The rendered page is saved as a report artifact for visual review. |
 | `test_ttyd_browser_terminal` **[network]** | `nas ttyd on` serves the login-prompt terminal on 22222 with the cleartext + commit-honesty warnings, and whitelists ptys in `/etc/securetty` exactly once (root login; idempotency asserted on a second `on`); the dashboard render links "Web terminal" while it runs (and drops the link after `off`); the enable lands in the ops log; `nas ttyd off` stops serving. Installs ttyd from the CDN. |

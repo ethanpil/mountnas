@@ -12,6 +12,8 @@ import json
 import pytest
 
 from lib import config as C
+from lib import images
+from lib.guest import DiskSpec
 
 
 # ---------------------------------------------------------------- read-only
@@ -208,3 +210,84 @@ def test_backup_produces_valid_image(golden_guest):
     # /cfg must be back read-write after the quiescent imaging
     assert g.run("touch /cfg/.rwtest && rm /cfg/.rwtest").rc == 0, \
         "/cfg left read-only after backup"
+
+
+@pytest.mark.slow
+def test_backup_restore_drill(golden_guest, guest_factory, golden, tmp_path):
+    """THE restore drill, end-to-end: 'nas backup' is the ONLY rollback net
+    for upgrades and dead sticks, yet until now only its gzip stream was
+    verified — no restored image had ever been BOOTED. Back up a configured
+    box (with a committed probe file), pull the image to the host, write it
+    to a fresh 'stick', boot it, and prove the OS + saved config came back."""
+    g = golden_guest
+    g.run("echo RESTORE-PROBE > /etc/mountnas/restore-probe", check=True)
+    g.run("nas commit -m 'restore drill probe'", timeout=180, check=True)
+    hostname = g.run("hostname", check=True).out.strip()
+    release = g.run("cat /usr/share/mountnas/release", check=True).out.strip()
+
+    r = g.run("nas backup", timeout=1800)
+    assert r.rc == 0, f"nas backup rc={r.rc}:\n{r.out[-2000:]}"
+    img = g.run(f"ls {C.DATA_MOUNT}/backups/mountnas-backup-*.img.gz",
+                check=True).out.strip().splitlines()[0]
+    gz = tmp_path / "restore.img.gz"
+    g.pull(img, gz, timeout=900)
+
+    # the recovery procedure verbatim: write the image to a NEW stick, boot it
+    raw = tmp_path / "restored-stick.img"
+    images.sparse_gunzip(gz, raw)
+    g2 = guest_factory([DiskSpec(str(raw), fmt="raw")], name="restored",
+                       ssh_key=golden.ssh_key, throwaway=[raw, gz])
+    g2.wait_ssh(timeout=420)
+
+    assert g2.run("hostname", check=True).out.strip() == hostname, \
+        "restored box lost its hostname"
+    probe = g2.run("cat /etc/mountnas/restore-probe", check=True)
+    assert "RESTORE-PROBE" in probe.out, \
+        "committed config did not survive the backup/restore round-trip"
+    assert g2.run("cat /usr/share/mountnas/release",
+                  check=True).out.strip() == release, \
+        "restored box runs a different release"
+    # no data disk attached: status may warn/fail on the missing disk, but
+    # the box itself must be coherent (never rc 2 = checks unavailable)
+    st = g2.run("nas status", timeout=180)
+    assert st.rc in (0, 1), f"restored box incoherent: rc={st.rc}\n{st.out}"
+    g2.screenshot("restored-from-backup")
+
+
+def test_released_image_ships_expected_files(golden_guest):
+    """Packaging integrity, against the PURE released image (no dev pushes —
+    the dev_guest pattern would mask an APKBUILD that forgot a file). Every
+    mountnas-tools artifact and every baked-in tool the docs promise must
+    actually exist in the booted image."""
+    g = golden_guest
+    manifest = [
+        "/usr/sbin/nas",
+        "/etc/init.d/mountnas", "/etc/init.d/mountnas-mkdirs",
+        "/etc/init.d/mountnas-net", "/etc/init.d/mountnas-sshkey",
+        "/etc/init.d/mountnas-issue", "/etc/init.d/mountnas-web",
+        "/etc/init.d/mountnas-ttyd",
+        "/usr/libexec/mountnas/notify", "/usr/libexec/mountnas/smartd-notify",
+        "/usr/libexec/mountnas/health-digest",
+        "/usr/libexec/mountnas/gen-webstatus",
+        "/usr/libexec/mountnas/web-refresh",
+        "/usr/libexec/mountnas/data-watch", "/usr/libexec/mountnas/pick-nic",
+        "/usr/libexec/mountnas/gen-issue",
+        "/usr/libexec/mountnas/write-bootcfg",
+        "/usr/libexec/mountnas/release-string",
+        "/usr/share/mountnas/web/guide.html",
+        "/usr/share/mountnas/web/logo.png",
+        "/etc/profile.d/nas-completion.sh",
+        "/usr/share/zsh/site-functions/_nas",
+        "/etc/periodic/15min/mountnas-datawatch",
+    ]
+    missing = [p for p in manifest if g.run(f"test -e {p}").rc != 0]
+    assert not missing, f"mountnas-tools files missing from the image: {missing}"
+
+    tools = ["cmkfs", "duf", "btm", "cyme", "ttyd"]
+    absent = [t for t in tools if g.run(f"command -v {t}").rc != 0]
+    assert not absent, f"baked-in tools missing from the image: {absent}"
+    assert g.run("command -v httpd").rc == 0, \
+        "busybox-extras httpd missing (nas web would be dead on arrival)"
+    # avahi-tools joins packages.list at beta-7 — hard-assert once shipped
+    if g.run("apk info -e avahi-tools").rc == 0:
+        assert g.run("command -v avahi-resolve-host-name").rc == 0
