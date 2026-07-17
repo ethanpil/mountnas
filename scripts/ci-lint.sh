@@ -76,3 +76,18 @@ fi
 rm -f "$cd_" "$cb_" "$cz_"
 [ "$sync_ok" = 1 ] || { echo "sync files/bash-nas-completion.sh and files/zsh-nas-completion"; exit 1; }
 echo "nas completions: in sync with the dispatcher ($(printf '%s\n' "$cmds" | grep -c .) commands)"
+
+# Guard the third copy of the command surface: every dispatcher command must
+# have a per-command help page in _cmd_help_for, or 'nas <newcmd> --help'
+# silently falls back to the generic overview. 'help' is the one deliberate
+# exception (its page IS cmd_help). Same extraction idiom as the dispatcher
+# check above — the case arms are one-tab indented.
+helptopics=$(awk 'index($0,"_cmd_help_for() {"){f=1;next} f&&/^}/{f=0} f' \
+	mountnas-tools/files/nas \
+	| grep -oE '^	[a-z][a-z|-]*\)' | tr -d '\t)' | tr '|' '\n' | sort -u)
+[ -n "$helptopics" ] || { echo "FAIL: could not extract help topics from _cmd_help_for in files/nas"; exit 1; }
+missing=$(printf '%s\n' "$cmds" | grep -vx help | while read -r c; do
+	printf '%s\n' "$helptopics" | grep -qx "$c" || printf '%s ' "$c"
+done)
+[ -z "$missing" ] || { echo "FAIL: nas command(s) missing a _cmd_help_for page: $missing"; exit 1; }
+echo "nas per-command help: every dispatcher command has a page"
