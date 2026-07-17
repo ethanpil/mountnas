@@ -153,7 +153,9 @@ jobs:
             # the tag from the API, sed it into pkgver, and REGENERATE the
             # checksums — the committed sums are a local-build fallback, not a
             # pin (unlike snapraid/mergerfs/zerotier/duf, deliberately).
-            CMKFS_VER=$(curl -fsS -H "Authorization: Bearer '"$GHTOKEN"'" \
+            # busybox wget, NOT curl: the build chroot has no curl (abuild
+            # itself fetches sources with wget here — proven by the duf step)
+            CMKFS_VER=$(wget -qO- --header="Authorization: Bearer '"$GHTOKEN"'" \
               https://api.github.com/repos/ethanpil/cmkfs/releases/latest \
               | sed -n "s/.*\"tag_name\": \"v\([0-9][0-9.]*\)\".*/\1/p")
             [ -n "$CMKFS_VER" ] || { echo "ERROR: could not resolve the latest cmkfs release tag"; exit 1; }
