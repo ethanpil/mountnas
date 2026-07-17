@@ -211,7 +211,7 @@ if rc-service docker status >/dev/null 2>&1; then
 		d_pau=$(printf '%s\n' "$d_ps" | awk -F'\t' '$3=="paused"' | grep -c .)
 		d_all=$(printf '%s\n' "$d_ps" | grep -c .)
 		d_oth=$((d_all - d_run - d_pau))
-		docker_html="<div class=\"svc\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span> <span class=\"pill p-off\"><i></i>$d_oth stopped</span></div><p class=\"mut\" style=\"margin-top:9px;font-size:12.5px\">$d_all container(s) &mdash; full detail in the table below.</p>"
+		docker_html="<div class=\"svc\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span> <span class=\"pill p-off\"><i></i>$d_oth stopped</span></div><p class=\"mut\" style=\"margin-top:9px;font-size:12.5px\">$d_all container(s) &mdash; expand the Docker containers section below for detail.</p>"
 		d_rows=$(printf '%s\n' "$d_ps" | awk -F'\t' '{
 			state=$3; cls="p-off"
 			if (state == "running") cls="p-ok"
@@ -222,7 +222,9 @@ if rc-service docker status >/dev/null 2>&1; then
 			printf "<td><span class=\"pill %s\"><i></i>%s</span><br><span class=\"mut\" style=\"font-size:11.5px\">%s</span></td>", cls, state, $4
 			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, $7
 		}')
-		docker_table="<div class=\"card tablecard\" style=\"margin-bottom:14px\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div>"
+		# collapsible like the hardware inventory / syslog: a compose stack
+		# makes this table LONG, and the summary line still carries the counts
+		docker_table="<details class=\"card\"><summary>Docker containers <span class=\"mut\">($d_run running &middot; $d_pau paused &middot; $d_oth stopped)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
 	else
 		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers yet</span>'
 	fi
