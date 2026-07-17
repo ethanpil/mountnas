@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [1.0rc1] — 2026-07-17
+
+**First 1.0 release candidate.** Feature-complete: the diskless RAM-root
+appliance, the `nas` CLI, single-image in-place upgrades with a booted-and-
+verified restore path, storage supervision, notifications, the read-only web
+dashboard + built-in guide, the browser terminal, and a self-hosted 85-test
+QEMU suite that validated the previous two releases with zero post-release
+fixes. Changes since beta-6:
 
 ### Fixed
 - **NFS now starts reliably at boot.** When the `mountnas` supervisor won the boot ordering, its `rc-service nfs start` collided with rpcbind's own default-runlevel start (rpcbind still mid-start) — nfs failed ("cannot start nfs as rpcbind would not start") and **stayed down until a manual `nas restart`**. Caught by the beta-6 validation run's own dashboard render (nfs a grey "off" pill on an otherwise healthy box — the suite's docker/samba-biased assertions had never looked). The supervisor now **settles rpcbind (bounded ~10s) before starting nfs** — it already owns data-service ordering, so this is the right altitude — plus `after rpcbind` in its `depend()` for the boot sequence. Regression-guarded in category K.
