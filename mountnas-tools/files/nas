@@ -297,11 +297,19 @@ cmd_status() {
 		fi
 	fi
 	# last-backup recency (persisted by nas backup: "<epoch> <YYYY-mm-dd HH:MM>")
+	# The backup is the ONLY rollback net for 'nas upgrade', so a stale one is
+	# a real (if quiet) risk — past 90 days the green ok flips to a warn.
 	lbk=$(cat /etc/mountnas/last-backup 2>/dev/null || true)
 	case "${lbk%% *}" in
 		'') warn "no 'nas backup' recorded yet — see UPGRADE.md" ;;
 		*[!0-9]*) ok "last backup: $lbk" ;;
-		*) ok "last backup: ${lbk#* } ($(( ( $(date +%s) - ${lbk%% *} ) / 86400 )) day(s) ago)" ;;
+		*)
+			bdays=$(( ( $(date +%s) - ${lbk%% *} ) / 86400 ))
+			if [ "$bdays" -gt 90 ]; then
+				warn "last backup: ${lbk#* } ($bdays day(s) ago) — stale; refresh with: nas backup"
+			else
+				ok "last backup: ${lbk#* } ($bdays day(s) ago)"
+			fi ;;
 	esac
 	# alerting (data-watch / smartd / upgrades): surface whether any notification
 	# sink is wired and can actually send, so a misconfig is caught now — not
@@ -1368,7 +1376,20 @@ cmd_rollback() {
 # USB and boot it. Reading the device while running is safe (dd/gzip only reads);
 # we briefly remount /cfg read-only so its filesystem is quiescent in the image.
 cmd_backup() {
-	dest=""; [ "${1:-}" = "--to" ] && dest="${2:-}"
+	# strict args: a bare path ('nas backup /mnt/usb/x.img.gz' — forgetting
+	# --to) used to be silently IGNORED and the image landed in the default
+	# location, discovered only during a disaster restore. Unknown args and a
+	# missing --to value are usage errors like every other subcommand.
+	dest=""
+	case "${1:-}" in
+	"") ;;
+	--to)
+		dest="${2:-}"
+		[ -n "$dest" ] || { usage "nas backup [--to <dir|file>]"; return 1; }
+		[ -z "${3:-}" ] || { usage "nas backup [--to <dir|file>]"; return 1; }
+		;;
+	*) usage "nas backup [--to <dir|file>]"; return 1 ;;
+	esac
 	cat <<EOF
   Note: this images the BOOT USB (the OS + your saved config on MNASCFG).
   It does NOT back up your data disks or Docker data — those live on
@@ -1731,7 +1752,16 @@ EOF
 	lb=$(cat "$STATE/last-backup" 2>/dev/null || true)
 	[ -n "$lb" ] && echo "  Last 'nas backup' this session: $lb" || echo "  No 'nas backup' recorded this session."
 	plb=$(cat /etc/mountnas/last-backup 2>/dev/null || true)
-	[ -n "$plb" ] && [ -z "$lb" ] && echo "  Last recorded 'nas backup' (earlier session): ${plb#* }"
+	if [ -n "$plb" ] && [ -z "$lb" ]; then
+		# show the age too, loudly when stale: this gate exists so nobody
+		# upgrades against a rollback net that is months out of date
+		pbe=${plb%% *}; page=""
+		case "$pbe" in ''|*[!0-9]*) ;; *) page=$(( ( $(date +%s) - pbe ) / 86400 )) ;; esac
+		echo "  Last recorded 'nas backup' (earlier session): ${plb#* }${page:+  ($page day(s) ago)}"
+		if [ -n "$page" ] && [ "$page" -gt 90 ]; then
+			printf '  %sThat backup is over 3 months old — run nas backup again FIRST.%s\n' "$C_FA" "$C_NO"
+		fi
+	fi
 	if [ "$assume_yes" = 1 ]; then
 		echo "  --yes given: proceeding without the interactive confirmation."
 	else

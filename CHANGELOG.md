@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Fixed
+- **`nas backup` rejects unrecognized arguments instead of silently ignoring them.** `nas backup /mnt/usb/backup.img.gz` (forgetting `--to`) used to discard the path entirely and image to the default `/mnt/nasdata/backups` — a backup that isn't where you think it is, discovered at restore time. Unknown arguments, extra arguments, and a missing `--to` value are now usage errors, like every other subcommand.
+
+### Changed
+- **A stale backup is now called out.** The backup image is the only rollback net for `nas upgrade`, but `nas status` reported an 18-month-old backup with the same green `ok` as a fresh one. Past 90 days it flips to a warning, and the `nas upgrade` confirmation gate prints the recorded backup's age — loudly when it's over 3 months old.
 - **`mountnas.local` no longer resolves to the Docker bridge.** With Docker running, avahi advertised the hostname's A record on *every* interface — including `docker0` (`172.17.0.1`), which it handed out first — so a LAN client resolving `mountnas.local` could get an address only reachable on the box itself (confirmed via `avahi-browse`: docker0, eth0 **and** loopback were all published). The shipped `/etc/avahi/avahi-daemon.conf` now denies `docker0`, so discovery returns the real LAN address (verified: resolution flips from `172.17.0.1` to the eth0 address). Users with custom docker networks can extend the `deny-interfaces` line. Regression-guarded: the mDNS test now asserts resolution matches the default-route (LAN-reachable) address, not just any box address.
 
 ## [1.0rc1] — 2026-07-17
