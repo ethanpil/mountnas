@@ -15,8 +15,13 @@ url="https://github.com/ethanpil/mountnas"
 # noarch/ subdir, and apk resolves a noarch package's file from <repo>/noarch/.
 arch="x86_64"
 license="MIT"
+# jq (nas disks / every --json mode / notify's webhook sinks), curl (notify
+# sinks, the web/ttyd bind probes, upgrade downloads) and hdparm (standby-safe
+# disk temps) are hard runtime deps of the scripts — declared here so the apk
+# metadata is the contract, not an accident of packages.list ('apk del jq'
+# must not be able to silently break 'nas disks').
 depends="alpine-conf util-linux e2fsprogs smartmontools openrc busybox
-	docker samba nfs-utils"
+	docker samba nfs-utils jq curl hdparm"
 options="!check"
 source=""
 
