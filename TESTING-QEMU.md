@@ -328,7 +328,7 @@ image always has something to test the upgrade against.
 
 | Test | What it verifies |
 |---|---|
-| `test_docker_container_survives_reboot` | A `--restart unless-stopped` container (built network-free from the guest's own busybox) is running again after a reboot — docker state on the data disk + supervisor-gated daemon start. |
+| `test_docker_container_survives_reboot` | A `--restart unless-stopped` container (built network-free from the guest's own busybox **plus the musl loader** — without it the container crash-loops and a bare `Up` grep can't tell) is running again after a reboot. Stability = Up **and** `RestartCount` 0, asserted pre-reboot. |
 | `test_samba_password_survives_reboot` | THE beta-3 lbu.list regression: an `smbpasswd -a` user still exists after commit + reboot. This was silently broken from alpha-1 to beta-2 (`/etc/lbu/include` was never an lbu interface). |
 | `test_data_services_absent_from_runlevels` | docker/samba/nfs are in NO runlevel — the mountnas supervisor is their only starter. |
 | `test_zerotier_identity_persists_reboot` | The ZeroTier node identity (`/var/lib/zerotier-one`) survives commit + reboot — identity loss would mean a new node ID and re-authorizing everywhere. |

@@ -23,7 +23,7 @@ import pytest
 
 from lib import config as C
 from lib import images
-from lib.guest import DiskSpec
+from lib.guest import DiskSpec, assert_container_stable, import_busybox_image
 
 pytestmark = pytest.mark.upgrade
 
@@ -310,16 +310,12 @@ def test_docker_survives_upgrade(upgrade_golden_guest, golden):
 
     # a container whose image + definition live in the data-root on
     # /mnt/nasdata (docker import = no registry needed)
-    g.run("mkdir -p /tmp/rootfs/bin && cp /bin/busybox /tmp/rootfs/bin/ && "
-          "ln -sf busybox /tmp/rootfs/bin/sh && "
-          "tar -c -C /tmp/rootfs . | docker import - mnq-busybox",
-          timeout=120, check=True)
+    import_busybox_image(g)
     g.run("mkdir -p /mnt/nasdata/appdata", check=True)
     g.run("docker run -d --name persist -v /mnt/nasdata/appdata:/data "
           "--restart unless-stopped mnq-busybox /bin/busybox sleep 2147483",
           timeout=120, check=True)
-    g.poll_until("docker ps --format '{{.Names}}' | grep -qx persist",
-                 timeout=60, desc="container running")
+    assert_container_stable(g, "persist")
     # marker written HOST-side onto the data disk (not by the container)
     g.run("echo UPGRADE-MARKER > /mnt/nasdata/appdata/marker", check=True)
 

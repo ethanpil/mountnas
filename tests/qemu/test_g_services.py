@@ -8,25 +8,21 @@ access is needed inside the guest.
 from __future__ import annotations
 
 from lib import config as C
+from lib.guest import assert_container_stable, import_busybox_image
 
 
 def test_docker_container_survives_reboot(golden_guest):
     """A --restart unless-stopped container must come back by itself after a
     reboot (docker state lives on the data disk; the supervisor starts the
-    daemon once /mnt/nasdata is up)."""
+    daemon once /mnt/nasdata is up). Stability (RestartCount 0) is asserted
+    on both sides of the reboot -- the original bare 'Up' grep kept passing
+    on a crash-looping container whose rootfs lacked the musl loader."""
     g = golden_guest
     g.poll_until("rc-service docker status", timeout=300, desc="docker up")
-    g.run(
-        "mkdir -p /tmp/rootfs/bin && "
-        "cp /bin/busybox /tmp/rootfs/bin/ && "
-        "ln -sf busybox /tmp/rootfs/bin/sh && "
-        "tar -c -C /tmp/rootfs . | docker import - mnq-busybox",
-        timeout=120, check=True,
-    )
+    import_busybox_image(g)
     g.run("docker run -d --name persist --restart unless-stopped "
           "mnq-busybox /bin/busybox sleep 2147483", timeout=120, check=True)
-    r = g.run("docker ps --format '{{.Names}} {{.Status}}'", check=True)
-    assert "persist" in r.out and "Up" in r.out, r.out
+    assert_container_stable(g, "persist")
     g.reboot()
     g.poll_until("rc-service docker status", timeout=300,
                  desc="docker back after reboot")

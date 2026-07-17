@@ -12,10 +12,12 @@ the CDN, hence its network marker.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
+from lib.guest import assert_container_stable, import_busybox_image
 from lib.smtpsink import configure_guest_msmtp
 
 FILES_DIR = Path(__file__).resolve().parent.parent.parent / "mountnas-tools" / "files"
@@ -225,14 +227,15 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
         pytest.skip(f"apk add busybox-extras failed (offline?): {r.out[-300:]}")
 
     # a real container so the docker table has a row to render (registry-free:
-    # import the guest's own busybox, as category G does)
+    # the shared helper ships the musl loader in the rootfs -- without it the
+    # container crash-loops with 'exec: no such file or directory', which is
+    # exactly what the first version of this test rendered as a red
+    # "Exited (255)" row while a weak assertion let it slide)
     g.poll_until("docker info >/dev/null 2>&1", timeout=300, desc="docker api up")
-    g.run("mkdir -p /tmp/rootfs/bin && cp /bin/busybox /tmp/rootfs/bin/ && "
-          "ln -sf busybox /tmp/rootfs/bin/sh && "
-          "tar -c -C /tmp/rootfs . | docker import - mnq-busybox",
-          timeout=120, check=True)
-    g.run("docker run -d --name dashprobe mnq-busybox /bin/busybox "
-          "sleep 2147483", timeout=120, check=True)
+    import_busybox_image(g)
+    g.run("docker run -d --name dashprobe --restart unless-stopped "
+          "mnq-busybox /bin/busybox sleep 2147483", timeout=120, check=True)
+    assert_container_stable(g, "dashprobe")
 
     on = g.run("nas web on", timeout=180)
     assert on.rc == 0, f"nas web on rc={on.rc}:\n{on.out}"
@@ -250,9 +253,14 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
                    "Hardware inventory", "lsusb -tv", "lspci"):
         assert marker in page, f"{marker!r} missing from dashboard"
     # the docker containers table: our probe container with its state pill,
-    # image and created columns
-    for marker in ("dashprobe", "mnq-busybox", "running", "Container"):
+    # image and created columns. The pill class is extracted from the probe's
+    # OWN row -- "running" appears in the summary counts too, so a bare
+    # substring check cannot catch a crashed probe.
+    for marker in ("dashprobe", "mnq-busybox", "Container"):
         assert marker in page, f"docker table marker {marker!r} missing"
+    m = re.search(r"dashprobe.*?pill (p-\w+)", page, re.S)
+    assert m and m.group(1) == "p-ok", \
+        f"probe container not rendered as running: {m.group(1) if m else 'row missing'}"
 
     sj = g.run("curl -fsS http://127.0.0.1:8080/status.json", check=True)
     data = json.loads(sj.out)

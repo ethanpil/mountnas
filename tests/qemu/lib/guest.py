@@ -606,6 +606,41 @@ class Guest:
 # ---------------------------------------------------------------------------
 
 
+def import_busybox_image(guest: "Guest", tag: str = "mnq-busybox") -> None:
+    """Registry-free container image built from the guest's own busybox.
+
+    Alpine's /bin/busybox is DYNAMICALLY linked against musl -- the loader
+    (/lib/ld-musl-x86_64.so.1) must ride along in the rootfs, or every exec
+    inside the container fails with the misleading
+    'exec /bin/busybox: no such file or directory' and the container
+    crash-loops. Found the hard way: the docker tests originally shipped the
+    binary alone, and their point-in-time 'Up' checks kept landing in the
+    brief running window of the crash loop -- always pair a container-running
+    assertion with a RestartCount check.
+    """
+    guest.run(
+        "rm -rf /tmp/rootfs && mkdir -p /tmp/rootfs/bin /tmp/rootfs/lib && "
+        "cp /bin/busybox /tmp/rootfs/bin/ && "
+        "cp /lib/ld-musl-x86_64.so.1 /tmp/rootfs/lib/ && "
+        "ln -sf busybox /tmp/rootfs/bin/sh && "
+        f"tar -c -C /tmp/rootfs . | docker import - {tag}",
+        timeout=120, check=True)
+
+
+def assert_container_stable(guest: "Guest", name: str,
+                            timeout: float = 120.0) -> None:
+    """The container is Up AND has never restarted -- a crash-looper can
+    pass a bare 'Up' grep during its brief running windows."""
+    guest.poll_until(
+        f"docker ps --format '{{{{.Names}}}} {{{{.Status}}}}' "
+        f"| grep -E '{name} Up'", timeout=timeout,
+        desc=f"container {name} up")
+    r = guest.run(
+        f"docker inspect --format '{{{{.RestartCount}}}}' {name}", check=True)
+    assert r.out.strip() == "0", \
+        f"container {name} is crash-looping (restarts={r.out.strip()})"
+
+
 def _free_port() -> int:
     import socket as _s
     with _s.socket(_s.AF_INET, _s.SOCK_STREAM) as s:
