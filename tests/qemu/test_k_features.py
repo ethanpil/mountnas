@@ -30,6 +30,7 @@ _DEV_FILES = [
     ("gen-webstatus", "/usr/libexec/mountnas/gen-webstatus",  "755"),
     ("web-refresh",   "/usr/libexec/mountnas/web-refresh",    "755"),
     ("mountnas-web",  "/etc/init.d/mountnas-web",             "755"),
+    ("mountnas-ttyd", "/etc/init.d/mountnas-ttyd",            "755"),
     ("web-guide.html", "/usr/share/mountnas/web/guide.html",  "644"),
     ("web-logo.png",  "/usr/share/mountnas/web/logo.png",     "644"),
 ]
@@ -136,6 +137,50 @@ def test_disable_data_service_via_conf(dev_guest):
     assert "disabled by /etc/conf.d/mountnas" in st.out and "docker" in st.out, st.out
 
 
+# ---------------------------------------------------------------- ttyd
+
+@pytest.mark.network
+def test_ttyd_browser_terminal(dev_guest):
+    """nas ttyd on -> a login-prompt terminal served over HTTP on 22222,
+    linked from the dashboard render; nas ttyd off -> gone. ttyd itself is
+    installed from the CDN (not in the beta-5 image), hence the marker."""
+    g = dev_guest
+    r = g.run("apk add ttyd", timeout=300)
+    if r.rc != 0:
+        pytest.skip(f"apk add ttyd failed (offline?): {r.out[-300:]}")
+
+    on = g.run("nas ttyd on", timeout=180)
+    assert on.rc == 0, f"nas ttyd on rc={on.rc}:\n{on.out}"
+    assert "22222" in on.out
+    # the enable must say the quiet parts out loud: cleartext + wheel-user
+    assert "cleartext" in on.out and "wheel" in on.out, on.out
+    assert "NOT saved" in on.out, "missing commit-honesty warning"
+
+    g.poll_until("curl -fsS http://127.0.0.1:22222/ | grep -qi ttyd",
+                 timeout=90, desc="ttyd serving")
+
+    st = g.run("nas ttyd status", check=True)
+    assert "running" in st.out and "NOT saved" in st.out, st.out
+
+    # the dashboard render links to the running terminal (no httpd needed --
+    # inspect the rendered file directly)
+    g.run("/usr/libexec/mountnas/gen-webstatus", timeout=180, check=True)
+    idx = g.run("cat /run/mountnas/web/index.html", check=True).out
+    assert "Web terminal" in idx and ":22222/" in idx, \
+        "dashboard footer missing the terminal link while ttyd is running"
+
+    assert "ttyd" in g.run("nas history", check=True).out
+
+    off = g.run("nas ttyd off", timeout=120)
+    assert off.rc == 0
+    gone = g.run("curl -fsS --max-time 5 http://127.0.0.1:22222/ >/dev/null 2>&1")
+    assert gone.rc != 0, "ttyd still serving after nas ttyd off"
+    # link gone from the next render too
+    g.run("/usr/libexec/mountnas/gen-webstatus", timeout=180, check=True)
+    idx2 = g.run("cat /run/mountnas/web/index.html", check=True).out
+    assert "Web terminal" not in idx2
+
+
 # ---------------------------------------------------------------- ops log
 
 def test_ops_log_history_and_no_commit_persistence(dev_guest):
@@ -181,8 +226,10 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
     host = g.run("hostname", check=True).out.strip()
     assert host in page and "Services" in page and "Disk" in page, page[:500]
     # the system detail lives at the bottom of the ONE page: hardware,
-    # added packages, and a collapsed syslog tail
-    for marker in ("Syslog", "Your added packages", "Machine", "<details"):
+    # added packages, a collapsed syslog tail, and the hardware inventory
+    # (lsusb -tv / lspci / DIMMs)
+    for marker in ("Syslog", "Your added packages", "Machine", "<details",
+                   "Hardware inventory", "lsusb -tv", "lspci"):
         assert marker in page, f"{marker!r} missing from dashboard"
 
     sj = g.run("curl -fsS http://127.0.0.1:8080/status.json", check=True)

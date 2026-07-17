@@ -221,7 +221,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (81 tests)
+## 4. The complete test catalog (82 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -363,7 +363,7 @@ user networking.
 | `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` resolves to the box's address. |
 | `test_hostname_change_regenerates_banner` | `gen-issue` picks up a hostname change and rewrites the banner (the wizard and if-up hook both lean on it). |
 
-### K — Newest features (`test_k_features.py`, 6 tests)
+### K — Newest features (`test_k_features.py`, 7 tests)
 
 These exercise features that exist in the repo but not yet in a published
 image, so each runs on `dev_guest`: a golden guest with the repo's current
@@ -378,7 +378,8 @@ post-reboot assertions read raw files instead of invoking new commands.
 | `test_data_watch_alerts_through_sinks` | The disk-loss watcher routes through the sink fan-out: with a webhook-only config (no msmtp at all), hot-unplugging the data disk still lands a DISCONNECTED alert as a JSON POST. |
 | `test_disable_data_service_via_conf` | The documented "Disabling Unused Services" recipe works: with `DATA_SERVICES="samba nfs"` in `/etc/conf.d/mountnas`, the supervisor keeps Docker off across a restart, and `nas status` stays exit-0, listing docker as *disabled* rather than warning "not running". |
 | `test_ops_log_history_and_no_commit_persistence` | A commit lands in `nas history` with a well-formed record (UTC ts, op, actor with `@`, details), and `/cfg/mountnas-ops.log` survives a reboot **without** any commit — the direct-to-/cfg design. |
-| `test_web_dashboard_guide_and_json` **[network]** | `nas web on` serves the dashboard (hostname, services, disks), valid `/status.json`, the full `/guide.html`, and the logo; `nas web status` reports running; the enable is in the ops log; `nas web off` stops serving. Installs busybox-extras from the CDN, hence the marker. The rendered page is saved as a report artifact for visual review. |
+| `test_web_dashboard_guide_and_json` **[network]** | `nas web on` serves the dashboard (hostname, services, disks, the hardware-inventory collapsible with `lsusb -tv`/`lspci`/DIMMs), valid `/status.json`, the full `/guide.html`, and the logo; `nas web status` reports running; the enable is in the ops log; `nas web off` stops serving. Installs busybox-extras from the CDN, hence the marker. The rendered page is saved as a report artifact for visual review. |
+| `test_ttyd_browser_terminal` **[network]** | `nas ttyd on` serves the login-prompt terminal on 22222 with the cleartext + wheel-user warnings and the commit-honesty warning; the dashboard render links "Web terminal" while it runs (and drops the link after `off`); the enable lands in the ops log; `nas ttyd off` stops serving. Installs ttyd from the CDN. |
 
 ---
 

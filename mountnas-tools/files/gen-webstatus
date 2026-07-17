@@ -335,6 +335,26 @@ pool_rows=$(awk '$3=="fuse.mergerfs"{print $2}' /proc/mounts 2>/dev/null \
 	done)
 disk_rows="$disk_rows$pool_rows"
 
+# ---- hardware inventory: USB tree, PCI devices, memory modules ---------------
+# All three read sysfs/SMBIOS tables only (microseconds, never a disk touch).
+usb_tree=$(lsusb -tv 2>/dev/null | esc)
+[ -n "$usb_tree" ] || usb_tree="(no USB devices visible)"
+pci_list=$(lspci 2>/dev/null | esc)
+[ -n "$pci_list" ] || pci_list="(no PCI devices visible)"
+dimms=$(dmidecode -t 17 2>/dev/null | awk -F': ' '
+	function flush() {
+		if (size != "" && size !~ /No Module/)
+			printf "%-16s %-10s %-8s %-14s %s\n", loc, size, type, spd, man
+	}
+	/^Handle /       { flush(); loc=size=type=spd=man="" }
+	/^\tSize: /      { size=$2 }
+	/^\tLocator: /   { loc=$2 }
+	/^\tType: /      { type=$2 }
+	/^\tSpeed: /     { spd=$2 }
+	/^\tManufacturer: / { man=$2 }
+	END { flush() }' | esc)
+[ -n "$dimms" ] || dimms="(no DMI memory-module data)"
+
 # ---- release-base diff + cron + unsaved list + syslog tail -------------------
 wb=$(find /media -maxdepth 2 -name world.base 2>/dev/null | head -n1)
 if [ -n "$wb" ] && [ -s "$wb" ]; then
@@ -523,6 +543,17 @@ $disk_rows
       </tbody>
     </table>
   </div>
+  <details class="card">
+    <summary>Hardware inventory <span class="mut">(USB tree &middot; PCI devices &middot; memory modules)</span></summary>
+    <pre class="log">== USB (lsusb -tv) ==
+$usb_tree
+
+== PCI (lspci) ==
+$pci_list
+
+== Memory modules (dmidecode -t 17) ==
+$dimms</pre>
+  </details>
   <div class="grid">
     <div class="card"><h2>Your added packages</h2>
       <div class="pkglist">$extras</div>
