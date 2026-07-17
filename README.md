@@ -261,13 +261,13 @@ Supported: `email` (via msmtp), `ntfy`, generic `webhook` (JSON POST), `slack` (
 2. Test it: `echo test | mail -s "MountNAS test" you@example.com`
 3. `nas commit`
 
-**SMART failure alerts**: either the classic direct-mail route — add your address in `/etc/smartd.conf` (`DEVICESCAN -n standby,q -m you@example.com`) — or route smartd through your notification sinks instead:
+**SMART failure alerts**: wired to your notification sinks **out of the box** — the shipped `/etc/smartd.conf` already routes smartd trouble through `notify.conf`, so alerts start working the moment you configure a sink (and cost nothing before that). Prefer classic direct mail instead? Replace the line in `/etc/smartd.conf`:
 
 ```text
-DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify
+DEVICESCAN -n standby,q -m you@example.com
 ```
 
-then `rc-service smartd restart && nas commit`.
+then `rc-service smartd restart && nas commit`. (Boxes seeded before 1.0rc2 shipped without the sink routing — add `-m root -M exec /usr/libexec/mountnas/smartd-notify` to the `DEVICESCAN` line to get it.)
 
 **Disk-loss alerts** (detachment, dead mount, filesystem gone read-only): fire automatically through your sinks — the 15-minute watcher notifies on the transition, once, and tells you the recovery command. (The old `/etc/mountnas/alert-email` file keeps working as one more email sink.) SMART covers a disk *warning* it will fail; this covers a disk that already *vanished*.
 

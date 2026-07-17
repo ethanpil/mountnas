@@ -300,8 +300,8 @@ discord:https://discord.com/api/webhooks/...
 gotify:https://gotify.example.com/message?token=...</code></pre>
 <p>Test with <code>nas notify --test</code>, persist with <code>nas commit</code>. What alerts automatically: <b>data-disk loss</b> (disconnect, dead mount, filesystem gone read-only — once, on the transition), <b>failed upgrades</b>, and anything you pipe in yourself (<code>... | nas notify "subject"</code>). Sink docs: <a href="https://ntfy.sh/">ntfy</a>, <a href="https://marlam.de/msmtp/">msmtp</a> (email), <a href="https://gotify.net/">gotify</a>.</p>
 <h3>SMART disk health (<a href="https://www.smartmontools.org/">smartmontools</a>)</h3>
-<p>smartd runs out of the box and never wakes spun-down disks. For failure alerts, add ONE line to <code>/etc/smartd.conf</code> and restart smartd:</p>
-<pre><code>DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify   # via your sinks
+<p>smartd runs out of the box and never wakes spun-down disks. Failure alerts are already routed through your notification sinks — configure a sink (above) and SMART trouble reaches it, no smartd config needed. For classic direct email instead, replace the line in <code>/etc/smartd.conf</code> and restart smartd:</p>
+<pre><code>DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify   # via your sinks (the shipped default)
 DEVICESCAN -n standby,q -m you@example.com                                    # or classic email</code></pre>
 <h3>Health digest (optional)</h3>
 <pre><code>crontab -e

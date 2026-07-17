@@ -131,13 +131,22 @@ EOF
 # check, which keeps NAS data disks spinning 24/7. '-n standby,q' skips the
 # poll while a disk is spun down ('q' silences the skip messages) — matching
 # the care 'nas status' takes to never wake disks.
+# Trouble is routed through the notification sinks BY DEFAULT (-M exec): the
+# notify helper is a silent no-op with no sinks configured, so this costs an
+# unconfigured box nothing — and once a user adds a sink to notify.conf,
+# SMART pre-failure alerts (the single most valuable alert a NAS sends) work
+# without a second config step in a different file.
 mk root:root 0644 "$tmp/etc/smartd.conf" <<'EOF'
 # MountNAS smartd defaults — you own this file (edit, then: nas commit).
 # -n standby,q : never wake a spun-down disk just to poll SMART.
-# For failure ALERTS by email: configure /etc/msmtprc (README "Email alerts"),
-# then append your address and run 'nas commit':
+# -M exec routes SMART trouble through your notification sinks
+#   (/etc/mountnas/notify.conf) — a silent no-op until a sink is configured
+#   there. The -m address is required by smartd's syntax whenever -M exec is
+#   used; it is ignored (delivery happens through the sinks).
+# For classic direct email instead: configure /etc/msmtprc (README "Email
+# alerts"), then replace the line with:
 #   DEVICESCAN -n standby,q -m you@example.com
-DEVICESCAN -n standby,q
+DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify
 EOF
 
 # ---- outbound mail: mail(1) -> msmtp -> your SMTP relay ----

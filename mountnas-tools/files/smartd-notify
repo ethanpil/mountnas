@@ -2,7 +2,9 @@
 # smartd-notify — route smartd trouble through the MountNAS notification sinks
 # (email + ntfy/webhook/slack/... — see /etc/mountnas/notify.conf).
 #
-# Enable it in /etc/smartd.conf (then: nas commit):
+# Wired by default in the shipped /etc/smartd.conf (a silent no-op until a
+# sink is configured in notify.conf). On a box seeded before 1.0rc2, enable
+# it by hand (then: nas commit):
 #   DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify
 # (-m is required by smartd's syntax when -M exec is used; the address is
 #  ignored — delivery happens through the sinks.)
