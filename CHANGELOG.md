@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- **Compressed zram swap, on by default** — one zstd zram device sized to half of RAM (seeded `/etc/conf.d/zram-init`, `zram-init` in the boot runlevel). The RAM-resident OS's cold pages (firmware blobs, idle binaries) compress ~3:1, giving low-RAM boxes real headroom; 2 GB now serves a light non-Docker box. Disable with `size0=0` + `nas commit` if you'd rather run swapless.
+
+### Changed
+- **Leaner base image.** Docker ships as `docker-engine` + `docker-cli` + `docker-cli-compose` — everything a NAS runs (daemon, CLI, compose); on-box image *building* is one `apk add docker-cli-buildx && nas commit` away. The boot-time RAM footprint drops ~116 MB and the on-USB package repo ~36 MB. Existing boxes converge automatically at their next `nas upgrade` (world reconciliation against the old base).
+
 ### Fixed
 - **`nas upgrade` no longer intermittently aborts with "cannot mount the image's BOOT partition" on a good image.** After `losetup -fP`, eudev re-processes the loop device's change events and each partition-table rescan *deletes and re-adds* the partition nodes — so the alpha-era fix (wait for `p1` to exist, then mount once) could still land its single mount attempt in a deletion window and abort the upgrade (safely — nothing written — but spuriously). Caught by the QEMU suite validating 1.0rc3: reproducible ~1 in 3 on the docker-survives-upgrade test, where dockerd keeps udev busy. Now `udevadm settle` runs after `partprobe` and the *mount itself* retries (bounded ~10 s) — verified 4/4 green where the shipped code failed 1 in 3. A genuinely non-image payload now takes ~10 s to be rejected instead of failing instantly.
 

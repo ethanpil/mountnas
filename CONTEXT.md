@@ -238,7 +238,17 @@ msmtp/mailx, restic, testdisk, f3, wireguard-tools, zstd/lz4/xz, xxhash,
 fdupes, microcode boot addons; 1.0rc3: ufw+ufw-openrc shipped disabled — the
 service idles in the boot runlevel, `ufw_nonfatal_if_disabled=yes` seeded in
 `/etc/conf.d/ufw` so a disabled firewall is not a red boot line; borgbackup)
-are tracked in `CHANGELOG.md`; each entry in
+are tracked in `CHANGELOG.md`. Post-rc3 slimming (launch state): `docker`
+meta → `docker-engine`+`docker-cli` (sheds docker-cli-buildx, 68 MB RAM;
+docker-openrc install_if's off docker-engine so the init script survives;
+mountnas-tools depends updated to match), `mosh` and `lm-sensors-detect`
+dropped (perl + protobuf/abseil fell out of the closure with them, −51 MB;
+nothing in the codebase ever invoked either), `zram-init` added (boot
+runlevel, seeded conf.d computes size0 = half RAM at boot — conf.d is
+sourced as shell; zstd backend confirmed =y in Alpine's lts kernel config).
+Net: tmpfs 1120→1004 MiB, media repo −36 MB. Upgrade migration is automatic:
+world reconciliation diffs against the OLD world.base, so base-dropped
+packages never masquerade as user extras; each entry in
 `packages.list` carries its own rationale comment. cryptsetup/dmcrypt (LUKS)
 shipped in alpha-6 and was REMOVED in beta-2 at the maintainer's direction —
 do not re-add without an explicit ask. Non-obvious wiring: `mail(1)` → msmtp

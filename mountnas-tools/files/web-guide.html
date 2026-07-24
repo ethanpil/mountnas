@@ -151,7 +151,7 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
 </ul>
 <h3>Choosing hardware</h3>
 <ul>
-<li><b>RAM is the resource that matters:</b> the whole OS unpacks into RAM at boot. 4&nbsp;GB is the working minimum; add headroom for your Docker stack (8&nbsp;GB is comfortable for a typical media box). More disks cost almost no RAM.</li>
+<li><b>RAM is the resource that matters:</b> the whole OS unpacks into RAM at boot, with cold pages held in compressed zram swap (on by default). 4&nbsp;GB is the comfortable minimum — 2&nbsp;GB can serve a light non-Docker box — and add headroom for your Docker stack (8&nbsp;GB is comfortable for a typical media box). More disks cost almost no RAM.</li>
 <li><b>USB stick:</b> a name-brand stick (A1/high-endurance class helps). It is only <i>read</i> at boot and written on <code>nas commit</code>/<code>upgrade</code>, so wear is low — the real enemy is counterfeit flash: verify a new stick with the baked-in <code>f3</code> (<code>f3probe /dev/sdX</code>) before trusting it.</li>
 <li><b>Disk controllers:</b> motherboard SATA ports are ideal. For many disks, a used LSI HBA flashed to IT mode is the community standard. USB disk enclosures work but are the least reliable path (bridge resets look like disk loss — the watcher will tell you).</li>
 <li><b>Network:</b> Intel NICs have the least-troublesome firmware/drivers. 2.5GbE is well supported.</li>
@@ -285,6 +285,7 @@ nas commit                                                 # REQUIRED — the se
 <tr><td><code>smartd</code></td><td>you accept no early disk-failure warning</td><td>SMART monitoring + alerts</td></tr>
 <tr><td><code>rpcbind</code></td><td>you don't serve NFS</td><td>nothing else uses it</td></tr>
 <tr><td><code>acpid</code></td><td>headless, never power-buttoned</td><td>clean shutdown on the power button</td></tr>
+<tr><td><code>zram-init</code></td><td>you have RAM to spare and prefer zero swap</td><td>compressed-RAM swap — the headroom that keeps low-RAM boxes comfortable</td></tr>
 <tr><td><code>sshd</code></td><td>⚠️ console-only administration</td><td><b>all remote access</b> — have a monitor/keyboard first</td></tr>
 </table>
 <h3>Optional services</h3>
@@ -467,14 +468,15 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <p><b>Parity / volumes:</b> <a href="https://www.snapraid.it/"><code>snapraid</code></a> (built from source) &middot; <a href="https://github.com/trapexit/mergerfs"><code>mergerfs</code></a> (upstream static build) &middot; <code>mdadm</code> <code>lvm2</code></p>
 <p><b>Disk health / recovery / benchmark:</b> <a href="https://www.smartmontools.org/"><code>smartmontools</code></a> <code>nvme-cli</code> <code>hdparm</code> <code>lsscsi</code> <code>sg3_utils</code> <code>ddrescue</code> <a href="https://www.cgsecurity.org/wiki/TestDisk"><code>testdisk</code></a> <code>f3</code> <code>fio</code></p>
 <p><b>Integrity / dedup / compression:</b> <code>xxhash</code> <code>fdupes</code> <code>zstd</code> <code>lz4</code> <code>xz</code></p>
-<p><b>Networking / transfer:</b> <code>curl</code> <code>wget</code> <code>rsync</code> <a href="https://rclone.org/"><code>rclone</code></a> <a href="https://restic.net/"><code>restic</code></a> <a href="https://www.borgbackup.org/"><code>borgbackup</code></a> <code>openssh</code> <a href="https://mosh.org/"><code>mosh</code></a> <a href="https://github.com/tsl0922/ttyd"><code>ttyd</code></a> (browser terminal — <code>nas ttyd on</code>)</p>
+<p><b>Networking / transfer:</b> <code>curl</code> <code>wget</code> <code>rsync</code> <a href="https://rclone.org/"><code>rclone</code></a> <a href="https://restic.net/"><code>restic</code></a> <a href="https://www.borgbackup.org/"><code>borgbackup</code></a> <code>openssh</code> <a href="https://github.com/tsl0922/ttyd"><code>ttyd</code></a> (browser terminal — <code>nas ttyd on</code>)</p>
 <p><b>VPN / mesh (off by default):</b> <a href="https://tailscale.com/"><code>tailscale</code></a> <a href="https://www.zerotier.com/"><code>zerotier-one</code></a> <a href="https://www.wireguard.com/"><code>wireguard-tools</code></a> &middot; <b>Firewall (off by default):</b> <a href="https://launchpad.net/ufw"><code>ufw</code></a></p>
 <p><b>Discovery / sharing:</b> <code>avahi</code> <code>avahi-tools</code> <code>dbus</code> <a href="https://www.samba.org/"><code>samba</code></a> <code>nfs-utils</code></p>
 <p><b>Filesystems:</b> <code>e2fsprogs</code> <code>xfsprogs</code> <code>btrfs-progs</code> <code>f2fs-tools</code> <code>exfatprogs</code> <code>dosfstools</code> <code>ntfs-3g-progs</code> <code>hfsprogs</code> <code>udftools</code> <code>fuse</code>/<code>fuse3</code> <code>fuse-overlayfs</code></p>
 <p><b>Hardware ID:</b> <code>pciutils</code> <code>usbutils</code> <a href="https://github.com/tuna-f1sh/cyme"><code>cyme</code></a> (modern lsusb) <code>dmidecode</code> <code>lshw</code> <code>lm-sensors</code></p>
 <p><b>Network diagnostics:</b> <code>ethtool</code> <code>iperf3</code> <code>tcpdump</code> <code>mtr</code> <code>bind-tools</code></p>
 <p><b>Monitoring:</b> <code>btop</code> <a href="https://github.com/ClementTsang/bottom"><code>bottom</code></a> (<code>btm</code>) <code>iotop</code> <code>ncdu</code> <a href="https://github.com/muesli/duf"><code>duf</code></a> (better df) <code>sysstat</code> <code>fastfetch</code></p>
-<p><b>Containers:</b> <a href="https://docs.docker.com/"><code>docker</code></a> <code>docker-cli-compose</code></p>
+<p><b>Containers:</b> <a href="https://docs.docker.com/"><code>docker-engine</code></a> <code>docker-cli</code> <code>docker-cli-compose</code> (building images on-box: <code>apk add docker-cli-buildx</code>)</p>
+<p><b>Memory:</b> <code>zram-init</code> (compressed zram swap, on by default — sized in <code>/etc/conf.d/zram-init</code>)</p>
 <p><b>UPS:</b> <a href="https://networkupstools.org/"><code>nut</code></a> &middot; <b>Email:</b> <a href="https://marlam.de/msmtp/"><code>msmtp</code></a> <code>mailx</code></p>
 <p><b>Device firmware:</b> a curated consumer-x86 set (Intel/AMD/NVIDIA graphics, common wifi/Bluetooth/wired-NIC blobs, laptop platform firmware). Missing something exotic? <code>dmesg | grep -i firmware</code>, then <code>apk add linux-firmware-&lt;vendor&gt; &amp;&amp; nas commit</code>.</p>
 </section>

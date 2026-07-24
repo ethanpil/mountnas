@@ -8,7 +8,7 @@ MountNAS is intended for power users, comfortable around a Linux system and comm
 
 Get your system running by following these steps:
 
-* Hardware: any x86_64 box with **4 GB+ RAM recommended** — the OS and every package unpack into RAM at each boot (2 GB may boot, but leaves little headroom for Docker workloads). The console warns at boot when RAM is below 4 GB.
+* Hardware: any x86_64 box with **4 GB+ RAM recommended** — the OS and every package unpack into RAM at each boot. Compressed zram swap (on by default) keeps the cold pages small, so 2 GB can serve a light non-Docker box, but leave headroom for Docker workloads. The console warns at boot when RAM is below 4 GB.
 * Download a MountNAS release from GitHub:`mountnas-<tag>.img.gz`
 * Write the image to a flash drive (min. 4 GB) using `gunzip -c mountnas-<tag>.img.gz | sudo dd of=/dev/sdX bs=4M status=progress` or a graphical utility like [Etcher](https://etcher.balena.io/).
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
@@ -212,6 +212,7 @@ What each one costs you if disabled:
 | `smartd` | you accept no disk-failure early warning | SMART monitoring + alerts |
 | `rpcbind` | you don't serve NFS | nothing else uses it |
 | `acpid` | headless box you never power-button | clean shutdown on the power button |
+| `zram-init` | you have RAM to spare and prefer zero swap | compressed-RAM swap — low-RAM boxes lose the headroom that keeps the OS + Docker comfortable |
 | `sshd` | ⚠️ console-only administration | **all remote access — be sure you have a monitor/keyboard** |
 
 **Optional services** (Tailscale, ZeroTier, NUT, the web dashboard, the browser terminal, the ufw firewall) ship off. If you enabled one and want it gone: the same stop + `rc-update del` + commit (`nas web off` / `nas ttyd off` + `nas commit` for the web pair; `ufw disable` + `nas commit` for the firewall — its service stays in the boot runlevel as a no-op by design; WireGuard has no service — `wg-quick down <iface>` and remove your local.d/cron hook).
@@ -380,6 +381,7 @@ __Shipped config that differs from stock__
 * `/etc/docker/daemon.json`: data-root on `/mnt/nasdata/docker`, `live-restore`, capped json-file logs
 * Pre-seeded templates you own: `/etc/fstab` (config partition + commented data-disk guidance), `/etc/samba/smb.conf`, `/etc/snapraid.conf`, `/etc/msmtprc`, `/etc/mail.rc` (wires `mail(1)` to msmtp), `/etc/mountnas/notify.conf`
 * `/etc/modules` preloads `fuse`, `ntfs3` (in-kernel NTFS), and `drivetemp` (disk temps without waking drives)
+* Compressed zram swap on by default (`zram-init` in the boot runlevel; `/etc/conf.d/zram-init` sizes it to half of RAM, zstd) — cold pages of the RAM-resident OS compress ~3:1, so small-RAM boxes keep real headroom
 * `/etc/inittab`: gettys on tty1–6 **and** ttyS0, so serial consoles (IPMI SoL, Proxmox `qm terminal`) get a login prompt out of the box
 * `/etc/doas.conf` pre-configured (`permit persist :wheel`)
 * Empty `/etc/motd` and a MountNAS `/etc/issue` banner instead of Alpine's defaults; eudev instead of busybox mdev; chronyd, smartd, crond, acpid, dbus, rpcbind enabled by default
@@ -471,7 +473,6 @@ __Networking / Transfer__
 * openssh
 * openssh-client
 * openssh-sftp-server
-* mosh (roaming, low-latency remote shell over UDP; spawned per-session over SSH, no daemon)
 * ttyd (browser-based terminal serving a real login prompt — off by default; `nas ttyd on`, port 22222)
 
 __Overlay / Mesh VPN (services OFF by default)__
@@ -520,7 +521,6 @@ __Hardware Identification__
 * dmidecode
 * lshw
 * lm-sensors
-* lm-sensors-detect
 
 __Network Diagnostics__
 
@@ -542,8 +542,12 @@ __System Monitoring__
 
 __Containers__
 
-* docker
-* docker-cli-compose
+* docker-engine + docker-cli (the Docker daemon and CLI; building images on-box needs `apk add docker-cli-buildx`)
+* docker-cli-compose (`docker compose`)
+
+__Memory__
+
+* zram-init (compressed zram swap, on by default — sized to half of RAM in `/etc/conf.d/zram-init`)
 
 __UPS monitoring (NUT)__
 
