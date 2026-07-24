@@ -286,6 +286,14 @@ def upgrade_golden_guest(guest_factory, overlay_disks, payload_dir, golden,
                               ssh_key=golden.ssh_key,
                               throwaway=[sysd, datad, payd])
         guest.wait_ssh(timeout=420)
+        # same repo-nas injection as upgrade_guest — this fixture's omission
+        # meant MOUNTNAS_NAS_SRC re-runs of the golden-based upgrade tests
+        # silently exercised the SHIPPED nas (found verifying the 1.0rc3
+        # loop-mount fix: 3 "fix" re-runs had no fix in them)
+        if NAS_SRC and Path(NAS_SRC).is_file():
+            guest.push(Path(NAS_SRC), "/usr/sbin/nas.new")
+            guest.run("cat /usr/sbin/nas.new > /usr/sbin/nas && rm /usr/sbin/nas.new "
+                      "&& chmod +x /usr/sbin/nas", check=True)
         guest.wait_ready()      # docker + samba converged on /mnt/nasdata
         return guest
     return make
