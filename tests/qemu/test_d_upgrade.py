@@ -487,7 +487,18 @@ def test_runlevel_and_confd_reconciliation(upgrade_guest, golden):
     # --- user drift: disable a shipped service, enable an off-by-default one ---
     guest.run("rc-service smartd stop; rc-update del smartd default", check=True)
     guest.run("rc-update add tailscale default", check=True)
-    # ...and simulate the pre-rc.base gap this mechanism exists to heal
+
+    # --- make zram-init look NEWLY SHIPPED by this release ---
+    # This is a self-upgrade, so both rc.base copies are identical and nothing
+    # is "new" -- take zram-init out of the box's CURRENT base (the copy on the
+    # stick) so the payload's base has a line this box's base lacks, which is
+    # exactly the shape of a release that enables a new service. Removing the
+    # runlevel entry WITHOUT this would instead be a user disable, which the
+    # merge is designed to preserve (asserted separately below).
+    guest.run("mount -o remount,rw /media/mnasboot", check=True)
+    guest.run("grep -v ' zram-init$' /media/mnasboot/rc.base > /tmp/rb "
+              "&& cat /tmp/rb > /media/mnasboot/rc.base && sync", check=True)
+    guest.run("mount -o remount,ro /media/mnasboot", check=True)
     guest.run("rc-update del zram-init boot", check=True)
     guest.run("rm -f /etc/conf.d/zram-init", check=True)
     guest.run("nas commit -m 'rc drift'", timeout=180, check=True)
@@ -497,14 +508,17 @@ def test_runlevel_and_confd_reconciliation(upgrade_guest, golden):
     guest.reboot(); guest.wait_ssh(timeout=420)
 
     rc = guest.run("rc-update show", check=True).out
-    # what the release ships and the box lacked comes back...
+    # what this release newly ships arrives...
     assert re.search(r"^\s*zram-init\s", rc, re.M), \
-        f"zram-init not restored by the reconciliation:\n{rc}"
+        f"a service new in this release was not enabled by the reconciliation:\n{rc}"
     assert guest.run("test -f /etc/conf.d/zram-init").rc == 0, \
         "seeded /etc/conf.d/zram-init not delivered to the upgraded box"
     assert guest.run("grep -q zram /proc/swaps").rc == 0, \
         "zram swap still absent after the upgrade reconciled the runlevels"
-    # ...while BOTH user decisions survive
+    # ...while BOTH user decisions survive. smartd is the load-bearing one:
+    # it sits in BOTH bases, so the merge must leave the box's own state alone.
+    # A union (the formula the world reconciliation uses) would re-enable it
+    # here, silently undoing the only documented way to disable a service.
     assert not re.search(r"^\s*smartd\s", rc, re.M), \
         f"upgrade re-enabled a service the user deliberately disabled:\n{rc}"
     assert re.search(r"^\s*tailscale\s", rc, re.M), \
