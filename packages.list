@@ -42,9 +42,6 @@ borgbackup
 openssh
 openssh-client
 openssh-sftp-server
-# mosh: roaming, low-latency remote shell over UDP (60000-61000). No daemon —
-# mosh-server is spawned per-session over SSH, so nothing to enable.
-mosh
 # ttyd: browser-based terminal (the 'nas ttyd' service, OFF by default) —
 # serves a real /bin/login prompt over HTTP on the trusted LAN, port 22222
 ttyd
@@ -151,7 +148,6 @@ cyme
 dmidecode
 lshw
 lm-sensors
-lm-sensors-detect
 
 # --- network diagnostics ---
 ethtool
@@ -172,9 +168,23 @@ duf
 sysstat
 fastfetch
 
-# --- containers ---
-docker
+# --- containers (engine + cli, NOT the 'docker' meta package: the meta also
+#     drags in docker-cli-buildx — an image-build tool a storage appliance
+#     doesn't need, at 68 MB of RAM. Building images here: apk add
+#     docker-cli-buildx && nas commit) ---
+docker-engine
+docker-cli
 docker-cli-compose
+
+# --- compressed RAM swap (zram) ---
+# Diskless = the whole OS lives in RAM, but much of it is cold (firmware
+# blobs, rarely-run binaries). A zram swap device lets the kernel keep those
+# pages compressed (~3:1 with zstd; ZRAM/ZSTD confirmed in Alpine's lts
+# kernel config), which is what gives low-RAM boxes real headroom. Sized in
+# the seeded /etc/conf.d/zram-init (half of RAM); service in the boot
+# runlevel (see genapkovl).
+zram-init
+zram-init-openrc
 
 # --- time / power / privilege ---
 chrony

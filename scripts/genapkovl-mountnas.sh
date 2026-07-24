@@ -91,6 +91,27 @@ mk root:root 0400 "$tmp/etc/doas.conf" <<'EOF'
 permit persist :wheel
 EOF
 
+# ---- zram: compressed swap in RAM, on by default ----
+# Diskless means the whole OS unpacks into tmpfs; a zram swap device lets the
+# kernel keep the cold pages (firmware blobs, idle binaries) compressed at
+# ~3:1, which is what gives low-RAM boxes real headroom. conf.d is sourced as
+# shell by OpenRC, so the size computes from the box's actual RAM at boot.
+# zstd backend is built into Alpine's lts kernel (ZRAM_BACKEND_ZSTD=y).
+mk root:root 0644 "$tmp/etc/conf.d/zram-init" <<'EOF'
+# MountNAS zram swap — you own this file (edit, then: nas commit).
+# One compressed-RAM swap device; cold pages compress ~3:1, so this ADDS
+# usable memory rather than consuming it. Turn off with size0=0 (or
+# rc-update del zram-init boot), then nas commit.
+load_on_start=yes
+unload_on_stop=yes
+num_devices=1
+type0=swap
+flag0=          # empty = default swap priority
+algo0=zstd
+# half of physical RAM, computed at boot (value in MB)
+size0=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 2048 ))
+EOF
+
 # ---- ufw: shipped DISABLED (the image is fully open — README "Firewall") ----
 # The service lives in the boot runlevel permanently so that 'ufw enable' +
 # 'nas commit' is ALL a user does: rules then load before networking at every
@@ -368,6 +389,7 @@ rc_add networking boot
 rc_add mountnas-net boot         # dynamic wired DHCP (from mountnas-tools)
 rc_add ufw boot                  # firewall — quiet no-op until 'ufw enable' (conf.d/ufw); 'before net' loads rules pre-networking
 rc_add mountnas-sshkey boot     # install SSH key from BOOT partition (before sshd)
+rc_add zram-init boot            # compressed RAM swap (sized in conf.d/zram-init)
 rc_add seedrng boot
 rc_add cgroups boot
 

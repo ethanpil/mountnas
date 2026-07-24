@@ -299,3 +299,7 @@ def test_released_image_ships_expected_files(wired_shared_guest):
             "ufw-openrc missing (firewall could never load at boot)"
     if g.run("apk info -e borgbackup").rc == 0:
         assert g.run("command -v borg").rc == 0
+    # zram swap joins at the post-rc3 slimming — hard-assert once shipped
+    if g.run("apk info -e zram-init").rc == 0:
+        assert g.run("grep -q zram /proc/swaps").rc == 0, \
+            "zram-init installed but no zram swap active (boot runlevel wiring broken?)"

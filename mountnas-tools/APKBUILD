@@ -21,7 +21,7 @@ license="MIT"
 # metadata is the contract, not an accident of packages.list ('apk del jq'
 # must not be able to silently break 'nas disks').
 depends="alpine-conf util-linux e2fsprogs smartmontools openrc busybox
-	docker samba nfs-utils jq curl hdparm"
+	docker-engine docker-cli samba nfs-utils jq curl hdparm"
 options="!check"
 source=""
 
