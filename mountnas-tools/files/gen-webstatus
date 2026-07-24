@@ -64,6 +64,10 @@ loadavg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "?")
 cores=$(nproc 2>/dev/null || echo "?")
 mem=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2}
 	END{ if (t>0) printf "%.1f used &middot; %.1f avail &middot; %.1f GB total", (t-a)/1048576, a/1048576, t/1048576; else print "?" }' /proc/meminfo 2>/dev/null)
+# swap row: zram holds this box's cold pages, so a filling swap is the earliest
+# visible sign of memory pressure — the card showed no trace of it before
+swap_row=$(awk '/^SwapTotal:/{t=$2} /^SwapFree:/{f=$2}
+	END{ if (t>0) printf "<dt>Swap</dt><dd class=\"num\">%.0f used &middot; %.0f MB total</dd>", (t-f)/1024, t/1024 }' /proc/meminfo 2>/dev/null)
 # RAM root fill matters on a diskless box: a full / breaks 'nas commit'
 ramroot=$(df -k / 2>/dev/null | awk 'NR==2{printf "%d%% of %.1f GB", $3*100/$2, $2/1048576}')
 ramroot_pct=$(df -k / 2>/dev/null | awk 'NR==2{printf "%d", $3*100/$2}')
@@ -316,7 +320,7 @@ recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null | esc \
 SMART_CACHE=/run/mountnas/websmart
 if [ ! -f "$SMART_CACHE" ] || [ "$(( $(date +%s) - $(date -r "$SMART_CACHE" +%s 2>/dev/null || echo 0) ))" -ge 900 ]; then
 	printf '%s' "$dj" \
-	| jq -r '.disks[]? | select(.name | test("^(fd|sr|loop|ram|zram)") | not) | .name' \
+	| jq -r '.disks[]? | .name' \
 	| while IFS= read -r d; do
 		[ -n "$d" ] || continue
 		sm=$(smartctl -n standby -H "/dev/$d" 2>/dev/null)
@@ -335,7 +339,7 @@ smart_map=$(awk -F'\t' '{printf "{\"k\":\"%s\",\"v\":\"%s\"}\n", $1, $2}' "$SMAR
 
 # ---- disk power state (hdparm -C is an ioctl; never wakes a drive) -----------
 power_map=$(printf '%s' "$dj" \
-	| jq -r '.disks[]? | select(.name | test("^(fd|sr|loop|ram|zram)") | not) | .name' \
+	| jq -r '.disks[]? | .name' \
 	| while IFS= read -r d; do
 		[ -n "$d" ] || continue
 		p=$(hdparm -C "/dev/$d" 2>/dev/null | awk -F': *' '/drive state/{print $2}')
@@ -357,7 +361,7 @@ disk_rows=$(printf '%s' "$dj" | jq -r --argjson smart "$smart_map" --argjson pow
 		else "\(. / 1048576 | floor) MB" end;
 	def bar: (if . >= 90 then "b-fail" elif . >= 80 then "b-warn" else "" end) as $c |
 		"<span class=\"bar \($c)\"><i style=\"width:\(.)%\"></i></span>";
-	.disks[]? | select(.name | test("^(fd|sr|loop|ram|zram)") | not) |
+	.disks[]? |
 	"<tr><td class=\"mono\">\(.name | @html)\(if .boot_usb then " <span class=\"pill p-boot\">boot USB</span>" else "" end)</td>" +
 	"<td>\((.model // .vendor // "?") | @html)</td>" +
 	"<td class=\"num\">\(.size | hum)</td>" +
@@ -554,6 +558,7 @@ $css
         <dt>CPU temp</dt><dd class="num">$cputemp</dd>
         $fans_row
         <dt>Memory</dt><dd class="num">$mem</dd>
+        $swap_row
         <dt>Box time</dt><dd class="num">$now_tz</dd>
       </dl>
     </div>
