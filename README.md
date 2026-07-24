@@ -328,6 +328,52 @@ Recovering a forgotten root password:
 - `nas commit` fails with `tar: empty archive` -> the RAM root is full (check `df -h /`). Free space — or just reboot, which resets RAM — and commit again.
 - two clones in one machine -> don't; both answer to the config label (`MNASCFG`) by design.
 
+## What's different from stock Alpine
+
+A terse inventory of everything MountNAS changes or adds compared to a stock Alpine (diskless) image.
+
+__Custom tooling & services (shipped by the `mountnas-tools` apk)__
+
+* `nas` management tool baked in and installed at `/usr/sbin/nas` (setup wizard, status/disks, commit/rollback, upgrade, backup, notify, web, ttyd, logs, history, report) — bash completion at `/etc/profile.d/nas-completion.sh`, zsh at `/usr/share/zsh/site-functions/_nas`
+* `mountnas` storage supervisor at `/etc/init.d/mountnas` — Docker/Samba/NFS are removed from runlevels and started only once `/mnt/nasdata` is mounted; a failed disk gets a read-only placeholder mount so nothing can fill RAM
+* Boot helpers in `/etc/init.d/`: `mountnas-mkdirs` (creates fstab mountpoints before `localmount`), `mountnas-net` (dynamic wired DHCP), `mountnas-sshkey` (installs `authorized_keys` dropped on the BOOT partition), `mountnas-issue` (live IP + hostname on the pre-login console, re-run on link changes via `/etc/network/if-up.d/mountnas-issue`)
+* Helper scripts in `/usr/libexec/mountnas/`: `notify` (sink fan-out), `smartd-notify`, `data-watch` (disk-loss watcher, run from `/etc/periodic/15min/mountnas-datawatch`), `health-digest`, `gen-issue`, `gen-webstatus`, `web-refresh`, `pick-nic`, `write-bootcfg`, `release-string`
+* Optional web dashboard + built-in user guide (`/etc/init.d/mountnas-web`, guide at `/usr/share/mountnas/web/guide.html`) and browser terminal (`/etc/init.d/mountnas-ttyd`) — both off by default
+* Notification fan-out configured in `/etc/mountnas/notify.conf` (email, ntfy, webhook, Slack, Discord, gotify) — wired to smartd, the disk-loss watcher, failed upgrades, health digests, and `nas notify`
+* Login-shell snippets in `/etc/profile.d/`: `nas-welcome.sh`, `nas-prompt.sh`, `nas-aliases.sh`, `nas-resize.sh` (serial-console terminal size fix)
+
+__Additional packages baked in__
+
+* The curated NAS package set — Docker, Samba, NFS, SnapRAID, mergerfs, smartmontools, NUT, restic/rclone, Tailscale/ZeroTier/WireGuard, filesystem tools, diagnostics, consumer-x86 firmware, and more. See the full list in [Baked in Packages](#baked-in-packages).
+
+__Run-from-RAM model & persistence__
+
+* Entire OS runs from RAM off the USB stick; nothing persists until `nas commit` (Alpine's `lbu`, overlay on the `MNASCFG` config partition, 3 previous overlays kept for `nas rollback`)
+* On-USB apk snapshot repo (`/run/mountnas/apks`) listed first in `/etc/apk/repositories`, plus CDN main+community repos pinned to this release's concrete Alpine version (never `latest-stable`)
+* apk cache symlinked to `/cfg/cache` so user-added packages persist and reinstall at every boot, even offline
+* Custom lbu include/exclude list (`/etc/apk/protected_paths.d/lbu.list`): persists `/root`, Samba/Tailscale/ZeroTier state, crontabs, and `/usr/local/bin`; excludes boot-generated files
+* Append-only operations log at `/cfg/mountnas-ops.log` (`nas history`) — persists without `nas commit`
+* Single-image in-place upgrades (`nas upgrade`) with a mandatory full-USB `nas backup` first
+
+__Shipped config that differs from stock__
+
+* `/etc/ssh/sshd_config`: passwordless root login permitted on a fresh image (headless first boot); `nas setup` flips `PermitEmptyPasswords` to `no` once a root password is set
+* `/etc/smartd.conf`: `-n standby,q` (never wakes spun-down disks) and SMART trouble routed through the notification sinks via `-M exec`
+* `/etc/avahi/avahi-daemon.conf`: mDNS on by default with `deny-interfaces=docker0` so `.local` resolves to the LAN address
+* `/etc/docker/daemon.json`: data-root on `/mnt/nasdata/docker`, `live-restore`, capped json-file logs
+* Pre-seeded templates you own: `/etc/fstab` (config partition + commented data-disk guidance), `/etc/samba/smb.conf`, `/etc/snapraid.conf`, `/etc/msmtprc`, `/etc/mail.rc` (wires `mail(1)` to msmtp), `/etc/mountnas/notify.conf`
+* `/etc/modules` preloads `fuse`, `ntfs3` (in-kernel NTFS), and `drivetemp` (disk temps without waking drives)
+* `/etc/inittab`: gettys on tty1–6 **and** ttyS0, so serial consoles (IPMI SoL, Proxmox `qm terminal`) get a login prompt out of the box
+* `/etc/doas.conf` pre-configured (`permit persist :wheel`)
+* Empty `/etc/motd` and a MountNAS `/etc/issue` banner instead of Alpine's defaults; eudev instead of busybox mdev; chronyd, smartd, crond, acpid, dbus, rpcbind enabled by default
+
+__Boot / image level__
+
+* Kernel cmdline includes disk-bus drivers (ahci/nvme/virtio) so the image also boots as a VM disk, not just a USB stick; the config overlay is found by partition label
+* AMD + Intel early CPU microcode shipped as boot addons
+* The `linux-lts` apk is deliberately absent from the on-media repo — kernel updates arrive only via `nas upgrade` replacing `/boot`
+* No firewall included (out of scope — see [Firewall](#firewall))
+
 ## Baked in Packages
 
 MountNAS includes a curated list of packages helpful to NAS users in the core OS image. 
