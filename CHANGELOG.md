@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`nas upgrade` no longer intermittently aborts with "cannot mount the image's BOOT partition" on a good image.** After `losetup -fP`, eudev re-processes the loop device's change events and each partition-table rescan *deletes and re-adds* the partition nodes — so the alpha-era fix (wait for `p1` to exist, then mount once) could still land its single mount attempt in a deletion window and abort the upgrade (safely — nothing written — but spuriously). Caught by the QEMU suite validating 1.0rc3: reproducible ~1 in 3 on the docker-survives-upgrade test, where dockerd keeps udev busy. Now `udevadm settle` runs after `partprobe` and the *mount itself* retries (bounded ~10 s) — verified 4/4 green where the shipped code failed 1 in 3. A genuinely non-image payload now takes ~10 s to be rejected instead of failing instantly.
+
+### Testing
+- **`upgrade_golden_guest` now honors `MOUNTNAS_NAS_SRC`.** The plain `upgrade_guest` fixture injected the repo's `nas` into guests, but the golden-based fixture (docker/samba upgrade tests) silently didn't — re-runs meant to verify a local `nas` fix were exercising the shipped binary instead (which is exactly how the loop-mount fix's first verification round fooled itself).
+
 ## [1.0rc3] — 2026-07-24
 
 **Third 1.0 release candidate.** An optional host firewall (shipped off, zero
