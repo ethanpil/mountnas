@@ -8,7 +8,7 @@ MountNAS is intended for power users, comfortable around a Linux system and comm
 
 Get your system running by following these steps:
 
-* Hardware: any x86_64 box with **4 GB+ RAM recommended** — the OS and every package unpack into RAM at each boot. Compressed zram swap (on by default) keeps the cold pages small, so 2 GB can serve a light non-Docker box, but leave headroom for Docker workloads. The console warns at boot when RAM is below 4 GB.
+* Hardware: any x86_64 box with **4 GB+ RAM — this is a floor, not a suggestion.** The OS and every package unpack into a RAM filesystem at each boot, and that filesystem is capped at half your RAM, so a 2 GB box cannot fit the system no matter how much swap it has. Compressed zram swap (on by default) buys headroom *above* the floor — it keeps a 4 GB box comfortable under Docker load — but it cannot lower it. The console warns at boot when RAM is below 4 GB.
 * Download a MountNAS release from GitHub:`mountnas-<tag>.img.gz`
 * Write the image to a flash drive (min. 4 GB) using `gunzip -c mountnas-<tag>.img.gz | sudo dd of=/dev/sdX bs=4M status=progress` or a graphical utility like [Etcher](https://etcher.balena.io/).
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
@@ -202,6 +202,8 @@ nas commit                                                 # REQUIRED — the se
 rc-service <name> stop && rc-update del <name> default && nas commit
 ```
 
+Most services live in the `default` runlevel, as above. A few start earlier and live in `boot` (`zram-init`, `ufw`) — for those, say `boot` instead of `default`; `rc-status boot` lists them. `nas upgrade` preserves whatever you decide here: a service you remove stays removed across upgrades.
+
 What each one costs you if disabled:
 
 | Service | Safe to disable if… | You lose |
@@ -212,7 +214,7 @@ What each one costs you if disabled:
 | `smartd` | you accept no disk-failure early warning | SMART monitoring + alerts |
 | `rpcbind` | you don't serve NFS | nothing else uses it |
 | `acpid` | headless box you never power-button | clean shutdown on the power button |
-| `zram-init` | you have RAM to spare and prefer zero swap | compressed-RAM swap — low-RAM boxes lose the headroom that keeps the OS + Docker comfortable |
+| `zram-init` (**boot** runlevel — use `rc-update del zram-init boot`) | you have RAM to spare and prefer zero swap | compressed-RAM swap — you lose the headroom that keeps the OS + Docker comfortable |
 | `sshd` | ⚠️ console-only administration | **all remote access — be sure you have a monitor/keyboard** |
 
 **Optional services** (Tailscale, ZeroTier, NUT, the web dashboard, the browser terminal, the ufw firewall) ship off. If you enabled one and want it gone: the same stop + `rc-update del` + commit (`nas web off` / `nas ttyd off` + `nas commit` for the web pair; `ufw disable` + `nas commit` for the firewall — its service stays in the boot runlevel as a no-op by design; WireGuard has no service — `wg-quick down <iface>` and remove your local.d/cron hook).
@@ -296,6 +298,7 @@ nas commit                # REQUIRED — rules + the enable flag live in /etc/uf
 
 * Defaults once enabled: incoming **deny**, outgoing allow; IPv6 is covered by the same commands (ufw drives iptables *and* ip6tables).
 * `nas status` shows the firewall state — including the one dangerous case, an enabled config whose rules aren't actually loaded. The web dashboard shows the full ruleset (`ufw status verbose`).
+* ⚠️ **If you reached 1.0rc3 by `nas upgrade` rather than by flashing it**, ufw was installed but never added to a runlevel, so its rules load when you run `ufw enable` and then silently *don't* load after a reboot. Check with `rc-status boot | grep ufw`; fix with `rc-update add ufw boot && nas commit`. Later releases repair this automatically at the first boot.
 * **Docker-published ports bypass ufw** — Docker programs its own iptables rules ahead of ufw's. Publish to `127.0.0.1:` or use internal Docker networks for containers that must not be exposed; your router remains the real perimeter.
 * Turn it back off: `ufw disable && nas commit`.
 
@@ -381,7 +384,8 @@ __Shipped config that differs from stock__
 * `/etc/docker/daemon.json`: data-root on `/mnt/nasdata/docker`, `live-restore`, capped json-file logs
 * Pre-seeded templates you own: `/etc/fstab` (config partition + commented data-disk guidance), `/etc/samba/smb.conf`, `/etc/snapraid.conf`, `/etc/msmtprc`, `/etc/mail.rc` (wires `mail(1)` to msmtp), `/etc/mountnas/notify.conf`
 * `/etc/modules` preloads `fuse`, `ntfs3` (in-kernel NTFS), and `drivetemp` (disk temps without waking drives)
-* Compressed zram swap on by default (`zram-init` in the boot runlevel; `/etc/conf.d/zram-init` sizes it to half of RAM, zstd) — cold pages of the RAM-resident OS compress ~3:1, so small-RAM boxes keep real headroom
+* Compressed zram swap on by default (`zram-init` in the boot runlevel; `/etc/conf.d/zram-init` sizes it to half of RAM, zstd) — cold pages of the RAM-resident OS compress well, so a box keeps headroom under load
+* Upgrades reconcile more than packages: releases ship an `rc.base` runlevel table and `confd.base` defaults next to `world.base`, so a newly enabled service or config default reaches boxes that upgrade — via a three-way merge that never undoes a service you disabled, and never overwrites a `conf.d` file you own
 * `/etc/inittab`: gettys on tty1–6 **and** ttyS0, so serial consoles (IPMI SoL, Proxmox `qm terminal`) get a login prompt out of the box
 * `/etc/doas.conf` pre-configured (`permit persist :wheel`)
 * Empty `/etc/motd` and a MountNAS `/etc/issue` banner instead of Alpine's defaults; eudev instead of busybox mdev; chronyd, smartd, crond, acpid, dbus, rpcbind enabled by default
@@ -542,12 +546,13 @@ __System Monitoring__
 
 __Containers__
 
-* docker-engine + docker-cli (the Docker daemon and CLI; building images on-box needs `apk add docker-cli-buildx`)
+* docker-engine + docker-cli (the Docker daemon and CLI)
+* docker-cli-buildx (`docker build` / BuildKit)
 * docker-cli-compose (`docker compose`)
 
 __Memory__
 
-* zram-init (compressed zram swap, on by default — sized to half of RAM in `/etc/conf.d/zram-init`)
+* zram-init (compressed zram swap, on by default — sized to half of RAM in `/etc/conf.d/zram-init`; it lives in the `boot` runlevel)
 
 __UPS monitoring (NUT)__
 

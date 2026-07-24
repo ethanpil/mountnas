@@ -151,7 +151,7 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
 </ul>
 <h3>Choosing hardware</h3>
 <ul>
-<li><b>RAM is the resource that matters:</b> the whole OS unpacks into RAM at boot, with cold pages held in compressed zram swap (on by default). 4&nbsp;GB is the comfortable minimum — 2&nbsp;GB can serve a light non-Docker box — and add headroom for your Docker stack (8&nbsp;GB is comfortable for a typical media box). More disks cost almost no RAM.</li>
+<li><b>RAM is the resource that matters:</b> the whole OS unpacks into a RAM filesystem at boot, and that filesystem is capped at <b>half</b> your RAM — so 4&nbsp;GB is a hard floor, not a preference (a 2&nbsp;GB box cannot fit the system, and swap cannot change that: a RAM filesystem's size limit is charged on allocation, not on residency). Compressed zram swap (on by default) holds cold pages and buys headroom above the floor. Add more for your Docker stack — 8&nbsp;GB is comfortable for a typical media box. More disks cost almost no RAM.</li>
 <li><b>USB stick:</b> a name-brand stick (A1/high-endurance class helps). It is only <i>read</i> at boot and written on <code>nas commit</code>/<code>upgrade</code>, so wear is low — the real enemy is counterfeit flash: verify a new stick with the baked-in <code>f3</code> (<code>f3probe /dev/sdX</code>) before trusting it.</li>
 <li><b>Disk controllers:</b> motherboard SATA ports are ideal. For many disks, a used LSI HBA flashed to IT mode is the community standard. USB disk enclosures work but are the least reliable path (bridge resets look like disk loss — the watcher will tell you).</li>
 <li><b>Network:</b> Intel NICs have the least-troublesome firmware/drivers. 2.5GbE is well supported.</li>
@@ -277,6 +277,7 @@ nas commit                                                 # REQUIRED — the se
 <p><code>nas status</code> and this dashboard understand the override: a deliberately disabled service is listed as disabled, never warned about. Re-enable by editing the list back (or deleting the file), then <code>nas restart</code> <b>and <code>nas commit</code></b> again.</p>
 <h3>Runlevel services</h3>
 <pre><code>rc-service &lt;name&gt; stop &amp;&amp; rc-update del &lt;name&gt; default &amp;&amp; nas commit</code></pre>
+<p>Most services live in the <code>default</code> runlevel. A few start earlier and live in <code>boot</code> (<code>zram-init</code>, <code>ufw</code>) — for those say <code>boot</code> instead of <code>default</code>; <code>rc-status boot</code> lists them. <code>nas upgrade</code> preserves your choice: a service you remove stays removed across upgrades.</p>
 <table>
 <tr><th>Service</th><th>Safe to disable if…</th><th>You lose</th></tr>
 <tr><td><code>avahi-daemon</code></td><td>you use IPs/DNS, not <code>.local</code></td><td>mDNS discovery (stop <code>dbus</code> too if nothing else needs it)</td></tr>
@@ -285,7 +286,7 @@ nas commit                                                 # REQUIRED — the se
 <tr><td><code>smartd</code></td><td>you accept no early disk-failure warning</td><td>SMART monitoring + alerts</td></tr>
 <tr><td><code>rpcbind</code></td><td>you don't serve NFS</td><td>nothing else uses it</td></tr>
 <tr><td><code>acpid</code></td><td>headless, never power-buttoned</td><td>clean shutdown on the power button</td></tr>
-<tr><td><code>zram-init</code></td><td>you have RAM to spare and prefer zero swap</td><td>compressed-RAM swap — the headroom that keeps low-RAM boxes comfortable</td></tr>
+<tr><td><code>zram-init</code> <span class="mut">(boot runlevel)</span></td><td>you have RAM to spare and prefer zero swap</td><td>compressed-RAM swap — the headroom that keeps the OS + Docker comfortable</td></tr>
 <tr><td><code>sshd</code></td><td>⚠️ console-only administration</td><td><b>all remote access</b> — have a monitor/keyboard first</td></tr>
 </table>
 <h3>Optional services</h3>
@@ -475,7 +476,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <p><b>Hardware ID:</b> <code>pciutils</code> <code>usbutils</code> <a href="https://github.com/tuna-f1sh/cyme"><code>cyme</code></a> (modern lsusb) <code>dmidecode</code> <code>lshw</code> <code>lm-sensors</code></p>
 <p><b>Network diagnostics:</b> <code>ethtool</code> <code>iperf3</code> <code>tcpdump</code> <code>mtr</code> <code>bind-tools</code></p>
 <p><b>Monitoring:</b> <code>btop</code> <a href="https://github.com/ClementTsang/bottom"><code>bottom</code></a> (<code>btm</code>) <code>iotop</code> <code>ncdu</code> <a href="https://github.com/muesli/duf"><code>duf</code></a> (better df) <code>sysstat</code> <code>fastfetch</code></p>
-<p><b>Containers:</b> <a href="https://docs.docker.com/"><code>docker-engine</code></a> <code>docker-cli</code> <code>docker-cli-compose</code> (building images on-box: <code>apk add docker-cli-buildx</code>)</p>
+<p><b>Containers:</b> <a href="https://docs.docker.com/"><code>docker-engine</code></a> <code>docker-cli</code> <code>docker-cli-buildx</code> (<code>docker build</code>) <code>docker-cli-compose</code> (<code>docker compose</code>)</p>
 <p><b>Memory:</b> <code>zram-init</code> (compressed zram swap, on by default — sized in <code>/etc/conf.d/zram-init</code>)</p>
 <p><b>UPS:</b> <a href="https://networkupstools.org/"><code>nut</code></a> &middot; <b>Email:</b> <a href="https://marlam.de/msmtp/"><code>msmtp</code></a> <code>mailx</code></p>
 <p><b>Device firmware:</b> a curated consumer-x86 set (Intel/AMD/NVIDIA graphics, common wifi/Bluetooth/wired-NIC blobs, laptop platform firmware). Missing something exotic? <code>dmesg | grep -i firmware</code>, then <code>apk add linux-firmware-&lt;vendor&gt; &amp;&amp; nas commit</code>.</p>

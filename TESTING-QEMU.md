@@ -124,6 +124,7 @@ sh tests/qemu/run-suite.sh img.gz -- -k samba -x          # one test, stop on fa
 | `MOUNTNAS_TEST_TIME_SCALE` | 1 (KVM) / 6 (TCG) | multiplies every timeout in the suite |
 | `MOUNTNAS_TEST_REPO` | `ethanpil/mountnas` | GitHub repo for release downloads |
 | `MOUNTNAS_OVMF` | auto-discovered | UEFI firmware path; empty = UEFI tests skip |
+| `MOUNTNAS_NAS_SRC` | unset | **Upgrade tier only.** Absolute path to a local `mountnas-tools/files/nas`, pushed over `/usr/sbin/nas` in every upgrade guest — this is how you verify a `nas` fix before it is in a release. Set-but-not-a-file is a hard collection error, because silently falling back to the shipped `nas` makes a whole verification run meaningless. Confirm it fired: `grep -c 'cat /usr/sbin/nas.new' <run-dir>/pytest.log` |
 
 ### What happens on the first run
 

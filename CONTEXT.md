@@ -191,8 +191,12 @@ payload too (removed the iso9660 + its xorriso `world.base` embed step).
   (kernel/initramfs/modloop, `/apks`, `world.base`, `alpine.base`, bootloader
   payload, `*-ucode.img` when present) → **commit** with back-to-back renames
   (see the staged-writes invariant, §3) → reconcile `/etc/apk/world`
-  (new base ∪ user extras) → re-pin repos → `write-bootcfg` + `lbu commit` →
-  BOOT remounted read-only → reboot. Config/data untouched. **No automatic
+  (new base ∪ user extras), `/etc/runlevels` (three-way merge against
+  `rc.base`, so user disables survive) and `/etc/conf.d` (create-if-absent
+  against `confd.base`, never overwriting a user's file) → re-pin repos →
+  `write-bootcfg` + `lbu commit` → BOOT remounted read-only → reboot. The
+  config PARTITION and data disks are untouched; the three reconciliations
+  above are the only `/etc` writes, and each announces itself. **No automatic
   rollback** (the full-image `nas backup` is the rollback net).
 - **`nas backup`** images the WHOLE USB (`gzip < /dev/<usb>`) to a file (default
   `/mnt/nasdata/backups`, or `--to`). It briefly remounts `/cfg` ro for a consistent
@@ -238,17 +242,27 @@ msmtp/mailx, restic, testdisk, f3, wireguard-tools, zstd/lz4/xz, xxhash,
 fdupes, microcode boot addons; 1.0rc3: ufw+ufw-openrc shipped disabled — the
 service idles in the boot runlevel, `ufw_nonfatal_if_disabled=yes` seeded in
 `/etc/conf.d/ufw` so a disabled firewall is not a red boot line; borgbackup)
-are tracked in `CHANGELOG.md`. Post-rc3 slimming (launch state): `docker`
-meta → `docker-engine`+`docker-cli` (sheds docker-cli-buildx, 68 MB RAM;
-docker-openrc install_if's off docker-engine so the init script survives;
-mountnas-tools depends updated to match), `mosh` and `lm-sensors-detect`
-dropped (perl + protobuf/abseil fell out of the closure with them, −51 MB;
-nothing in the codebase ever invoked either), `zram-init` added (boot
-runlevel, seeded conf.d computes size0 = half RAM at boot — conf.d is
-sourced as shell; zstd backend confirmed =y in Alpine's lts kernel config).
-Net: tmpfs 1120→1004 MiB, media repo −36 MB. Upgrade migration is automatic:
-world reconciliation diffs against the OLD world.base, so base-dropped
-packages never masquerade as user extras; each entry in
+are tracked in `CHANGELOG.md`. Post-rc3 slimming (launch state): the `docker`
+meta is replaced by its members listed explicitly (`docker-engine`,
+`docker-cli`, `docker-cli-buildx`, `docker-cli-compose`) — **buildx is kept on
+purpose**: since Docker CLI 23 the classic builder is gone from the client and
+`docker build` dispatches through the plugin, so dropping it silently breaks
+every Dockerfile and every compose `build:` stanza (docker-openrc install_if's
+off docker-engine, so the init script survives; mountnas-tools depends updated
+to match). `mosh` and `lm-sensors-detect` dropped (perl + protobuf/abseil fell
+out of the closure with them; nothing in the codebase ever invoked either).
+`zram-init` added (boot runlevel, seeded conf.d computes size0 = half RAM at
+boot — conf.d is sourced as shell; zstd backend confirmed =y in Alpine's lts
+kernel config). Net: tmpfs 1120→1072 MiB, media repo −14 MB. **zram does NOT
+lower the 4 GB floor** — the RAM root is a tmpfs capped at half of physical
+RAM, and a tmpfs charges its quota on allocation, not residency, so swap
+cannot buy space the installer needs (the world also installs in the
+initramfs, before any runlevel starts). Upgrade migration is automatic on both
+axes: world reconciliation diffs against the OLD world.base (base-dropped
+packages never masquerade as user extras), and the rc.base/confd.base
+reconciliation delivers newly enabled services and new conf.d defaults —
+three-way merge for runlevels so user disables survive, create-if-absent for
+conf.d so user config is never overwritten. Each entry in
 `packages.list` carries its own rationale comment. cryptsetup/dmcrypt (LUKS)
 shipped in alpha-6 and was REMOVED in beta-2 at the maintainer's direction —
 do not re-add without an explicit ask. Non-obvious wiring: `mail(1)` → msmtp
