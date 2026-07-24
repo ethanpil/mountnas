@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0rc3] — 2026-07-24
+
+**Third 1.0 release candidate.** An optional host firewall (shipped off, zero
+cost until enabled) and a second backup ecosystem, plus the docs to match.
+
+### Added
+- **ufw baked in — shipped DISABLED, the image stays fully open.** The box keeps trusting its LAN by default; enabling is `ufw allow SSH … && ufw enable && nas commit` — nothing else. The `ufw` service sits in the boot runlevel permanently as a quiet no-op until enabled (`ufw_nonfatal_if_disabled` in the seeded `/etc/conf.d/ufw`), so an enabled firewall loads its rules *before networking* at every boot and there is no "enabled in config but never loads after reboot" trap. Rules + the enable flag live under `/etc/ufw` and persist through the normal overlay — no lbu include needed. Net cost ~0.3 MB: `iptables`/`ip6tables` (one merged package) were already on the image as a Docker dependency, `python3` via iotop/nfs-utils. Docker-published ports bypass ufw (Docker programs its own rules) — documented in README "Firewall".
+- **Firewall visibility.** `nas status` shows the firewall state — `off` is a dim hint (it's the shipped default), active shows the rule count, and the one dangerous state warns loudly: `ENABLED=yes` in `ufw.conf` with no chains actually loaded (a box that *believes* it has a firewall). Probed via one iptables chain lookup, no python spawn on monitoring polls. `nas status --json` gains a `firewall` field (`active`/`off`/`broken`); the web dashboard gets a ufw pill in Services plus a collapsible "Firewall (ufw)" card rendering the full `ufw status verbose` ruleset (default policies, logging, every rule) — or the enable recipe while disabled.
+- **borgbackup baked in** (~3 MB with its py3 deps) — same job as the already-shipped restic (encrypted/deduplicated/versioned data backups), different repo format and ecosystem; ships for users already invested in Borg/borgmatic/Vorta.
+
+### Docs
+- **README gains "What's different from stock Alpine"** — a terse inventory (with install paths) of everything MountNAS adds or changes over a stock Alpine diskless image: custom tooling, persistence model, shipped-config deltas, boot/image-level changes.
+
 ## [1.0rc2] — 2026-07-17
 
 **Second 1.0 release candidate.** A round of correctness and robustness fixes
