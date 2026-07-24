@@ -106,7 +106,7 @@ load_on_start=yes
 unload_on_stop=yes
 num_devices=1
 type0=swap
-flag0=          # empty = default swap priority
+flag0=          # empty = top swap priority (16383); use "-" for the default (-1)
 algo0=zstd
 # half of physical RAM, computed at boot (value in MB)
 size0=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 2048 ))
