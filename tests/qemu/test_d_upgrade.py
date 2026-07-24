@@ -16,6 +16,7 @@ kernel/modloop pair, never a missing /apks).
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 
@@ -50,6 +51,29 @@ def prev_base(suite_config, prev_image_bundle, golden):
 # so the suite tests the repo's nas (with local fixes) rather than only the
 # nas baked into the released image.  Unset -> tests the shipped nas as-is.
 NAS_SRC = os.environ.get("MOUNTNAS_NAS_SRC", "")
+if NAS_SRC and not Path(NAS_SRC).is_file():
+    # Set-but-unusable used to be indistinguishable from unset: the guards below
+    # silently skipped injection and the whole upgrade tier went green against
+    # the SHIPPED nas. That is exactly how the 1.0rc3 loop-mount fix's first
+    # verification round fooled itself, so fail loudly at collection instead.
+    raise RuntimeError(
+        f"MOUNTNAS_NAS_SRC={NAS_SRC!r} is not a file — upgrade tests would "
+        "silently test the shipped nas instead of your local one. Use an "
+        "absolute path on the machine running the suite, or unset it."
+    )
+
+
+def _inject_repo_nas(guest):
+    """Push the repo's `nas` over the guest's, when MOUNTNAS_NAS_SRC is set.
+
+    ONE copy shared by every upgrade fixture: the golden-guest fixture was
+    missing this block, which silently invalidated verification runs.
+    """
+    if not NAS_SRC:
+        return
+    guest.push(Path(NAS_SRC), "/usr/sbin/nas.new")
+    guest.run("cat /usr/sbin/nas.new > /usr/sbin/nas && rm /usr/sbin/nas.new "
+              "&& chmod +x /usr/sbin/nas", check=True)
 
 
 @pytest.fixture
@@ -62,11 +86,9 @@ def upgrade_guest(guest_factory, golden, payload_dir, tmp_path):
         guest = guest_factory(disks, name=name, mem_mb=mem_mb,
                               ssh_key=golden.ssh_key,
                               throwaway=[sysd, payd])
-        if NAS_SRC and Path(NAS_SRC).is_file():
+        if NAS_SRC:
             guest.wait_ssh(timeout=420)
-            guest.push(Path(NAS_SRC), "/usr/sbin/nas.new")
-            guest.run("cat /usr/sbin/nas.new > /usr/sbin/nas && rm /usr/sbin/nas.new "
-                      "&& chmod +x /usr/sbin/nas", check=True)
+            _inject_repo_nas(guest)
         return guest, disks, (sysd, payd)
     return make
 
@@ -286,14 +308,7 @@ def upgrade_golden_guest(guest_factory, overlay_disks, payload_dir, golden,
                               ssh_key=golden.ssh_key,
                               throwaway=[sysd, datad, payd])
         guest.wait_ssh(timeout=420)
-        # same repo-nas injection as upgrade_guest — this fixture's omission
-        # meant MOUNTNAS_NAS_SRC re-runs of the golden-based upgrade tests
-        # silently exercised the SHIPPED nas (found verifying the 1.0rc3
-        # loop-mount fix: 3 "fix" re-runs had no fix in them)
-        if NAS_SRC and Path(NAS_SRC).is_file():
-            guest.push(Path(NAS_SRC), "/usr/sbin/nas.new")
-            guest.run("cat /usr/sbin/nas.new > /usr/sbin/nas && rm /usr/sbin/nas.new "
-                      "&& chmod +x /usr/sbin/nas", check=True)
+        _inject_repo_nas(guest)
         guest.wait_ready()      # docker + samba converged on /mnt/nasdata
         return guest
     return make
@@ -449,3 +464,49 @@ def test_free_space_precheck_aborts(upgrade_guest, golden):
     assert "not enough free space" in r.out.lower() or "free space" in r.out.lower(), \
         r.out[-1500:]
     assert guest.run("ls /media/mnasboot/boot/vmlinuz-lts").rc == 0
+
+
+def test_runlevel_and_confd_reconciliation(upgrade_guest, golden):
+    """A newly enabled service and a newly seeded /etc/conf.d default must
+    reach a box that UPGRADES, while every user decision survives.
+
+    Until rc.base shipped, `rc_add` only wrote into the seed apkovl on the
+    config partition, which `nas upgrade` never touches -- so ufw (1.0rc3)
+    and zram-init reached freshly flashed sticks only, and an upgraded box
+    silently had no firewall wiring and no swap. The reconciliation is a
+    THREE-WAY merge, not the union the world uses, because removing a service
+    from its runlevel is the one documented way to disable it: this asserts
+    both halves -- what is new arrives, and what the user disabled stays
+    disabled."""
+    guest, _, _ = upgrade_guest(golden.base_img, name="rcrec")
+    guest.wait_ssh(timeout=420)
+
+    if guest.run("test -f /media/mnasboot/rc.base").rc != 0:
+        pytest.skip("image predates rc.base (no runlevel reconciliation to test)")
+
+    # --- user drift: disable a shipped service, enable an off-by-default one ---
+    guest.run("rc-service smartd stop; rc-update del smartd default", check=True)
+    guest.run("rc-update add tailscale default", check=True)
+    # ...and simulate the pre-rc.base gap this mechanism exists to heal
+    guest.run("rc-update del zram-init boot", check=True)
+    guest.run("rm -f /etc/conf.d/zram-init", check=True)
+    guest.run("nas commit -m 'rc drift'", timeout=180, check=True)
+
+    r = guest.run(UPGRADE_CMD, timeout=2400)
+    assert r.rc == 0 and "Upgrade written successfully" in r.out, r.out[-3000:]
+    guest.reboot(); guest.wait_ssh(timeout=420)
+
+    rc = guest.run("rc-update show", check=True).out
+    # what the release ships and the box lacked comes back...
+    assert re.search(r"^\s*zram-init\s", rc, re.M), \
+        f"zram-init not restored by the reconciliation:\n{rc}"
+    assert guest.run("test -f /etc/conf.d/zram-init").rc == 0, \
+        "seeded /etc/conf.d/zram-init not delivered to the upgraded box"
+    assert guest.run("grep -q zram /proc/swaps").rc == 0, \
+        "zram swap still absent after the upgrade reconciled the runlevels"
+    # ...while BOTH user decisions survive
+    assert not re.search(r"^\s*smartd\s", rc, re.M), \
+        f"upgrade re-enabled a service the user deliberately disabled:\n{rc}"
+    assert re.search(r"^\s*tailscale\s", rc, re.M), \
+        f"upgrade dropped a service the user enabled:\n{rc}"
+    guest.screenshot("runlevel-reconciliation")

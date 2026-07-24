@@ -299,7 +299,17 @@ def test_released_image_ships_expected_files(wired_shared_guest):
             "ufw-openrc missing (firewall could never load at boot)"
     if g.run("apk info -e borgbackup").rc == 0:
         assert g.run("command -v borg").rc == 0
-    # zram swap joins at the post-rc3 slimming — hard-assert once shipped
+    # zram swap joins at the post-rc3 slimming — hard-assert once shipped.
+    # Existence alone is not enough: the package ships its OWN conf.d default
+    # (a fixed 512 MB swap plus a zram /tmp), so a green "some zram exists"
+    # would hide MountNAS's seeded sizing never taking effect.
     if g.run("apk info -e zram-init").rc == 0:
         assert g.run("grep -q zram /proc/swaps").rc == 0, \
             "zram-init installed but no zram swap active (boot runlevel wiring broken?)"
+        assert g.run("test ! -e /dev/zram1").rc == 0, \
+            "a second zram device exists — the package's stock conf.d won over ours"
+        # seeded size0 is half of RAM; /proc/swaps reports KiB in column 3
+        sw = int(g.run("awk 'NR==2{print $3}' /proc/swaps", check=True).out.strip())
+        mt = int(g.run("awk '/^MemTotal:/{print $2}' /proc/meminfo", check=True).out.strip())
+        assert 0.4 < sw / mt < 0.6, \
+            f"zram swap is {sw} KiB against {mt} KiB RAM — expected ~half (seeded size0 not applied?)"
