@@ -35,6 +35,10 @@ rclone
 # restic: encrypted, deduplicated, VERSIONED backups (rclone syncs, restic
 # backs up) to local paths, SFTP, S3, or any rclone remote. Static binary.
 restic
+# borgbackup: same job as restic (dedup/encrypted/versioned archives) with a
+# different repo format + ecosystem (borgmatic, Vorta) — both ship so users
+# keep whichever workflow they already have. python3 is on the image anyway.
+borgbackup
 openssh
 openssh-client
 openssh-sftp-server
@@ -53,6 +57,16 @@ zerotier-one
 # plain kernel WireGuard (wg + wg-quick) for point-to-point/site-to-site
 # links — the module already ships in linux-lts; no service, bring up per use
 wireguard-tools
+
+# --- host firewall (ufw — shipped DISABLED, the image is fully open) ---
+# ufw drives iptables/ip6tables (one merged 'iptables' pkg in v3.24, already
+# present as a docker-engine dep; python3 likewise already on the image, so
+# these two cost ~0.3 MB). Rules + the enable flag live under /etc/ufw and
+# persist via the normal lbu overlay. The ufw service sits in the boot
+# runlevel but is a quiet no-op until 'ufw enable' (see conf.d/ufw in
+# genapkovl) — enabling is one command + nas commit, no runlevel work.
+ufw
+ufw-openrc
 
 # --- name resolution / discovery ---
 avahi

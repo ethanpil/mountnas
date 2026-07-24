@@ -91,6 +91,19 @@ mk root:root 0400 "$tmp/etc/doas.conf" <<'EOF'
 permit persist :wheel
 EOF
 
+# ---- ufw: shipped DISABLED (the image is fully open — README "Firewall") ----
+# The service lives in the boot runlevel permanently so that 'ufw enable' +
+# 'nas commit' is ALL a user does: rules then load before networking at every
+# boot, and there is no "enabled in config but never loads after reboot"
+# trap. The init script (Gentoo lineage) treats the disabled state as a start
+# FAILURE by default, which would paint every boot of the shipped-open image
+# with a red openrc line — this flag makes disabled a quiet success instead.
+mk root:root 0644 "$tmp/etc/conf.d/ufw" <<'EOF'
+# MountNAS: a disabled firewall (the shipped default) is a quiet no-op at
+# boot, not a service failure. You own this file (edit, then: nas commit).
+ufw_nonfatal_if_disabled=yes
+EOF
+
 mk root:root 0644 "$tmp/etc/docker/daemon.json" <<'EOF'
 {
   "data-root": "/mnt/nasdata/docker",
@@ -353,6 +366,7 @@ rc_add mountnas-mkdirs boot      # mkdir fstab mountpoints BEFORE localmount (no
 rc_add localmount boot
 rc_add networking boot
 rc_add mountnas-net boot         # dynamic wired DHCP (from mountnas-tools)
+rc_add ufw boot                  # firewall — quiet no-op until 'ufw enable' (conf.d/ufw); 'before net' loads rules pre-networking
 rc_add mountnas-sshkey boot     # install SSH key from BOOT partition (before sshd)
 rc_add seedrng boot
 rc_add cgroups boot

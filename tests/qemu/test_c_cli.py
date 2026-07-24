@@ -292,3 +292,10 @@ def test_released_image_ships_expected_files(wired_shared_guest):
     # avahi-tools joins packages.list at beta-7 — hard-assert once shipped
     if g.run("apk info -e avahi-tools").rc == 0:
         assert g.run("command -v avahi-resolve-host-name").rc == 0
+    # ufw + borgbackup join packages.list at 1.0rc3 — hard-assert once shipped
+    if g.run("apk info -e ufw").rc == 0:
+        assert g.run("command -v ufw").rc == 0
+        assert g.run("test -e /etc/init.d/ufw").rc == 0, \
+            "ufw-openrc missing (firewall could never load at boot)"
+    if g.run("apk info -e borgbackup").rc == 0:
+        assert g.run("command -v borg").rc == 0

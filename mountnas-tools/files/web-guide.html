@@ -253,6 +253,14 @@ upsc ups            # shows status, charge, runtime
 nas commit</code></pre></li>
 </ol>
 <p>The dashboard's Services card shows charge/runtime once it's running. Dry-run the shutdown path with <code>upsmon -c fsd</code> <b>only when you mean it</b> — it powers the box off.</p>
+<h3>Firewall (<a href="https://launchpad.net/ufw">ufw</a>) — off by default</h3>
+<p>ufw is baked in but <b>disabled</b>: the box ships fully open, trusting your LAN and your router's perimeter. To turn it on, allow your services <b>first</b> (or you lock yourself out), then enable and save:</p>
+<pre><code>ufw allow SSH             # FIRST — port 22
+ufw allow CIFS            # samba; 'ufw app list' shows all profiles (NFS, ...)
+ufw allow 8080/tcp        # if you use 'nas web'  (22222 for the terminal)
+ufw enable                # active now AND at every boot (loads before networking)
+nas commit                # rules + the enable flag live in /etc/ufw</code></pre>
+<p><code>nas status</code> shows the firewall state (and flags an enabled config whose rules aren't loaded); this dashboard renders the full ruleset while it's active. <b>Docker-published ports bypass ufw</b> (Docker programs its own iptables rules) — publish to <code>127.0.0.1:</code> or use internal Docker networks for containers that must stay private. Off again: <code>ufw disable &amp;&amp; nas commit</code>.</p>
 <h3>Admin users</h3>
 <pre><code>adduser bob wheel &amp;&amp; nas commit    # wheel = doas (sudo) rights</code></pre>
 </section>
@@ -280,7 +288,7 @@ nas commit                                                 # REQUIRED — the se
 <tr><td><code>sshd</code></td><td>⚠️ console-only administration</td><td><b>all remote access</b> — have a monitor/keyboard first</td></tr>
 </table>
 <h3>Optional services</h3>
-<p>Tailscale, ZeroTier and NUT ship off; if you enabled one, the same stop + <code>rc-update del</code> + commit removes it. The dashboard and terminal: <code>nas web off</code> / <code>nas ttyd off</code>, then <code>nas commit</code>. WireGuard has no daemon — <code>wg-quick down &lt;iface&gt;</code> and remove your local.d/cron hook.</p>
+<p>Tailscale, ZeroTier, NUT and the ufw firewall ship off; if you enabled one, the same stop + <code>rc-update del</code> + commit removes it (the firewall: just <code>ufw disable &amp;&amp; nas commit</code> — its service stays in the boot runlevel as a no-op by design). The dashboard and terminal: <code>nas web off</code> / <code>nas ttyd off</code>, then <code>nas commit</code>. WireGuard has no daemon — <code>wg-quick down &lt;iface&gt;</code> and remove your local.d/cron hook.</p>
 <div class="warn"><b>Don't <code>apk del</code> baked-in packages to disable a service</b> — <code>nas upgrade</code>'s world reconciliation restores the base package set, so the binaries return by design. Disabling the <i>service</i> is the supported, upgrade-proof way; idle binaries cost nothing (the OS lives in RAM regardless).</div>
 </section>
 
@@ -348,7 +356,7 @@ nas commit -m "added media share"  # save, with a label
 nas rollback --list                # previous saved configs (with your labels)
 nas rollback 1 &amp;&amp; nas reboot       # restore one (applies at next boot)</code></pre>
 <h3>Backup (the rollback net)</h3>
-<p><code>nas backup</code> images the <b>whole boot USB</b> (OS + saved config) to a verified gzip file — default <code>/mnt/nasdata/backups</code>. <b>Copy it off the box.</b> Recovery = write it to a different stick and boot. Data disks are separate — back those up with <a href="https://restic.net/">restic</a>/<a href="https://rclone.org/">rclone</a> (both included).</p>
+<p><code>nas backup</code> images the <b>whole boot USB</b> (OS + saved config) to a verified gzip file — default <code>/mnt/nasdata/backups</code>. <b>Copy it off the box.</b> Recovery = write it to a different stick and boot. Data disks are separate — back those up with <a href="https://restic.net/">restic</a>/<a href="https://rclone.org/">rclone</a> (both included; <a href="https://www.borgbackup.org/">borgbackup</a> is included too if Borg is your ecosystem).</p>
 <h3>Off-box data backup (restic)</h3>
 <p><a href="https://restic.net/">restic</a> gives encrypted, deduplicated, versioned backups to SFTP, S3/B2, or any <a href="https://rclone.org/">rclone</a> remote. One-time setup — keep the credentials in <code>/root</code> (it persists via lbu):</p>
 <pre><code>cat &gt; /root/.restic.env &lt;&lt;'ENV'
@@ -459,8 +467,8 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <p><b>Parity / volumes:</b> <a href="https://www.snapraid.it/"><code>snapraid</code></a> (built from source) &middot; <a href="https://github.com/trapexit/mergerfs"><code>mergerfs</code></a> (upstream static build) &middot; <code>mdadm</code> <code>lvm2</code></p>
 <p><b>Disk health / recovery / benchmark:</b> <a href="https://www.smartmontools.org/"><code>smartmontools</code></a> <code>nvme-cli</code> <code>hdparm</code> <code>lsscsi</code> <code>sg3_utils</code> <code>ddrescue</code> <a href="https://www.cgsecurity.org/wiki/TestDisk"><code>testdisk</code></a> <code>f3</code> <code>fio</code></p>
 <p><b>Integrity / dedup / compression:</b> <code>xxhash</code> <code>fdupes</code> <code>zstd</code> <code>lz4</code> <code>xz</code></p>
-<p><b>Networking / transfer:</b> <code>curl</code> <code>wget</code> <code>rsync</code> <a href="https://rclone.org/"><code>rclone</code></a> <a href="https://restic.net/"><code>restic</code></a> <code>openssh</code> <a href="https://mosh.org/"><code>mosh</code></a> <a href="https://github.com/tsl0922/ttyd"><code>ttyd</code></a> (browser terminal — <code>nas ttyd on</code>)</p>
-<p><b>VPN / mesh (off by default):</b> <a href="https://tailscale.com/"><code>tailscale</code></a> <a href="https://www.zerotier.com/"><code>zerotier-one</code></a> <a href="https://www.wireguard.com/"><code>wireguard-tools</code></a></p>
+<p><b>Networking / transfer:</b> <code>curl</code> <code>wget</code> <code>rsync</code> <a href="https://rclone.org/"><code>rclone</code></a> <a href="https://restic.net/"><code>restic</code></a> <a href="https://www.borgbackup.org/"><code>borgbackup</code></a> <code>openssh</code> <a href="https://mosh.org/"><code>mosh</code></a> <a href="https://github.com/tsl0922/ttyd"><code>ttyd</code></a> (browser terminal — <code>nas ttyd on</code>)</p>
+<p><b>VPN / mesh (off by default):</b> <a href="https://tailscale.com/"><code>tailscale</code></a> <a href="https://www.zerotier.com/"><code>zerotier-one</code></a> <a href="https://www.wireguard.com/"><code>wireguard-tools</code></a> &middot; <b>Firewall (off by default):</b> <a href="https://launchpad.net/ufw"><code>ufw</code></a></p>
 <p><b>Discovery / sharing:</b> <code>avahi</code> <code>avahi-tools</code> <code>dbus</code> <a href="https://www.samba.org/"><code>samba</code></a> <code>nfs-utils</code></p>
 <p><b>Filesystems:</b> <code>e2fsprogs</code> <code>xfsprogs</code> <code>btrfs-progs</code> <code>f2fs-tools</code> <code>exfatprogs</code> <code>dosfstools</code> <code>ntfs-3g-progs</code> <code>hfsprogs</code> <code>udftools</code> <code>fuse</code>/<code>fuse3</code> <code>fuse-overlayfs</code></p>
 <p><b>Hardware ID:</b> <code>pciutils</code> <code>usbutils</code> <a href="https://github.com/tuna-f1sh/cyme"><code>cyme</code></a> (modern lsusb) <code>dmidecode</code> <code>lshw</code> <code>lm-sensors</code></p>

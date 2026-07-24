@@ -143,7 +143,7 @@ The `nas` tool has been designed to help you manage the system.
 | Command | Description |
 | --- | --- |
 | `nas setup` | Guided first-run setup (starts automatically at first login until completed once): hostname, root password, timezone, network, then saves. |
-| `nas status` | Health + storage-config check (fast, no disk spin-up): IP + `hostname.local`, RAM, sensors (CPU/disk temps, fans), config/data mount state, key services, unsaved-change count, whether disk-loss email alerts are configured, plus fstab checks (UUIDs resolve, `nofail` present, nothing resolves to the boot USB, no data path tracked by `lbu`, share/export paths land on real mounts). **Exits 1 if any `[FAIL]` fired** (2 if check tracking itself was unavailable) — usable as a cron/monitoring probe. Tags are color-coded on a terminal. |
+| `nas status` | Health + storage-config check (fast, no disk spin-up): IP + `hostname.local`, RAM, sensors (CPU/disk temps, fans), config/data mount state, key services, firewall state, unsaved-change count, whether disk-loss email alerts are configured, plus fstab checks (UUIDs resolve, `nofail` present, nothing resolves to the boot USB, no data path tracked by `lbu`, share/export paths land on real mounts). **Exits 1 if any `[FAIL]` fired** (2 if check tracking itself was unavailable) — usable as a cron/monitoring probe. Tags are color-coded on a terminal. |
 | `nas status --deep` | Everything `nas status` does **plus** SMART, SnapRAID status, fstab verify, and time-sync. Kept opt-in because SMART can wake sleeping disks and SnapRAID status is slow. |
 | `nas status --json` | The same checks, machine-readable (state facts, per-service flags, ok/warn/fail counts and lines) for Uptime Kuma/Zabbix/Homepage integrations. Same exit-code contract. |
 | `nas disks` | Hardware + partition inventory in a compact two-line-per-item layout that fits a serial console: a dashed header per disk (name, size, bus, HDD/SSD, temperature — read without waking sleeping drives), identity beneath (vendor, model, serial, firmware), then each partition with fstype/label/mount/free space and its UUID on its own line. Marks the boot USB, shows the fstab mapping, and prints a paste-ready fstab line per unconfigured partition, ending in a comment with the drive's model + serial. `--json` emits the same inventory machine-readable. |
@@ -178,6 +178,7 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Browser terminal (ttyd)** (off by default): `nas ttyd on && nas commit` — a real login prompt at `http://<box>:22222/` (root works; `on` whitelists ptys in `/etc/securetty` once). Handy when SSH is awkward — a tablet, a borrowed machine, a quick look from the couch.
 - **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`.
 - **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
+- **Firewall (ufw)** (off by default): the image ships fully open. `ufw allow SSH && ufw enable && nas commit` to turn it on — see [Firewall](#firewall) first.
 - **New admin user**: `adduser <name> wheel` (so `doas` works), then `nas commit`.
 
 ## Disabling Unused Services
@@ -213,7 +214,7 @@ What each one costs you if disabled:
 | `acpid` | headless box you never power-button | clean shutdown on the power button |
 | `sshd` | ⚠️ console-only administration | **all remote access — be sure you have a monitor/keyboard** |
 
-**Optional services** (Tailscale, ZeroTier, NUT, the web dashboard, the browser terminal) ship off. If you enabled one and want it gone: the same stop + `rc-update del` + commit (`nas web off` / `nas ttyd off` + `nas commit` for the web pair; WireGuard has no service — `wg-quick down <iface>` and remove your local.d/cron hook).
+**Optional services** (Tailscale, ZeroTier, NUT, the web dashboard, the browser terminal, the ufw firewall) ship off. If you enabled one and want it gone: the same stop + `rc-update del` + commit (`nas web off` / `nas ttyd off` + `nas commit` for the web pair; `ufw disable` + `nas commit` for the firewall — its service stays in the boot runlevel as a no-op by design; WireGuard has no service — `wg-quick down <iface>` and remove your local.d/cron hook).
 
 **Don't `apk del` baked-in packages to disable a service** — the base package set is restored by `nas upgrade`'s world reconciliation, so the binaries come back (deliberately). Disabling the *service* is the supported, upgrade-proof way; the idle binaries on disk cost nothing since the whole OS lives in RAM anyway.
 
@@ -279,7 +280,23 @@ From cron, pipe anything into a notification: `snapraid sync 2>&1 | nas notify "
 
 ## Firewall
 
-None included as it is out of scope for this project. Secure at your router/LAN. Docker-published ports bypass host firewalls anyway.
+**ufw ships in the image but is OFF by default** — the box comes up fully open, on the
+usual NAS assumption that the LAN is trusted and your router is the perimeter. If your
+LAN isn't that (shared housing, IoT devices, a lab), enabling it is one command — but
+allow your services **first** so you don't lock yourself out:
+
+```sh
+ufw allow SSH             # do this FIRST (port 22)
+ufw allow CIFS            # samba — 'ufw app list' shows the shipped profiles (NFS, ...)
+ufw allow 8080/tcp        # only if you use 'nas web'   (22222 for 'nas ttyd')
+ufw enable                # takes effect now AND loads at every boot (before networking)
+nas commit                # REQUIRED — rules + the enable flag live in /etc/ufw
+```
+
+* Defaults once enabled: incoming **deny**, outgoing allow; IPv6 is covered by the same commands (ufw drives iptables *and* ip6tables).
+* `nas status` shows the firewall state — including the one dangerous case, an enabled config whose rules aren't actually loaded. The web dashboard shows the full ruleset (`ufw status verbose`).
+* **Docker-published ports bypass ufw** — Docker programs its own iptables rules ahead of ufw's. Publish to `127.0.0.1:` or use internal Docker networks for containers that must not be exposed; your router remains the real perimeter.
+* Turn it back off: `ufw disable && nas commit`.
 
 ## Recovery from a dead USB
 
@@ -372,7 +389,7 @@ __Boot / image level__
 * Kernel cmdline includes disk-bus drivers (ahci/nvme/virtio) so the image also boots as a VM disk, not just a USB stick; the config overlay is found by partition label
 * AMD + Intel early CPU microcode shipped as boot addons
 * The `linux-lts` apk is deliberately absent from the on-media repo — kernel updates arrive only via `nas upgrade` replacing `/boot`
-* No firewall included (out of scope — see [Firewall](#firewall))
+* ufw baked in but shipped **disabled** — its service idles in the boot runlevel as a quiet no-op (`/etc/conf.d/ufw`) until `ufw enable`, then rules load before networking at every boot (see [Firewall](#firewall))
 
 ## Baked in Packages
 
@@ -450,6 +467,7 @@ __Networking / Transfer__
 * rsync
 * rclone
 * restic (encrypted, deduplicated, versioned backups — to local disks, SFTP, S3, or any rclone remote)
+* borgbackup (same job as restic, different repo format/ecosystem — for users already on Borg/borgmatic/Vorta)
 * openssh
 * openssh-client
 * openssh-sftp-server
@@ -461,6 +479,10 @@ __Overlay / Mesh VPN (services OFF by default)__
 * tailscale
 * zerotier-one
 * wireguard-tools (plain kernel WireGuard: wg + wg-quick)
+
+__Host Firewall (OFF by default — see [Firewall](#firewall))__
+
+* ufw (+ ufw-openrc; drives the iptables/ip6tables already present as a Docker dependency)
 
 __Name Resolution / Discovery__
 

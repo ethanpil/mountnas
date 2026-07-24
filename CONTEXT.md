@@ -235,7 +235,10 @@ upstream.
 
 Package additions after the plan (alpha-3…: zsh/mosh, curated firmware set,
 msmtp/mailx, restic, testdisk, f3, wireguard-tools, zstd/lz4/xz, xxhash,
-fdupes, microcode boot addons) are tracked in `CHANGELOG.md`; each entry in
+fdupes, microcode boot addons; 1.0rc3: ufw+ufw-openrc shipped disabled — the
+service idles in the boot runlevel, `ufw_nonfatal_if_disabled=yes` seeded in
+`/etc/conf.d/ufw` so a disabled firewall is not a red boot line; borgbackup)
+are tracked in `CHANGELOG.md`; each entry in
 `packages.list` carries its own rationale comment. cryptsetup/dmcrypt (LUKS)
 shipped in alpha-6 and was REMOVED in beta-2 at the maintainer's direction —
 do not re-add without an explicit ask. Non-obvious wiring: `mail(1)` → msmtp

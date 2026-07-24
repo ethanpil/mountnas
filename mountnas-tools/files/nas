@@ -194,6 +194,7 @@ ${C_HD}Important files & paths${C_NO} (edit, then: nas commit)
   ${C_B}/etc/nut/${C_NO}                UPS: nut.conf, ups.conf, upsd.conf, upsmon.conf
   ${C_B}/etc/smartd.conf${C_NO}         SMART alerts;  /etc/chrony/chrony.conf time sync
   ${C_B}/etc/ssh/sshd_config${C_NO}     SSH;  /root/.ssh/authorized_keys = your keys
+  ${C_B}/etc/ufw/${C_NO}                Firewall — OFF by default (README "Firewall")
   ${C_B}/var/lib/zerotier-one${C_NO}    ZeroTier;  /var/lib/tailscale  Tailscale state
   ${C_B}crontab -e${C_NO}               Scheduled jobs (e.g. SnapRAID sync/scrub)
 
@@ -229,7 +230,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -325,6 +326,20 @@ cmd_status() {
 		fi
 	else
 		hint "alerts off (add sinks to /etc/mountnas/notify.conf — email/ntfy/webhook/...)"
+	fi
+	# firewall (ufw): shipped disabled — the box trusts its LAN, so "off" is a
+	# dim hint, never a warning. Active is probed via the loaded ufw chains
+	# (one iptables lookup — no python spawn on every status/monitoring poll).
+	# The state worth catching loudly: ENABLED=yes in ufw.conf but no chains
+	# loaded — the box believes it has a firewall and is silently wide open.
+	if iptables -nL ufw-user-input >/dev/null 2>&1; then
+		fwr=$(cat /etc/ufw/user.rules /etc/ufw/user6.rules 2>/dev/null | grep -c '^### tuple')
+		ok "firewall (ufw) active — $fwr rule(s)"; _rec FW active
+	elif [ "$(awk -F= '$1=="ENABLED"{print tolower($2)}' /etc/ufw/ufw.conf 2>/dev/null)" = yes ]; then
+		warn "firewall enabled in config but NOT loaded — run: rc-service ufw restart"; _rec FW broken
+	else
+		hint "firewall (ufw) off — box is LAN-open (enable: ufw allow SSH; ufw enable; nas commit)"
+		_rec FW off
 	fi
 
 	# JSON mode skips the sensors block: its data has no JSON representation,
@@ -536,6 +551,7 @@ cmd_status_json() {
 	  ips: ($ips|split(" ")|map(select(length>0))),
 	  config_partition:$cfg, data_disk:$data,
 	  services: [$r[] | select(.[0]=="SVC") | {name:.[1], running:(.[2]=="true")}],
+	  firewall: (msgs("FW")[0] // "unknown"),
 	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch, deep:$deep,
 	  healthy: ($failed|not),
 	  checks: {ok: (msgs("OK")|length), warn: (msgs("WARN")|length), fail: (msgs("FAIL")|length)},

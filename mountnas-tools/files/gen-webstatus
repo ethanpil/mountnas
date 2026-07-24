@@ -159,6 +159,34 @@ for s in tailscale zerotier-one nut-upsd nut-upsmon; do
 		services="$services <span class=\"pill p-off\"><i></i>$s</span>"
 	fi
 done
+# firewall (ufw, shipped disabled): active = its iptables chains are loaded
+# (same no-python probe as nas status). When active, the full ruleset renders
+# into a collapsible card via 'ufw status verbose' — state, default policies,
+# logging, every rule; spawning python for that is fine at render time (root,
+# every ~2 min) and never happens at request time. Chain/rule reads touch no
+# disk, so the no-spin-up contract holds.
+if iptables -nL ufw-user-input >/dev/null 2>&1; then
+	services="$services <span class=\"pill p-ok\"><i></i>ufw</span>"
+	fw_n=$(cat /etc/ufw/user.rules /etc/ufw/user6.rules 2>/dev/null | grep -c '^### tuple')
+	fw_out=$(timeout 10 ufw status verbose 2>/dev/null | esc)
+	[ -n "$fw_out" ] || fw_out="(ufw active — no report; run 'ufw status verbose' over SSH)"
+	fw_sum="active &middot; $fw_n rule(s)"
+else
+	services="$services <span class=\"pill p-off\"><i></i>ufw</span>"
+	fw_sum="disabled &mdash; all ports open (shipped default)"
+	fw_out="The firewall is disabled: the box accepts every connection (the shipped
+default — MountNAS trusts its LAN and your router's perimeter).
+
+To enable it, allow your services FIRST, then switch on and save:
+  ufw allow SSH
+  ufw allow CIFS          # samba;  'ufw app list' shows all profiles (NFS, ...)
+  ufw allow 8080/tcp      # this dashboard (and 22222 for the web terminal)
+  ufw enable
+  nas commit
+Docker-published ports bypass ufw — Docker programs its own iptables rules."
+fi
+fw_card="<details class=\"card\"><summary>Firewall (ufw) <span class=\"mut\">($fw_sum)</span></summary><pre class=\"log\">$fw_out</pre></details>"
+
 wg_ifs=$(wg show interfaces 2>/dev/null | tr '\n' ' ')
 if [ -n "${wg_ifs% }" ]; then
 	services="$services <span class=\"pill p-ok\"><i></i>wireguard (${wg_ifs% })</span>"
@@ -577,6 +605,7 @@ $disk_rows
     </table>
   </div>
   $docker_table
+  $fw_card
   <details class="card">
     <summary>Hardware inventory <span class="mut">(USB tree &middot; PCI devices &middot; memory modules)</span></summary>
     <pre class="log">== USB (lsusb -tv) ==
