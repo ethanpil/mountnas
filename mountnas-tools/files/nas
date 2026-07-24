@@ -93,6 +93,15 @@ _path_on_disk() {
 _boot_usb_disk() {
 	lsblk -no pkname "$(findfs LABEL=BOOT 2>/dev/null)" 2>/dev/null | head -n1
 }
+# Real disks only. lsblk types zram/ram devices as "disk" too, and every
+# MountNAS box runs a zram swap device — without this filter it shows up as a
+# phantom drive in the inventories and collects pointless smartctl/hdparm
+# probes. THE single copy for the shell loops; the jq paths (cmd_disks,
+# cmd_disks_json) carry the same name pattern inline.
+_phys_disks() {
+	lsblk -dno NAME,TYPE 2>/dev/null \
+		| awk '$2=="disk" && $1 !~ /^(fd|sr|loop|ram|zram)/{print $1}'
+}
 # ---------- append-only operations log (nas history) ----------
 # One line per destructive/notable operation, written DIRECTLY to /cfg (the
 # ext4 config partition) — NOT the RAM overlay, so it persists immediately
@@ -230,7 +239,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -245,7 +254,10 @@ cmd_status() {
 		"$C_B" "$RELEASE" "$(hostname)" "$(hostname)" \
 		"$(_uptime_h "$(cut -d. -f1 /proc/uptime)")" "$C_NO"
 	ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | paste -sd' ')
-	echo "  IP: ${ip:-none}    RAM: $(free -m | awk '/Mem:/{print $3"/"$2" MB"}')"
+	# swap is part of the memory picture on a RAM-root box (zram holds the cold
+	# pages), so it belongs on the same line — omitted entirely when there is none
+	swp=$(awk '/^SwapTotal:/{t=$2} /^SwapFree:/{f=$2} END{if (t>0) printf "    Swap: %d/%d MB", (t-f)/1024, t/1024}' /proc/meminfo 2>/dev/null)
+	echo "  IP: ${ip:-none}    RAM: $(free -m | awk '/Mem:/{print $3"/"$2" MB"}')${swp}"
 
 	hdr "system"
 	mountpoint -q "$CFG" && ok "config partition mounted ($CFG)" || bad "config partition NOT mounted — saves will be lost"
@@ -326,6 +338,23 @@ cmd_status() {
 		fi
 	else
 		hint "alerts off (add sinks to /etc/mountnas/notify.conf — email/ntfy/webhook/...)"
+	fi
+	# swap (zram): shipped on, so a box with none has either turned it off
+	# deliberately or lost the service — either way that is a hint, not a
+	# warning, but it must be VISIBLE: without this a thrashing box and a
+	# swapless one both reported nothing at all.
+	swt=$(awk '/^SwapTotal:/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
+	swu=$(awk '/^SwapTotal:/{t=$2} /^SwapFree:/{f=$2} END{print int((t-f)/1024)}' /proc/meminfo 2>/dev/null)
+	if [ "${swt:-0}" -gt 0 ] 2>/dev/null; then
+		if grep -q zram /proc/swaps 2>/dev/null; then
+			ok "swap: ${swu} MB used of ${swt} MB (compressed, in RAM)"
+		else
+			ok "swap: ${swu} MB used of ${swt} MB"
+		fi
+		_rec SWAP "$swt" "$swu"
+	else
+		hint "no swap active (zram off — enable: rc-update add zram-init boot, then nas commit)"
+		_rec SWAP 0 0
 	fi
 	# firewall (ufw): shipped disabled — the box trusts its LAN, so "off" is a
 	# dim hint, never a warning. Active is probed via the loaded ufw chains
@@ -472,7 +501,7 @@ cmd_status() {
 				printf '%s\n' "$fv" | sed 's/^[[:space:]]*/     /'
 			else ok "fstab passes findmnt --verify"; fi
 		fi
-		for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}'); do
+		for d in $(_phys_disks); do
 			h=$(smartctl -H "/dev/$d" 2>/dev/null | awk -F: '/overall-health/{gsub(/ /,"",$2);print $2}')
 			[ -n "$h" ] && { [ "$h" = PASSED ] && ok "/dev/$d SMART PASSED" || bad "/dev/$d SMART $h"; }
 		done
@@ -544,6 +573,8 @@ cmd_status_json() {
 		--argjson unsaved "$un" \
 		--argjson last_backup_epoch "$lb" \
 		--argjson deep "$([ "$dp" = "--deep" ] && echo true || echo false)" \
+		--argjson memory "$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2}
+			END{printf "{\"total_kb\":%d,\"available_kb\":%d,\"swap_total_kb\":%d,\"swap_used_kb\":%d}", t+0, a+0, st+0, (st-sf)+0}' /proc/meminfo 2>/dev/null || echo '{}')" \
 		--argjson failed "$([ "$jrc" -ne 0 ] && echo true || echo false)" \
 	'[inputs | split("\t")] as $r |
 	 def msgs(t): [$r[] | select(.[0]==t) | .[1]];
@@ -552,6 +583,7 @@ cmd_status_json() {
 	  config_partition:$cfg, data_disk:$data,
 	  services: [$r[] | select(.[0]=="SVC") | {name:.[1], running:(.[2]=="true")}],
 	  firewall: (msgs("FW")[0] // "unknown"),
+	  memory: $memory,
 	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch, deep:$deep,
 	  healthy: ($failed|not),
 	  checks: {ok: (msgs("OK")|length), warn: (msgs("WARN")|length), fail: (msgs("FAIL")|length)},
@@ -617,7 +649,7 @@ _status_sensors() {
 		done
 	done
 	disks=""
-	for d in $(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
+	for d in $(_phys_disks); do
 		t=$(_disk_temp "$d")
 		[ "$t" = "-" ] && continue
 		disks="$disks $d:$t"
@@ -664,7 +696,7 @@ cmd_disks() {
 		def s(f): (f // "-") | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end;
 		def prow: [ "P", .name, s(.size), s(.fstype), s(.label), s(.uuid),
 		            (.mountpoint // "-"), s(.fsavail), s(."fsuse%") ] | @tsv;
-		.blockdevices[] | select(.type=="disk") as $d |
+		.blockdevices[] | select(.type=="disk") | select(.name | test("^(fd|sr|loop|ram|zram)") | not) as $d |
 		( [ "D", $d.name, s($d.size), s($d.tran),
 		    (if $d.rota then "HDD" else "SSD" end),
 		    s($d.vendor), s($d.model), s($d.serial), s($d.rev) ] | @tsv ),
@@ -738,7 +770,7 @@ cmd_disks() {
 	lines=$(lsblk -Jo NAME,TYPE,FSTYPE,LABEL,UUID,VENDOR,MODEL,SERIAL 2>/dev/null \
 	| jq -r '
 		def s(f): (f // "-") | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end;
-		.blockdevices[] | select(.type=="disk") as $d | $d.children[]?
+		.blockdevices[] | select(.type=="disk") | select(.name | test("^(fd|sr|loop|ram|zram)") | not) as $d | $d.children[]?
 		| select(.type=="part") | select(.uuid and .fstype)
 		| [$d.name, s($d.vendor), s($d.model), s($d.serial),
 		   .name, .fstype, s(.label), .uuid] | @tsv' \
@@ -774,7 +806,7 @@ cmd_disks_json() {
 	usb=$(_boot_usb_disk)
 	# one lsblk dump feeds both the disk-name list (for temps) and the output
 	lj=$(lsblk -Jbo 'NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT,FSAVAIL,VENDOR,MODEL,SERIAL,REV,TRAN,ROTA' 2>/dev/null)
-	temps=$(printf '%s' "$lj" | jq -r '.blockdevices[]? | select(.type=="disk") | .name' | while read -r d; do
+	temps=$(printf '%s' "$lj" | jq -r '.blockdevices[]? | select(.type=="disk") | select(.name | test("^(fd|sr|loop|ram|zram)") | not) | .name' | while read -r d; do
 		t=$(_disk_temp "$d"); [ "$t" = "-" ] && continue
 		printf '{"name":"%s","temp":"%s"}\n' "$d" "$t"
 	done | jq -s 'map({(.name): .temp}) | add // {}')
@@ -797,7 +829,7 @@ cmd_disks_json() {
 		                     or ($l != "" and (($flabels | index($l)) != null))
 		                     or ($n != "" and (($fdevs   | index($n)) != null)) ) };
 		{ boot_usb: (if ($usb | length) > 0 then $usb else null end),
-		  disks: [ .blockdevices[] | select(.type=="disk") | {
+		  disks: [ .blockdevices[] | select(.type=="disk") | select(.name | test("^(fd|sr|loop|ram|zram)") | not) | {
 			name, size,
 			bus: .tran, rotational: .rota,
 			vendor, model, serial, firmware: .rev,
@@ -1206,7 +1238,11 @@ cmd_report() {
 	df -h > "$rpt_d/df.txt" 2>/dev/null || true
 	cp /etc/apk/world "$rpt_d/world" 2>/dev/null || true
 	rc-status -a > "$rpt_d/rc-status.txt" 2>/dev/null || true
-	for f in /etc/snapraid.conf /etc/exports /etc/docker/daemon.json /etc/samba/smb.conf; do
+	# swap state + its config: a RAM-root box that is thrashing looks identical
+	# to a healthy one in every other file here
+	cat /proc/swaps > "$rpt_d/swaps.txt" 2>/dev/null || true
+	free -m > "$rpt_d/free.txt" 2>/dev/null || true
+	for f in /etc/snapraid.conf /etc/exports /etc/docker/daemon.json /etc/samba/smb.conf /etc/conf.d/zram-init /etc/conf.d/mountnas; do
 		[ -f "$f" ] && cp "$f" "$rpt_d/$(basename "$f")" 2>/dev/null
 	done
 	if tar -czf "$rpt_f" -C "$rpt_d" .; then
@@ -1943,7 +1979,11 @@ EOF
 	fi
 
 	# ---- unpack + loop-mount the image's BOOT partition (p1) ----
-	raw="$tmp/.nas-upgrade.$$.img"; m=$(mktemp -d)
+	# mktemp failing here means the RAM root is full — name that, instead of
+	# letting every later mount fail and blaming the user's image file.
+	raw="$tmp/.nas-upgrade.$$.img"
+	m=$(mktemp -d) || { bad "cannot create a temp directory — RAM root full? check: df -h /"; _cleanup; return 1; }
+	[ -n "$m" ] || { bad "cannot create a temp directory — RAM root full? check: df -h /"; _cleanup; return 1; }
 	step "Unpacking image into $tmp ..."
 	if [ "$img_gz" = 1 ]; then
 		# pv shows unpack progress when available; gzip -dc itself still
@@ -1971,7 +2011,13 @@ EOF
 	until mount -o ro "${loop}p1" "$m" 2>/dev/null; do
 		pw=$((pw+1))
 		if [ "$pw" -ge 50 ]; then
-			bad "cannot mount the image's BOOT partition — is this really a MountNAS release image (mountnas-<tag>.img.gz)?"
+			# Separate the two causes the retry would otherwise merge: a payload
+			# with no partition table at all vs. a partition we could never mount.
+			if [ ! -b "${loop}p1" ]; then
+				bad "this file has no BOOT partition — is it really a MountNAS release image (mountnas-<tag>.img.gz)?"
+			else
+				bad "the image's BOOT partition exists but would not mount — corrupt or truncated download?"
+			fi
 			_cleanup; return 1
 		fi
 		sleep 0.2
@@ -1991,6 +2037,13 @@ EOF
 	# ---- overwrite boot files in place, crash-safe (stage all, then rename) ----
 	step "Writing the new system to the USB ..."
 	cp "$BOOTMNT/world.base" "$STATE/old.world.base" 2>/dev/null || true
+	# The BOOT copy lives on FAT, which a power cut can truncate to zero — and
+	# without a valid PREVIOUS base the reconciliation below cannot tell user
+	# extras from base packages, so it keeps everything this release dropped
+	# (they then fail to resolve from the new on-media repo). The mountnas
+	# service mirrors world.base into /etc at every boot exactly for this.
+	[ -s "$STATE/old.world.base" ] || cp /etc/mountnas/world.base "$STATE/old.world.base" 2>/dev/null || true
+	cp "$BOOTMNT/rc.base" "$STATE/old.rc.base" 2>/dev/null || true
 	# Phase 1 — stage: every payload is copied to a .new name first. All the
 	# slow USB writes happen here while the old system is still complete and
 	# bootable; a failure or power cut in this phase changes nothing.
@@ -2004,22 +2057,22 @@ EOF
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
 		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
 	done
-	for f in world.base alpine.base ldlinux.c32 boot/amd-ucode.img boot/intel-ucode.img; do
+	for f in world.base alpine.base rc.base ldlinux.c32 boot/amd-ucode.img boot/intel-ucode.img; do
 		[ -f "$m/$f" ] || continue
 		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
 	done
 	_stage_dir "$m/apks" "$BOOTMNT/apks" && sdirs="$sdirs apks" || ec=1
-	for d in EFI boot/grub; do
+	for d in EFI boot/grub confd.base; do
 		[ -d "$m/$d" ] || continue
 		_stage_dir "$m/$d" "$BOOTMNT/$d" && sdirs="$sdirs $d" || ec=1
 	done
 	if [ "$ec" != 0 ]; then
 		# remove staged leftovers (a failed cp can leave a partial .new) — the
 		# running system on the USB was never touched
-		for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts world.base alpine.base ldlinux.c32 boot/amd-ucode.img boot/intel-ucode.img; do
+		for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts world.base alpine.base rc.base ldlinux.c32 boot/amd-ucode.img boot/intel-ucode.img; do
 			rm -f "$BOOTMNT/$f.new"
 		done
-		for d in apks EFI boot/grub; do rm -rf "$BOOTMNT/$d.new"; done
+		for d in apks EFI boot/grub confd.base; do rm -rf "$BOOTMNT/$d.new"; done
 		bad "staging the new system failed (USB full or failing?) — nothing on the USB was changed."
 		_cleanup; trap - EXIT HUP INT TERM
 		return 1
@@ -2063,6 +2116,66 @@ EOF
 		rm -f "$STATE/extras.$$" "$STATE/desired.$$"
 	fi
 
+	# ---- reconcile the shipped runlevel table (rc.base) ----
+	# WHY this is not the union the world uses: removing a service from its
+	# runlevel is the ONE documented way to disable it (README "Disabling
+	# Unused Services"), so a union would silently undo every user's
+	# 'rc-update del smartd default' at every upgrade. This is a THREE-WAY
+	# merge instead — it adds only what is NEW in this release and removes only
+	# what this release DROPPED, leaving anything present in both bases exactly
+	# as the box has it. Without it a newly enabled service (ufw in 1.0rc3,
+	# zram-init after it) reaches only freshly flashed sticks, never upgrades.
+	# Every change is announced: an upgrade must never alter service state
+	# silently.
+	new_rc="$BOOTMNT/rc.base"; old_rc="$STATE/old.rc.base"
+	if [ -s "$new_rc" ] && [ -s "$old_rc" ]; then
+		while read -r rl svc; do
+			[ -n "${svc:-}" ] || continue
+			# already in the previous base -> not new -> the box's state wins
+			grep -q "[[:space:]]$svc\$" "$old_rc" && continue
+			[ -e "/etc/init.d/$svc" ] || continue
+			# keyed on the NAME, not name+runlevel: if a later release MOVES a
+			# service between runlevels, that must not resurrect one the user
+			# deliberately disabled
+			rc-update show 2>/dev/null | grep -qE "^[[:space:]]*${svc}[[:space:]]" && continue
+			if rc-update add "$svc" "$rl" >/dev/null 2>&1; then
+				step "  enabled $svc ($rl) — new in this release"
+				_ops_log upgrade "enabled $svc ($rl)"
+			fi
+		done < "$new_rc"
+		while read -r rl svc; do
+			[ -n "${svc:-}" ] || continue
+			grep -q "[[:space:]]$svc\$" "$new_rc" && continue
+			if rc-update del "$svc" "$rl" >/dev/null 2>&1; then
+				step "  disabled $svc ($rl) — no longer shipped"
+				_ops_log upgrade "disabled $svc ($rl)"
+			fi
+		done < "$old_rc"
+	fi
+
+	# ---- seed NEW /etc/conf.d defaults (create-if-absent, NEVER overwrite) ----
+	# conf.d files are user-owned config with arbitrary content — they cannot be
+	# merged, and overwriting one would be far worse than the gap this closes
+	# (/etc/conf.d/mountnas carries DATA_SERVICES, so a blind copy would
+	# re-enable Docker on every box that turned it off). A file that exists is
+	# left alone; a changed shipped default lands beside it as .new.
+	if [ -d "$BOOTMNT/confd.base" ]; then
+		mkdir -p /etc/conf.d
+		for f in "$BOOTMNT"/confd.base/*; do
+			[ -f "$f" ] || continue
+			cb=$(basename "$f")
+			if [ ! -e "/etc/conf.d/$cb" ]; then
+				# explicit mode: the source lives on FAT, which reports whatever
+				# the mount's fmask says rather than the file's real 0644
+				cp "$f" "/etc/conf.d/$cb" 2>/dev/null && chmod 0644 "/etc/conf.d/$cb" \
+					&& step "  seeded /etc/conf.d/$cb — new in this release"
+			elif ! cmp -s "$f" "/etc/conf.d/$cb"; then
+				cp "$f" "/etc/conf.d/$cb.new" 2>/dev/null \
+					&& hint "  shipped default changed: /etc/conf.d/$cb.new (yours is untouched)"
+			fi
+		done
+	fi
+
 	# ---- re-pin the CDN repos to the new base's Alpine version ----
 	# /etc/apk/repositories is user-owned config, so only the dl-cdn version
 	# component is rewritten (from the alpine.base marker the image ships);
@@ -2085,7 +2198,7 @@ EOF
 	echo
 	# real ok() (the old heredoc faked an uncolored "[ OK ]"); the literal
 	# "Upgrade written successfully" is a CI expect string — keep it contiguous
-	ok "Upgrade written successfully. Config and data are untouched."
+	ok "Upgrade written successfully. Your config and data disks are untouched."
 	_ops_log upgrade "ok (was $RELEASE) — reboot pending"
 	/usr/libexec/mountnas/notify "upgrade written" \
 		"nas upgrade completed on $(hostname) (was $RELEASE). Reboot to run the new version." \

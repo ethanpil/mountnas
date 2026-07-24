@@ -109,13 +109,34 @@ jobs:
               --repositories-file /etc/apk/repositories --allow-untrusted --no-scripts \
               openrc busybox-openrc openssh-server-common-openrc dbus-openrc avahi-openrc \
               chrony-openrc acpid-openrc rpcbind-openrc smartmontools-openrc \
-              docker-openrc samba-server-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc
+              docker-openrc samba-server-openrc nfs-utils-openrc lvm2-openrc mdadm-openrc \
+              ufw-openrc zram-init-openrc
+            CHECKED="dbus avahi-daemon sshd chronyd acpid crond rpcbind smartd syslog"
+            CHECKED="$CHECKED docker samba nfs networking localmount local bootmisc ufw zram-init"
+            # Services shipped by core openrc/alpine-base/udev rather than by a
+            # -openrc package we can install into a throwaway root; their presence
+            # is proven by the boot smoke tests instead.
+            CORE="devfs dmesg hwclock modules sysctl hostname seedrng cgroups modloop"
+            CORE="$CORE udev udev-trigger udev-settle udev-postmount mount-ro killprocs savecache swap"
             miss=""
-            for s in dbus avahi-daemon sshd chronyd acpid crond rpcbind smartd syslog \
-                     docker samba nfs networking localmount local bootmisc; do
+            for s in $CHECKED; do
               [ -f "$HOME/checkroot/etc/init.d/$s" ] || miss="$miss $s"
             done
             [ -z "$miss" ] || { echo "MISSING init scripts for:$miss — add the right -openrc package(s)"; exit 1; }
+            # Drift guard: the two lists above are hand-maintained, so a newly
+            # rc_add-ed service could (and twice did — ufw, zram-init) ship with
+            # NO init-script verification at all. Require every rc_add name in
+            # genapkovl to be covered by one of the lists, or to be one of our own
+            # scripts in mountnas-tools/files.
+            unchecked=""
+            for s in $(sed -n "s/^[[:space:]]*rc_add[[:space:]]\+\([A-Za-z0-9_.-]\+\).*/\1/p" "$HOME"/repo/scripts/genapkovl-mountnas.sh | sort -u); do
+              case " $CHECKED $CORE " in *" $s "*) continue ;; esac
+              case "$s" in
+                mountnas*) [ -f "$HOME/repo/mountnas-tools/files/$s" ] || unchecked="$unchecked $s" ;;
+                *) unchecked="$unchecked $s" ;;
+              esac
+            done
+            [ -z "$unchecked" ] || { echo "rc_add services with no init-script check:$unchecked — add each to CHECKED (with its -openrc package) or to CORE"; exit 1; }
             echo "== wire the release tag into mountnas-tools pkgver =="
             # The raw tag reaches a sed replacement (below) and every release
             # filename: a / would break the sed parse and an ampersand would
@@ -187,7 +208,20 @@ jobs:
               # so a stray package here breaks apk on every upgraded box.
               sh "$HOME"/repo/scripts/mkworld.sh > world.base
               tar -xzOf mountnas.apkovl.tar.gz etc/apk/world | diff - world.base \
-                || { echo "ERROR: seed world != world.base (mkworld.sh drift)"; exit 1; } )
+                || { echo "ERROR: seed world != world.base (mkworld.sh drift)"; exit 1; }
+              # rc.base + confd.base — the runlevel table and the seeded
+              # /etc/conf.d defaults this release ships, EXTRACTED FROM THE
+              # APKOVL ITSELF so they cannot drift from what a fresh install
+              # gets. nas upgrade reconciles an existing box against these
+              # (three-way merge for runlevels, create-if-absent for conf.d),
+              # which is how a newly enabled service or a new conf.d default
+              # reaches boxes that upgrade instead of reflashing.
+              tar -tzf mountnas.apkovl.tar.gz \
+                | sed -n "s|^etc/runlevels/\([^/]\+\)/\([^/]\+\)$|\1 \2|p" | sort > rc.base
+              [ -s rc.base ] || { echo "ERROR: rc.base is empty — runlevel extraction broke"; exit 1; }
+              rm -rf confd.stage confd.base && mkdir -p confd.stage confd.base
+              tar -xzf mountnas.apkovl.tar.gz -C confd.stage etc/conf.d 2>/dev/null || true
+              [ -d confd.stage/etc/conf.d ] && cp confd.stage/etc/conf.d/* confd.base/ 2>/dev/null || true )
           '
           echo "== assemble single-slot .img (BOOT + MNASCFG) =="
           apk add sgdisk parted   # sgdisk (own package, not in gptfdisk) + partprobe
@@ -245,6 +279,12 @@ jobs:
           # (setup-bootable ships it); without it 0 packages install -> no /sbin/init.
           touch "$M/apks/.boot_repository"
           cp "$WB" "$M/world.base"
+          # rc.base + confd.base ride next to world.base: 'nas upgrade' diffs the
+          # previous copies against these to deliver newly enabled services and
+          # newly seeded conf.d defaults to boxes that upgrade rather than reflash
+          # (a fresh install gets them from the apkovl instead).
+          cp /home/build/iso/rc.base "$M/rc.base"
+          rm -rf "$M/confd.base"; cp -a /home/build/iso/confd.base "$M/confd.base"
           # cmdline.base: the repo's single source (also used by mkimg.nas.sh via
           # CMDLINE_FILE; write-bootcfg reads this on-media copy). Never echo an
           # inline cmdline here — edit scripts/cmdline.base instead.
