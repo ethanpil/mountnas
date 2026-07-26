@@ -313,3 +313,13 @@ def test_released_image_ships_expected_files(wired_shared_guest):
         mt = int(g.run("awk '/^MemTotal:/{print $2}' /proc/meminfo", check=True).out.strip())
         assert 0.4 < sw / mt < 0.6, \
             f"zram swap is {sw} KiB against {mt} KiB RAM — expected ~half (seeded size0 not applied?)"
+        # -shutdown must have reached OpenRC's dependency tree: without it the
+        # shutdown swapoff refaults every compressed page back into RAM on the
+        # box least able to afford it. Assert the parsed deptree, not the
+        # conf.d text, so a typo'd or unsupported override cannot pass.
+        idx = g.run("sed -n \"s/^depinfo_\\([0-9]*\\)_service='zram-init'$/\\1/p\" "
+                    "/run/openrc/deptree", check=True).out.strip()
+        assert idx, "zram-init absent from the OpenRC deptree"
+        assert g.run(f"grep -q \"^depinfo_{idx}_keyword_[0-9]*='-shutdown'$\" "
+                     "/run/openrc/deptree").rc == 0, \
+            "zram-init lacks the -shutdown keyword — it would be swapoff'd during shutdown"

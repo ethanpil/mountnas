@@ -102,6 +102,19 @@ mk root:root 0644 "$tmp/etc/conf.d/zram-init" <<'EOF'
 # One compressed-RAM swap device; cold pages compress ~3:1, so this ADDS
 # usable memory rather than consuming it. Turn off with size0=0 (or
 # rc-update del zram-init boot), then nas commit.
+#
+# Never stop this service at shutdown/reboot. The init script's stop() runs
+# swapoff, which must decompress EVERY stored page back into RAM before the
+# device can be released — on a box that is tight enough to have filled its
+# zram (exactly the box this feature exists for) that either stalls the
+# shutdown for a long time or invokes the OOM killer, and if the OOM killer
+# takes openrc then mount-ro never runs and /cfg is left dirty for the next
+# boot. Nothing is lost by skipping it: swap holds volatile pages of a
+# RAM-resident OS that the power-off discards anyway. (OpenRC reads
+# rc_keyword from conf.d — see _depend() in rc-functions.sh; '-shutdown' is
+# documented in openrc-run(8). This does NOT affect a manual
+# 'rc-service zram-init stop', which still tears the device down properly.)
+rc_keyword="-shutdown"
 load_on_start=yes
 unload_on_stop=yes
 num_devices=1
