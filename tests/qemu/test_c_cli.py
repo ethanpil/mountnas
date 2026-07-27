@@ -284,7 +284,7 @@ def test_released_image_ships_expected_files(wired_shared_guest):
     missing = [p for p in manifest if g.run(f"test -e {p}").rc != 0]
     assert not missing, f"mountnas-tools files missing from the image: {missing}"
 
-    tools = ["cmkfs", "duf", "btm", "cyme", "ttyd"]
+    tools = ["btm", "cyme", "ttyd"]
     absent = [t for t in tools if g.run(f"command -v {t}").rc != 0]
     assert not absent, f"baked-in tools missing from the image: {absent}"
     assert g.run("command -v httpd").rc == 0, \

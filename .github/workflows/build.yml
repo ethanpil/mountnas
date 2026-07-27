@@ -48,10 +48,6 @@ jobs:
         run: |
           set -eu
           TAG="${{ inputs.release_tag }}"; ARCH="${{ inputs.arch }}"; APORTS_REF="${{ inputs.aports_ref }}"
-          # API calls from shared runners MUST be authenticated: anonymous
-          # api.github.com is 60 req/hr per IP and runner IPs are chronically
-          # rate-limited — an unauthenticated 403 would flakily kill the build.
-          GHTOKEN="${{ github.token }}"
           # aports_ref MUST match the installed Alpine's version (a mkimage.sh from
           # the wrong aports fails against the installed apk-tools). Deriving it
           # here removes the update-both-inputs footgun on a new Alpine release;
@@ -101,7 +97,15 @@ jobs:
             git clone --depth=1 --branch "'"$APORTS_REF"'" https://github.com/alpinelinux/aports.git \
               || { sleep 15; git clone --depth=1 --branch "'"$APORTS_REF"'" https://github.com/alpinelinux/aports.git; }
             echo "== preflight =="
-            apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -vE "^(mountnas-tools|snapraid|mergerfs|zerotier-one|cmkfs|duf)$") linux-lts
+            # Drift guard: LOCAL_PKGS is hand-typed — require it to equal the
+            # actual set of local APKBUILD dirs, so adding/removing a local apk
+            # cannot silently skew the preflight (same philosophy as the
+            # rc_add drift guard below).
+            LOCAL_PKGS="mountnas-tools|snapraid|mergerfs|zerotier-one"
+            found=$(cd "$HOME"/repo && ls -d ./*/APKBUILD 2>/dev/null | sed -e "s,^\./,," -e "s,/APKBUILD,," | sort | tr "\n" "|" | sed "s/|$//")
+            want=$(printf "%s" "$LOCAL_PKGS" | tr "|" "\n" | sort | tr "\n" "|" | sed "s/|$//")
+            [ "$want" = "$found" ] || { echo "ERROR: local-apk exclusion list ($LOCAL_PKGS) does not match the APKBUILD dirs ($found) — update LOCAL_PKGS"; exit 1; }
+            apk add --simulate $(sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$HOME"/repo/packages.list | grep -vE "^($LOCAL_PKGS)$") linux-lts
             echo "== verify every enabled service has an init script =="
             # install just the openrc service-script packages into a throwaway root
             # (no firmware) and confirm each rc_add service name resolves to a script.
@@ -167,22 +171,6 @@ jobs:
             ( cd "$HOME"/repo/mergerfs && abuild -r )
             echo "== build zerotier-one (repackage upstream apk under our key) =="
             ( cd "$HOME"/repo/zerotier-one && abuild -r )
-            echo "== build duf (repackage upstream apk under our key, pinned) =="
-            ( cd "$HOME"/repo/duf && abuild -r )
-            echo "== build cmkfs (repackage the LATEST upstream release, by design) =="
-            # Maintainer decision: cmkfs always ships the newest release. Resolve
-            # the tag from the API, sed it into pkgver, and REGENERATE the
-            # checksums — the committed sums are a local-build fallback, not a
-            # pin (unlike snapraid/mergerfs/zerotier/duf, deliberately).
-            # busybox wget, NOT curl: the build chroot has no curl (abuild
-            # itself fetches sources with wget here — proven by the duf step)
-            CMKFS_VER=$(wget -qO- --header="Authorization: Bearer '"$GHTOKEN"'" \
-              https://api.github.com/repos/ethanpil/cmkfs/releases/latest \
-              | sed -n "s/.*\"tag_name\": \"v\([0-9][0-9.]*\)\".*/\1/p")
-            [ -n "$CMKFS_VER" ] || { echo "ERROR: could not resolve the latest cmkfs release tag"; exit 1; }
-            echo "cmkfs latest release: $CMKFS_VER"
-            sed -i "s/^pkgver=.*/pkgver=$CMKFS_VER/" "$HOME"/repo/cmkfs/APKBUILD
-            ( cd "$HOME"/repo/cmkfs && abuild checksum && abuild -r )
             echo "== ISO =="
             cp "$HOME"/repo/scripts/* aports/scripts/
             mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"

@@ -110,9 +110,6 @@ gptfdisk
 sgdisk
 cfdisk
 sfdisk
-# cmkfs: guided TUI for mkfs (built locally from ethanpil/cmkfs — always the
-# latest upstream release, repackaged under our signing key; see /cmkfs)
-cmkfs
 
 # --- disk health / recovery / benchmarking ---
 smartmontools
@@ -162,9 +159,6 @@ btop
 bottom
 iotop
 ncdu
-# duf: a better df — per-mount usage in a readable table (built locally from
-# muesli/duf, repackaged under our signing key; NOT in Alpine v3.24)
-duf
 sysstat
 fastfetch
 
