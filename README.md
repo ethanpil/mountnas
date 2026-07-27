@@ -230,20 +230,9 @@ nas web on        # default port 8080; or: nas web on 9090
 nas commit        # REQUIRED to keep it across reboots (RAM-only until committed)
 ```
 
-Then browse to `http://mountnas.local:8080/` — overall health, storage state, services, per-disk temps and free space, and the failing check lines when something's wrong. The page auto-refreshes every 2 minutes. `http://mountnas.local:8080/guide.html` serves the **full user guide** baked into your release — philosophy, how-tos, the complete `nas` manual, file map, troubleshooting — available even when the box (or your internet) is having a bad day.
+Then browse to `http://mountnas.local:8080/` — overall health, storage state, services, per-disk temps and free space, and the failing check lines when something's wrong. The page auto-refreshes every 2 minutes, and the header shows whether the browser terminal (`nas ttyd`) is running — a click away when it is. `http://mountnas.local:8080/guide.html` serves the **full user guide** baked into your release — philosophy, how-tos, the complete `nas` manual, file map, troubleshooting — available even when the box (or your internet) is having a bad day.
 
 By design it can't manage anything: a root-run job renders **static files into RAM** every ~2 minutes and busybox httpd — dropped to `nobody` — serves only those. No request-time code, no forms, no auth to get wrong, no disk writes (nothing spins up a sleeping drive). Plain HTTP on your trusted LAN, same posture as Samba. Management stays on SSH with the `nas` CLI. Off by default; `nas web off` removes it entirely.
-
-## Design Principles & Justifications
-
-MountNAS is a *diskless, run-from-RAM* Alpine system: every boot the OS is rebuilt in RAM from packages plus a small config overlay on the USB. That single fact drives the unusual design below — each custom service/tool exists to work *with* that model, not against it.
-
-- **Nothing persists until `nas commit`.** The root filesystem is tmpfs, so runtime changes vanish on reboot. `nas commit` (Alpine's `lbu`) saves `/etc` plus a short include list back to the USB. This is why every "…then `nas commit`" reminder exists.
-- **Code ships in the apk; editable config ships in the overlay.** The overlay is applied *before* packages install, so your config files (`fstab`, `smb.conf`, `sshd_config`, …) are user-owned and survive, while the `nas` tools and services are shipped read-only by the `mountnas-tools` package. An apk can't persist your config — only the overlay can.
-- **`mountnas` supervises data services.** Docker/Samba/NFS are deliberately *not* in any runlevel; the `mountnas` service starts them only once `/mnt/nasdata` is mounted, and drops a read-only placeholder over any disk that fails — so a missing disk can never silently fill RAM.
-- **`mountnas-mkdirs` creates mountpoints before mounting.** fstab's `x-mount.mkdir` auto-create option is a util-linux feature that the busybox `mount` used at early boot rejects (`ext4: Unknown parameter 'x-mount.mkdir'`). Instead this service `mkdir`s every `/cfg` and `/mnt/*` target from fstab just before `localmount`. You *can't* simply `mkdir` + `nas commit` empty dirs: `/mnt` is kept out of `lbu` on purpose (committing it would tar your entire data disk into the tiny overlay), so mountpoints must be recreated from fstab each boot.
-- **Small boot helpers.** `mountnas-net` brings up wired DHCP dynamically; `mountnas-sshkey` installs an `authorized_keys` file dropped on the BOOT partition (headless first login); `mountnas-issue` shows the live IP + hostname on the console *before* login; and the `nas-resize` profile snippet fixes terminal size on serial consoles (`qm terminal`, IPMI serial-over-LAN).
-- **One image, in-place upgrades.** A single `.img.gz` is both the installer and the upgrade payload: `nas upgrade` rewrites the OS partition in place and `nas backup` images the whole USB as the rollback net — no A/B slots to reason about.
 
 ## Disk health (smartd), alerts & notifications, and UPS (nut)
 
@@ -374,7 +363,7 @@ __Run-from-RAM model & persistence__
 * apk cache symlinked to `/cfg/cache` so user-added packages persist and reinstall at every boot, even offline
 * Custom lbu include/exclude list (`/etc/apk/protected_paths.d/lbu.list`): persists `/root`, Samba/Tailscale/ZeroTier state, crontabs, and `/usr/local/bin`; excludes boot-generated files
 * Append-only operations log at `/cfg/mountnas-ops.log` (`nas history`) — persists without `nas commit`
-* Single-image in-place upgrades (`nas upgrade`) with a mandatory full-USB `nas backup` first
+* Single-image in-place upgrades (`nas upgrade`) with a mandatory full-USB `nas backup` first — every boot payload is staged to `.new` names and committed with back-to-back renames, and the `mountnas` service heals a power cut inside the rename window at the next boot
 
 __Shipped config that differs from stock__
 
@@ -433,7 +422,6 @@ __Disk Partitioning__
 * gptfdisk
 * cfdisk
 * sfdisk
-* cmkfs (guided TUI for mkfs, from [ethanpil/cmkfs](https://github.com/ethanpil/cmkfs) — every MountNAS release ships the latest cmkfs release)
 
 __Parity / Volume Management__
 
@@ -540,7 +528,6 @@ __System Monitoring__
 * bottom (`btm` — btop-alternative system monitor with per-process I/O)
 * iotop
 * ncdu
-* duf (a better `df`: per-mount usage in a readable table — from [muesli/duf](https://github.com/muesli/duf), not in Alpine v3.24)
 * sysstat
 * fastfetch
 

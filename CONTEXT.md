@@ -9,12 +9,22 @@ that will silently regress if "cleaned up" without understanding it.
 
 ---
 
-## 1. Status at a glance (as of beta-4 + unreleased features, 2026-07-13)
+## 1. Status at a glance (as of 1.0rc5 + the 2026-07-27 review fixes)
 
-- **Build: GREEN, releases through beta-5 published.** The workflow assembles
-  everything end-to-end: 6 local apks, `mkimage` ISO, single-slot 3.5 GiB
+- **Build: GREEN, releases through 1.0rc5 published.** The workflow assembles
+  everything end-to-end: 4 local apks, `mkimage` ISO, single-slot 3.5 GiB
   `.img.gz` (~1 GB compressed). Signing key is a fixed secret since alpha-7
   (§6) — the published `.rsa.pub` is a stable trust anchor now.
+- **2026-07-27 over-engineering review** (five adversarial subsystem audits):
+  verdict was "earned, not spaghetti" — the cuts it did produce are the cmkfs
+  and duf package removals (§2), four bug fixes (cmdline.base now staged by
+  `nas upgrade`; CRLF tolerance in mountnas-sshkey; smartctl/hdparm timeouts
+  in gen-webstatus; write-bootcfg stages its outputs), a boot-time heal for a
+  power cut inside the upgrade's rename window (mountnas service), and the
+  supervisor CI test now judging `nas status` by exit code. Two standing
+  decisions from that review: the dashboard's page CONTENT is not to be
+  trimmed, and Alpine v3.24 ships NO ttyd-openrc (verified) — the custom
+  mountnas-ttyd init script is required.
 - **CI-verified per release, all blocking:** boot-to-login under SeaBIOS *and*
   OVMF; the full first-install story (wizard → data disk → docker/samba start →
   commit → reboot persistence, via the supervisor smoke test); and a REAL
@@ -24,12 +34,16 @@ that will silently regress if "cleaned up" without understanding it.
   (consoles, wizard, doas/overlay, mail end-to-end, samba from a desktop,
   docker + reboot persistence, apk persistence, disk-loss recovery — see §8);
   every defect it surfaced was fixed in beta-2.
-- **Still manual:** real USB stick on real hardware; backup restore drill (§8).
-- **Self-hosted QEMU suite** (`tests/qemu/`, 78 tests, see `TESTING-QEMU.md`):
+- **Still manual:** real USB stick on real hardware only. (The backup restore
+  drill is automated now: `test_backup_restore_drill` backs up a configured
+  box, writes the image to a fresh virtual stick, boots it, and asserts the
+  OS + committed config came back.)
+- **Self-hosted QEMU suite** (`tests/qemu/`, 84 tests, see `TESTING-QEMU.md`):
   boots the real image under KVM and covers everything the CI smoke tests
   don't — per-command CLI behavior, fault injection (hot-unplug, EIO, power
-  cuts mid-upgrade), lbu persistence, mail, and the unreleased features
-  (category K). Run on a 16 GB KVM box via `sh tests/qemu/run-suite.sh`.
+  cuts mid-upgrade), lbu persistence, mail, the restore drill, and the
+  notify/ops-log/web features (category K). Run on a 16 GB KVM box via
+  `sh tests/qemu/run-suite.sh`.
 - **Single deliverable** = `mountnas-<tag>.img.gz` (write to USB with Etcher/dd for a
   fresh install; the same file is what `nas upgrade` consumes). See §4.
 
@@ -68,21 +82,19 @@ mountnas/
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
-├── cmkfs/           APKBUILD          # LOCAL apk: repackaged; CI resolves the LATEST release
-├── duf/             APKBUILD          # LOCAL apk: repackaged (not in v3.24), pinned
 ├── tests/qemu/                       # self-hosted QEMU suite (78 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
 ```
 
-There are **six locally-built apks**, all signed by the per-build key and served
+There are **four locally-built apks**, all signed by the per-build key and served
 from the on-media local repo: `mountnas-tools`, `snapraid`, `mergerfs`,
-`zerotier-one`, `cmkfs`, `duf`. They are excluded from the upstream preflight
-resolve and are why several CI steps exist. `cmkfs` is special: by maintainer
-decision it always ships the LATEST upstream release — build.yml resolves the
-tag from the GitHub API, seds pkgver, and regenerates its checksums (the only
-package whose committed sha512sums are a fallback, not a pin).
+`zerotier-one`. They are excluded from the upstream preflight resolve and are
+why several CI steps exist. (`cmkfs` and `duf` were also local apks through
+beta-5; both were removed at the maintainer's direction in the 2026-07-27
+over-engineering review — cmkfs additionally carried the pipeline's only
+unpinned auto-latest fetch. Do not re-add either without an explicit ask.)
 
 ---
 
@@ -130,6 +142,9 @@ package whose committed sha512sums are a fallback, not a pin).
   runs `before localmount` and `mkdir -p`s every `/cfg` and `/mnt/*` target from
   `/etc/fstab`, so plain busybox `mount` can then mount them. A mount that still fails
   is handled at runtime by the `mountnas` service (ro placeholder + service gating).
+  Mountpoints CANNOT be persisted instead: `/mnt` is kept out of lbu on purpose
+  (committing it would tar the data disk into the overlay), so they must be
+  recreated from fstab every boot.
 - **Explicit `/etc/inittab`** ships a getty on **tty1** (VGA / Proxmox noVNC) *and*
   **ttyS0** (serial / `qm terminal`) so both consoles get a login prompt regardless of
   the packaged default. **The `console=` cmdline devices MUST match those getty ids
@@ -233,8 +248,8 @@ latest-stable. Corrected:
   (libstdc++ ABI). Upstream ships **fully-static** binaries → repackaged into a
   local apk (`mergerfs/APKBUILD`).
 
-The CI **preflight** (`apk add --simulate`) excludes all six local packages
-(`mountnas-tools|snapraid|mergerfs|zerotier-one|cmkfs|duf`) since they aren't
+The CI **preflight** (`apk add --simulate`) excludes all four local packages
+(`mountnas-tools|snapraid|mergerfs|zerotier-one`) since they aren't
 upstream.
 
 Package additions after the plan (alpha-3…: zsh/mosh, curated firmware set,
@@ -485,9 +500,11 @@ resize, disks --json, nas report, data-watch/bind mounts, dead-mount recovery,
    microcode actually early-loads (`dmesg | grep microcode`), and disk spin-up
    timing under the supervisor's 15 s wait. Everything QEMU can prove is already
    gated in CI; hardware-specific behavior is the remaining risk.
-2. **Backup restore drill (manual).** `nas backup` → write the image to a second
-   USB → boot it. The upgrade half is CI-covered (blocking); user-added-package
-   preservation across an upgrade is still only manually verified.
+2. **Backup restore drill — AUTOMATED** (`test_backup_restore_drill`, category
+   C, [slow]): backs up a configured box, pulls the image, writes it to a
+   fresh virtual stick, boots it, asserts hostname + committed config +
+   release. A drill on real USB hardware remains worthwhile but the logic is
+   covered.
 3. **Boot-module breadth (addressed, verify on odd hardware).** The cmdline loads
    `…,ahci,nvme,virtio_pci,virtio_scsi,virtio_blk` on top of the USB-stick set so a VM
    disk (Proxmox defaults to VirtIO SCSI) is found at boot. The cmdline has a
@@ -514,26 +531,14 @@ the modloop (post-detach loads fall back to `/lib/firmware`, where apk-added
 blobs live — verified on a live box that apk-added firmware installs EARLY at
 boot, before device probing), then stops the modloop service with a
 direct/lazy-umount fallback for the transient-busy case.
-Because the upgrade runs the **source** release's code, alpha-1/2/3 boxes still
-hit the old path and must reflash to alpha-4. The one-time bootstrap completed:
-the alpha-4 → alpha-5 run was the **first green** upgrade test
-(`UPGRADE-TEST PASS`, run 28829367172), and the test is **blocking** since.
+The upgrade test has been **blocking since alpha-5** (its first green run was
+the alpha-4 → alpha-5 pair).
 
-**alpha-5 notes:** the upgrade write phase now stages ALL payloads
-first and only then renames back-to-back (power cut mid-copy can no longer mix
-kernel/modloop generations); the image is 3.5 GiB raw (BOOT 2.5 GiB + MNASCFG
-~1 GiB — partition sizes are frozen per deployed stick, so headroom lives in
-the build log's BOOT size report); linux-lts is no longer cached in the media
-repo (nothing could install it); early microcode ships via boot_addons and the
-write-bootcfg initrd lines; and the blocking supervisor smoke test (§6) now
-covers the wizard + storage/service gating that used to be manual-only. The
-upgrade smoke test went GREEN for the first time on the alpha-4 → alpha-5 pair
-(run 28829367172) and was flipped to blocking immediately after.
-
-**alpha-6 notes:** NAS-essentials package pass (see CHANGELOG + §5 wiring notes):
-cryptsetup/dmcrypt, msmtp/mailx mail pipeline, restic, testdisk, f3,
-wireguard-tools, zstd/lz4/xz, xxhash, fdupes. First build with the upgrade
-smoke test BLOCKING (alpha-5 → alpha-6, green). Image 983 MB compressed.
+**alpha-5/alpha-6 (condensed — details live in §3/§6 and CHANGELOG):**
+staged-then-renamed upgrade writes, frozen 3.5 GiB geometry, linux-lts dropped
+from the media repo, early microcode via boot_addons, the supervisor smoke
+test made blocking; then the NAS-essentials package pass (mail pipeline,
+restic, testdisk, f3, wireguard-tools, compression/integrity tools).
 
 **alpha-7 notes:** `nas` CLI feature pass (full list in CHANGELOG). Landmines
 for maintainers:
@@ -547,9 +552,9 @@ for maintainers:
   append TYPE<TAB>message to $NAS_CHECKS (file, not a variable: the checks
   run in pipe subshells) and `--json` renders purely from those records
   (beta-1; the old magic-offset parse of the human text is gone, so the
-  display format is free to change). The supervisor CI test still greps the
-  literal FAIL word in the human output — keep the tag words intact inside
-  the color escapes for that one consumer.
+  display format is free to change). The supervisor CI test judges status by
+  the EXIT CODE since 2026-07-27 — no CI consumer greps the human output
+  anymore; the display format is fully free.
 - bash completion ships as files/bash-nas-completion.sh with its body inside
   eval: busybox ash sources profile.d too and PARSES function bodies eagerly,
   so bare bash array syntax there would syntax-error every ash login. ci-lint
@@ -610,7 +615,8 @@ _reltag sed.
 - nas status and 'nas logs --persist status' surface whether the persistence
   setting is committed (it is /etc config — RAM-only until nas commit).
 
-**[Unreleased] notes (post-beta-4: notify sinks / ops log / web dashboard):**
+**Notify sinks / ops log / web dashboard (landed post-beta-4, shipped in the
+1.0rc line):**
 - **ONE alert delivery path**: `/usr/libexec/mountnas/notify` fans a
   subject+body out to the `type:target` sinks in `/etc/mountnas/notify.conf`
   (email/ntfy/webhook/slack/discord/gotify; the legacy `alert-email` address
@@ -636,8 +642,13 @@ _reltag sed.
   applet). guide.html + logo.png ship in the apk under
   `/usr/share/mountnas/web` and are copied to the webroot at service start.
   Port 8080 by default (80 collides with dockerized reverse proxies too
-  often). Everything shown derives from `nas status/disks --json` (no
-  secrets by construction).
+  often). Core data derives from `nas status/disks --json`; the page ALSO
+  renders a syslog tail, the root crontab and the lbu unsaved list — no
+  credentials, but not "no secrets by construction": the posture is
+  trusted-LAN, opt-in (service off by default), same as shipping with ufw
+  disabled. Maintainer decision (2026-07-27): the page content stays — do
+  not trim cards to re-earn the old claim. The header shows a Web-terminal
+  pill (green link when mountnas-ttyd runs, grey "off" otherwise).
 - **Diskless dev-test caveat** (tests/qemu category K): pushing repo tools
   into a guest patches the RAM root only — a reboot rebuilds from the
   released apk and the pushed files vanish. Post-reboot assertions must read
@@ -651,8 +662,8 @@ _reltag sed.
   someone can sign packages the images trust. See §6 "Version + signing key".
 - **On-box release checks need the repo PUBLIC** — `nas upgrade --check` and
   URL upgrades use unauthenticated API/asset fetches (beta-1 test 16 found the
-  repo private → 404, now reported distinctly). Maintainer intent is to make
-  the repo public.
+  repo private → 404, now reported distinctly). The repo IS public (since
+  2026-07-13); this caveat stays only as the reason it must remain so.
 - `depmod: ERROR: fstatat(3, vmlinuz)` during the kernel step is **benign** (modloop
   builds/signs fine right after).
 - The `apk index` "No provider for the dependencies" warning during local-repo

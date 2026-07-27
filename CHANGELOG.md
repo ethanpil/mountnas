@@ -7,10 +7,52 @@
 - **`nas upgrade` now delivers newly enabled services and newly seeded `/etc/conf.d` defaults.** Until now `rc_add` only wrote into the seed overlay on the config partition, which the upgrade never touches — so a service enabled in a new release reached freshly flashed sticks only. Two releases were affected: an upgraded box had **ufw in no runlevel** (rules loaded when you ran `ufw enable`, then silently never loaded again after a reboot) and would have had no zram at all. Releases now ship an `rc.base` table and a `confd.base` directory next to `world.base`, and the upgrade reconciles against them. Runlevels use a **three-way merge, not a union**: it adds only what is new in the release and removes only what the release dropped, so `rc-update del smartd default` survives every future upgrade. `conf.d` defaults are **create-if-absent and never overwritten** (a changed shipped default lands as `.new` beside yours). Every change is printed and recorded in `nas history`. Boxes already past this point are healed once, automatically, at the next boot.
 - **Swap is visible.** `nas status` shows swap on its memory line and as its own check, `nas status --json` gains a `memory` object (total/available/swap total/swap used), the dashboard gets a Swap row, and `nas report` captures `/proc/swaps`, `free`, and the zram config — a box thrashing into zram used to look identical to an idle one on every surface.
 
+### Added
+- **The dashboard header now shows the browser terminal.** A pill at the top
+  of the status page indicates whether `nas ttyd` is running — green and
+  clickable (straight into the terminal) when it is, grey "off" when not.
+  The footer link remains.
+
 ### Changed
+- **`cmkfs` and `duf` removed.** Both were locally-built apks (neither is in
+  Alpine v3.24) that nothing in MountNAS invoked; standard tools cover both
+  jobs (`mkfs.*` + the paste-ready fstab lines from `nas disks`; `df`/`ncdu`).
+  Removing cmkfs also removes the build pipeline's only unpinned input (it was
+  resolved to the latest upstream release at build time, by design). Two fewer
+  local packages to sign, exclude from preflight, and document.
 - **Leaner base image.** `mosh` and `lm-sensors-detect` leave the base set (nothing in MountNAS invoked either, and `perl` plus the protobuf stack fall out of the dependency closure with them), and Docker is listed explicitly as `docker-engine` + `docker-cli` + `docker-cli-buildx` + `docker-cli-compose` rather than via the meta package. Net: **~48 MB less RAM at boot and ~14 MB less on the USB**, with `docker build`, `docker compose`, and everything else unchanged. Existing boxes converge at their next `nas upgrade`.
 
 ### Fixed
+- **Upgrades now deliver kernel cmdline changes.** `nas upgrade` staged every
+  boot payload EXCEPT `cmdline.base`, and `write-bootcfg` reads the on-media
+  copy — so a release that changed the boot module list never reached
+  upgraded sticks (they kept their original cmdline forever). It now stages
+  and commits with the rest.
+- **`write-bootcfg` no longer rewrites live loader configs in place.** It was
+  the one unstaged write in the upgrade path: a power cut mid-write left a
+  truncated `syslinux.cfg`/`grub.cfg`. Both configs are now staged to `.new`
+  and swapped in with renames.
+- **A power cut inside the upgrade's rename window is healed at boot.** A cut
+  between `mv apks apks.old` and `mv apks.new apks` left NO live copy of a
+  directory payload and nothing ever renamed it back. The `mountnas` service
+  now restores a missing `apks`/`EFI`/`boot/grub`/`confd.base` from its
+  `.new` (preferred — staging completed before any rename began) or `.old`
+  sibling.
+- **SSH keys dropped on the BOOT partition from Windows now work.** The
+  `authorized_keys` file is meant to be authored "from any OS", but
+  `mountnas-sshkey` appended CRLF line endings verbatim — making the key
+  unmatchable for exactly the headless-Windows user the feature targets. The
+  CR is stripped, and a final line without a newline terminator is no longer
+  ignored.
+- **The dashboard renderer can no longer be wedged by a hung disk.**
+  `gen-webstatus` bounded `docker ps` and `ufw` but ran `smartctl`/`hdparm`
+  unbounded — a disk with a hung ioctl stalled the refresh loop forever. Both
+  are now `timeout 10`, and the two DMI/cpuinfo strings that reached the page
+  unescaped now go through the HTML escaper like everything else.
+- **`rc-service mountnas restart` no longer erases the boot run's log.** The
+  supervisor truncated `/var/log/mountnas.log` on every start — losing
+  exactly the history a storage problem makes you want. It now appends and
+  self-trims past 500 lines.
 - **Shutdown no longer swapoffs the zram device.** OpenRC stops boot-runlevel services on the way down, and `zram-init`'s `stop()` runs `swapoff` — which must decompress *every* stored page back into RAM before the device can be released. On a box tight enough to have filled its zram (precisely the box the feature exists for) that stalls the shutdown or invokes the OOM killer, and an OOM'd openrc means `mount-ro` never runs and `/cfg` is left dirty. The seeded config now carries `rc_keyword="-shutdown"`, so the service is simply left running; the pages are volatile ones the power-off discards anyway. A manual `rc-service zram-init stop` still tears the device down normally. *(Upgrading from 1.0rc4: `/etc/conf.d/zram-init` is yours, so the new default arrives as `/etc/conf.d/zram-init.new` — copy the `rc_keyword` line across if you want the fix.)*
 - **`nas disks` no longer invents a drive.** With zram swap always present, `nas disks`, `nas disks --json`, `nas status --deep` and the sensors block listed `/dev/zram0` as a physical disk (lsblk types it as one) — a phantom row in the inventory users are told to configure storage from, an off-by-one for anything counting `--json` disks, and pointless `smartctl`/`hdparm` probes on every status run.
 - **A failed `nas upgrade` says what actually went wrong.** A full RAM root (unchecked `mktemp`) and a payload with no partition table both reported "cannot mount the image's BOOT partition — is this really a MountNAS release image?", sending users to re-download a perfectly good file. Each case now names itself.
@@ -20,6 +62,15 @@
 - **`nas upgrade` no longer intermittently aborts with "cannot mount the image's BOOT partition" on a good image.** After `losetup -fP`, eudev re-processes the loop device's change events and each partition-table rescan *deletes and re-adds* the partition nodes — so the alpha-era fix (wait for `p1` to exist, then mount once) could still land its single mount attempt in a deletion window and abort the upgrade (safely — nothing written — but spuriously). Caught by the QEMU suite validating 1.0rc3: reproducible ~1 in 3 on the docker-survives-upgrade test, where dockerd keeps udev busy. Now `udevadm settle` runs after `partprobe` and the *mount itself* retries (bounded ~10 s) — verified 4/4 green where the shipped code failed 1 in 3. A genuinely non-image payload now takes ~10 s to be rejected instead of failing instantly.
 
 ### Testing
+- **The late power-cut test is honest now.** It ran as a self-upgrade
+  (old == new), so its version assertion could never actually detect a mixed
+  kernel/modloop pair. It now upgrades from the previous release when one is
+  available, making "boots with exactly one version" a real check; the
+  self-upgrade fallback remains for first releases.
+- **The supervisor CI gate judges `nas status` by exit code** (0/1/2) instead
+  of grepping `[FAIL]` in the human output — the display format no longer has
+  a CI consumer. Its flimsiest expect match (`{HCP}`, a substring of "DHCP")
+  now matches the real wizard prompt.
 - **`upgrade_golden_guest` now honors `MOUNTNAS_NAS_SRC`.** The plain `upgrade_guest` fixture injected the repo's `nas` into guests, but the golden-based fixture (docker/samba upgrade tests) silently didn't — re-runs meant to verify a local `nas` fix were exercising the shipped binary instead (which is exactly how the loop-mount fix's first verification round fooled itself).
 
 ## [1.0rc3] — 2026-07-24
