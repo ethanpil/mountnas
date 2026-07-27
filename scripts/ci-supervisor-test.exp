@@ -52,7 +52,10 @@ expect {
 }
 send "\r"
 expect {
-    -re {HCP} {}
+    # the wizard prompt is 'Network: [D]HCP (default) / [S]tatic:' — match the
+    # stable unstyled span (the color escapes wrap only the [4/5] prefix); the
+    # old {HCP} substring silently became a timeout on any wording change
+    -re {Network: \[D\]HCP} {}
     timeout { die "wizard never reached the network step" }
 }
 send "\r"
@@ -113,8 +116,11 @@ expect {
 }
 expect -re {:~# }
 
-# --- nas status must be [FAIL]-free (warnings are fine on a fresh box) ---
-send {nas status > /tmp/ns.out 2>&1; grep -qF "[FAIL]" /tmp/ns.out && echo STATUS"-BAD" || echo STATUS"-OK"; cat /tmp/ns.out}
+# --- nas status must be FAIL-free (warnings are fine on a fresh box) ---
+# judged by the exit code (0 = no FAIL; 1 = a check failed; 2 = check tracking
+# broke, fail-closed) — NOT by grepping the human output, which coupled CI to
+# the display format. The output is still dumped for diagnosis.
+send {nas status > /tmp/ns.out 2>&1 && echo STATUS"-OK" || echo STATUS"-BAD"; cat /tmp/ns.out}
 send "\r"
 expect {
     "STATUS-BAD" { die "nas status reported a FAIL line (dumped above)" }

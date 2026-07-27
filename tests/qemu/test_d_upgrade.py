@@ -180,12 +180,20 @@ def test_powercut_during_staging_old_system_boots(upgrade_guest, guest_factory,
 
 @pytest.mark.faults
 def test_powercut_late_window_boots_old_or_new(upgrade_guest, guest_factory,
-                                               golden):
+                                               golden, prev_base):
     """Cut power late in the write phase (staging tail / commit renames):
     the box must boot with EITHER version -- never a mixed kernel/modloop
-    pair (which does not boot) and never a missing /apks."""
-    guest, disks, _ = upgrade_guest(golden.base_img, name="cutlate")
+    pair (which does not boot) and never a missing /apks.
+
+    Runs from the PREVIOUS release when one is available: with old != new
+    the version read actually proves "one version, coherently". The
+    self-upgrade fallback (first release / no network) can only prove
+    "it boots and /apks survived" -- old == new makes a mixed pair
+    invisible to the version check."""
+    base = prev_base or golden.base_img
+    guest, disks, _ = upgrade_guest(base, name="cutlate")
     guest.wait_ssh(timeout=420)
+    old_ver = _guest_version(guest)
     guest.login_serial()
     guest.sendline(UPGRADE_CMD)
     guest.expect(r"Writing the new system to the USB", timeout=1200)
@@ -195,7 +203,9 @@ def test_powercut_late_window_boots_old_or_new(upgrade_guest, guest_factory,
     g2 = guest_factory(disks, name="cutlate-b", ssh_key=golden.ssh_key)
     g2.wait_ssh(timeout=420)              # THE invariant: it boots
     ver = _guest_version(g2)
-    assert ver == golden.meta["nas_version"], ver   # self-upgrade: old == new
+    assert ver in (old_ver, golden.meta["nas_version"]), \
+        f"mixed/unknown version after late power cut: {ver!r} " \
+        f"(expected {old_ver!r} or {golden.meta['nas_version']!r})"
     assert g2.run("ls /media/mnasboot/apks").rc == 0, \
         "/apks missing -- _commit_dir failed to restore .old"
     g2.screenshot("post-late-powercut")
