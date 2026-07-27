@@ -25,6 +25,11 @@ for u in amd-ucode.img intel-ucode.img; do
 done
 UCODE="${UCODE# }"
 
+# Both configs are staged to .new and swapped in with renames — this runs
+# during 'nas upgrade', and truncating a live loader config in place was the
+# one unstaged write in the whole upgrade path (a power cut mid-write left a
+# truncated syslinux.cfg/grub.cfg; a cut now leaves only .new litter).
+
 # BIOS / syslinux
 {
 	echo "SERIAL 0 115200"; echo "PROMPT 1"; echo "TIMEOUT 30"; echo "DEFAULT mountnas"; echo
@@ -38,8 +43,9 @@ UCODE="${UCODE# }"
 		echo "  INITRD /boot/initramfs-lts"
 	fi
 	echo "  APPEND $APPEND"
-} > "$B/syslinux.cfg"
-mkdir -p "$B/boot/syslinux"; cp "$B/syslinux.cfg" "$B/boot/syslinux/syslinux.cfg" 2>/dev/null || true
+} > "$B/syslinux.cfg.new"
+mkdir -p "$B/boot/syslinux"
+cp "$B/syslinux.cfg.new" "$B/boot/syslinux/syslinux.cfg.new" 2>/dev/null || true
 
 # UEFI / grub
 mkdir -p "$B/boot/grub"
@@ -51,5 +57,11 @@ mkdir -p "$B/boot/grub"
 	# grub takes multiple initrd args space-separated; microcode must be first
 	echo "  initrd ${UCODE:+$UCODE }/boot/initramfs-lts"
 	echo "}"
-} > "$B/boot/grub/grub.cfg"
+} > "$B/boot/grub/grub.cfg.new"
+
+# push the staged data, then commit with back-to-back renames
+sync
+mv "$B/syslinux.cfg.new" "$B/syslinux.cfg"
+[ ! -f "$B/boot/syslinux/syslinux.cfg.new" ] || mv "$B/boot/syslinux/syslinux.cfg.new" "$B/boot/syslinux/syslinux.cfg"
+mv "$B/boot/grub/grub.cfg.new" "$B/boot/grub/grub.cfg"
 sync
