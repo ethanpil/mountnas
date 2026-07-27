@@ -179,11 +179,15 @@ def test_ttyd_browser_terminal(dev_guest):
     assert "running" in st.out and "NOT saved" in st.out, st.out
 
     # the dashboard render links to the running terminal (no httpd needed --
-    # inspect the rendered file directly)
+    # inspect the rendered file directly): clickable header pill + footer link
     g.run("/usr/libexec/mountnas/gen-webstatus", timeout=180, check=True)
     idx = g.run("cat /run/mountnas/web/index.html", check=True).out
-    assert "Web terminal" in idx and ":22222/" in idx, \
-        "dashboard footer missing the terminal link while ttyd is running"
+    # a WELL-FORMED link: bare IP, no CIDR suffix (ips[] carries /24, which
+    # once leaked into the href as http://10.0.2.15/24:22222/ — a dead link
+    # the old ':22222/ in idx' substring check could never catch)
+    assert re.search(r'href="http://\d+\.\d+\.\d+\.\d+:22222/"', idx), \
+        "dashboard terminal link missing or malformed while ttyd is running"
+    assert 'class="termlink"' in idx, "header terminal pill missing while ttyd runs"
 
     assert "ttyd" in g.run("nas history", check=True).out
 
@@ -191,10 +195,15 @@ def test_ttyd_browser_terminal(dev_guest):
     assert off.rc == 0
     gone = g.run("curl -fsS --max-time 5 http://127.0.0.1:22222/ >/dev/null 2>&1")
     assert gone.rc != 0, "ttyd still serving after nas ttyd off"
-    # link gone from the next render too
+    # next render: the header indicates the terminal is OFF, and nothing on
+    # the page links to it anymore (the state pill stays by design)
     g.run("/usr/libexec/mountnas/gen-webstatus", timeout=180, check=True)
     idx2 = g.run("cat /run/mountnas/web/index.html", check=True).out
-    assert "Web terminal" not in idx2
+    assert "Web terminal off" in idx2, "header off-indicator missing"
+    # no anchor anywhere ('termlink' alone would false-positive: the CSS
+    # class definition ships in every render)
+    assert ":22222/" not in idx2 and 'class="termlink"' not in idx2, \
+        "terminal still linked after nas ttyd off"
 
 
 # ---------------------------------------------------------------- nfs boot

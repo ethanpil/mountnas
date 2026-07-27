@@ -312,7 +312,10 @@ ttyd_link=""
 if rc-service mountnas-ttyd status >/dev/null 2>&1; then
 	ttyd_port=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-ttyd 2>/dev/null | head -n1)
 	: "${ttyd_port:=22222}"
+	# ips[] entries carry their CIDR suffix (10.0.2.15/24) — strip it or the
+	# href is malformed (http://10.0.2.15/24:22222/, a dead link)
 	ttyd_ip=$(printf '%s' "$sj" | jq -r '.ips[0] // empty')
+	ttyd_ip=${ttyd_ip%%/*}
 	if [ -n "$ttyd_ip" ]; then
 		ttyd_link="<a href=\"http://$ttyd_ip:$ttyd_port/\">Web terminal</a>"
 		ttyd_hdr="<a class=\"termlink\" href=\"http://$ttyd_ip:$ttyd_port/\"><span class=\"pill p-ok\"><i></i>Web terminal</span></a>"
