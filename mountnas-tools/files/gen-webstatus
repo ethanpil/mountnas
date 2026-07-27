@@ -110,10 +110,12 @@ else
 fi
 pkgcount=$(apk info 2>/dev/null | wc -l | tr -d ' ')
 : "${pkgcount:=?}"
-cpu_model=$(awk -F': *' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+# DMI/cpuinfo strings are hardware-authored free text — escape them like every
+# other interpolated value (they were the only two unescaped interpolations)
+cpu_model=$(awk -F': *' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null | esc)
 [ -n "$cpu_model" ] || cpu_model="?"
-hw_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)
-hw_product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+hw_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null | esc || true)
+hw_product=$(cat /sys/class/dmi/id/product_name 2>/dev/null | esc || true)
 hw="${hw_vendor:+$hw_vendor }${hw_product:-?}"
 now_tz=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
@@ -301,15 +303,24 @@ if [ -z "$checks" ]; then
 	else checks='<li class="mut">no check data</li>'; fi
 fi
 
-# browser terminal (mountnas-ttyd): when it is running, the footer links to
-# it by the box's first IP — the one address guaranteed reachable from any
-# client that can see this page (mDNS names do not resolve everywhere)
+# browser terminal (mountnas-ttyd): linked from the header AND the footer by
+# the box's first IP — the one address guaranteed reachable from any client
+# that can see this page (mDNS names do not resolve everywhere). The header
+# element always shows whether the service is running; it is only a link when
+# there is something to click through to.
 ttyd_link=""
 if rc-service mountnas-ttyd status >/dev/null 2>&1; then
 	ttyd_port=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-ttyd 2>/dev/null | head -n1)
 	: "${ttyd_port:=22222}"
 	ttyd_ip=$(printf '%s' "$sj" | jq -r '.ips[0] // empty')
-	[ -n "$ttyd_ip" ] && ttyd_link="<a href=\"http://$ttyd_ip:$ttyd_port/\">Web terminal</a>"
+	if [ -n "$ttyd_ip" ]; then
+		ttyd_link="<a href=\"http://$ttyd_ip:$ttyd_port/\">Web terminal</a>"
+		ttyd_hdr="<a class=\"termlink\" href=\"http://$ttyd_ip:$ttyd_port/\"><span class=\"pill p-ok\"><i></i>Web terminal</span></a>"
+	else
+		ttyd_hdr="<span class=\"pill p-ok\"><i></i>Web terminal</span>"
+	fi
+else
+	ttyd_hdr="<span class=\"pill p-off\"><i></i>Web terminal off</span>"
 fi
 
 recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null | esc \
@@ -323,7 +334,9 @@ if [ ! -f "$SMART_CACHE" ] || [ "$(( $(date +%s) - $(date -r "$SMART_CACHE" +%s 
 	| jq -r '.disks[]? | .name' \
 	| while IFS= read -r d; do
 		[ -n "$d" ] || continue
-		sm=$(smartctl -n standby -H "/dev/$d" 2>/dev/null)
+		# time-bounded like docker/ufw above: a disk with a hung ioctl must
+		# not wedge the renderer (the exact failure the header rules out)
+		sm=$(timeout 10 smartctl -n standby -H "/dev/$d" 2>/dev/null)
 		case "$sm" in
 			*PASSED*|*"SMART Health Status: OK"*) v=PASSED ;;
 			*FAILED*)                             v=FAILED ;;
@@ -342,7 +355,7 @@ power_map=$(printf '%s' "$dj" \
 	| jq -r '.disks[]? | .name' \
 	| while IFS= read -r d; do
 		[ -n "$d" ] || continue
-		p=$(hdparm -C "/dev/$d" 2>/dev/null | awk -F': *' '/drive state/{print $2}')
+		p=$(timeout 10 hdparm -C "/dev/$d" 2>/dev/null | awk -F': *' '/drive state/{print $2}')
 		case "$p" in
 			*active*|*idle*) v=active ;;
 			*standby*|*sleeping*) v=standby ;;
@@ -521,6 +534,7 @@ details.card[open] summary::before{transform:rotate(90deg)}
 details.card summary .mut{text-transform:none;letter-spacing:0;font-weight:400}
 .pkglist code{background:var(--offbg);border-radius:4px;padding:1px 6px;font-size:12px;
 display:inline-block;margin:2px 2px}
+.termlink{text-decoration:none}
 footer{max-width:1080px;margin:0 auto;padding:0 20px 30px;color:var(--mut);font-size:12.5px;display:flex;gap:18px;flex-wrap:wrap}
 footer a{color:var(--acc);text-decoration:none}
 footer a:hover{text-decoration:underline}
@@ -545,6 +559,7 @@ $css
   <img src="logo.png" alt="MountNAS">
   <div><h1>$host</h1><div class="sub">MountNAS $rel &middot; read-only dashboard</div></div>
   <div class="spacer"></div>
+  $ttyd_hdr
   <div class="state $state">$state_word</div>
   <div class="upd">updated $gen_at<br>refreshes every 2 min</div>
 </header>
