@@ -16,7 +16,13 @@ start() {
 		done
 		if [ -n "$src" ]; then
 			mkdir -p /root/.ssh; chmod 700 /root/.ssh
-			while IFS= read -r k; do
+			# the file is authored "from any OS" — i.e. usually Windows: strip
+			# the CR of CRLF line endings (a trailing \r appended into
+			# authorized_keys makes the key unmatchable) and process a final
+			# line with no newline terminator
+			cr=$(printf '\r')
+			while IFS= read -r k || [ -n "$k" ]; do
+				k=${k%"$cr"}
 				case "$k" in ""|\#*) continue ;; esac
 				grep -qxF "$k" /root/.ssh/authorized_keys 2>/dev/null || printf '%s\n' "$k" >> /root/.ssh/authorized_keys
 			done < "$src"

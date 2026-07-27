@@ -44,7 +44,7 @@ if [ -z "$body" ] && [ ! -t 0 ]; then body=$(cat); fi
 # newline breaks the request outright (header injection / malformed send).
 subj=$(printf '[%s] %s' "$(hostname)" "$subject" | tr -d '\r\n')
 
-fails=0; sent=0
+fails=0
 while IFS= read -r sink; do
 	[ -n "$sink" ] || continue
 	kind=${sink%%:*}; target=${sink#*:}
@@ -75,7 +75,7 @@ while IFS= read -r sink; do
 	*)
 		log "unknown sink type '$kind' in $CONF — skipped"; rc=1 ;;
 	esac
-	if [ "$rc" = 0 ]; then sent=$((sent + 1)); else fails=$((fails + 1)); log "sink $kind:$target failed"; fi
+	[ "$rc" = 0 ] || { fails=$((fails + 1)); log "sink $kind:$target failed"; }
 done <<EOF
 $(_sinks)
 EOF

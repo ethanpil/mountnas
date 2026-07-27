@@ -32,7 +32,7 @@ if [ "$(id -u 2>/dev/null)" = 0 ] && [ ! -e /etc/mountnas/setup-done ] && [ -t 0
 	# Unset BEFORE the wizard: Ctrl-C (the documented skip) aborts the rest of
 	# this sourced file, so the tail unset below would be skipped and the
 	# escape-valued vars would leak into the login shell.
-	unset _wb _wy _wr _wd _wn
+	unset _wb _wy _wr _wd _wn ver n
 	nas setup
 fi
-unset _wb _wy _wr _wd _wn
+unset _wb _wy _wr _wd _wn ver n
