@@ -33,6 +33,13 @@ default locale, browser-terminal file transfer, and the dashboard link fix.
   values now complete under zsh too.
 
 ### Changed
+- **bash is the default login shell.** Root is switched off busybox ash once
+  at first boot (marker-guarded — if you later `chsh` to ash or zsh on
+  purpose, nothing fights you), which also makes the shipped `nas` tab
+  completion active for root out of the box. New-user docs now say
+  `adduser -s /bin/bash`. `/bin/sh` remains busybox ash, so scripts and
+  boot are unaffected. Existing boxes convert at their next boot after
+  upgrading, same one-time rule.
 - The rollback description now reads "Revert to a previous committed
   config" (it restores nothing from thin air — it swaps back to an overlay
   you committed).

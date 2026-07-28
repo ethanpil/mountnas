@@ -212,7 +212,7 @@ nas commit</code></pre>
 <h2>Sharing &amp; services <a class="top" href="#top">&uarr;</a></h2>
 <h3><a href="https://www.samba.org/">Samba</a> (Windows/macOS shares)</h3>
 <pre><code>vi /etc/samba/smb.conf            # add a [share] block (template included)
-adduser -D alice                  # system user (if new)
+adduser -D -s /bin/bash alice     # system user (if new)
 smbpasswd -a alice                # samba password
 rc-service samba restart
 nas commit</code></pre>
@@ -398,7 +398,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td>Save my changes (do this often)</td><td><code>nas commit -m "what I changed"</code></td></tr>
 <tr><td>See what's unsaved / review it</td><td><code>nas changes</code> &nbsp;/&nbsp; <code>nas changes --diff</code></td></tr>
 <tr><td>Undo a bad commit</td><td><code>nas rollback --list</code> → <code>nas rollback 1 &amp;&amp; nas reboot</code></td></tr>
-<tr><td>Add a Samba share user</td><td><code>adduser -D alice &amp;&amp; smbpasswd -a alice &amp;&amp; rc-service samba restart</code></td></tr>
+<tr><td>Add a Samba share user</td><td><code>adduser -D -s /bin/bash alice &amp;&amp; smbpasswd -a alice &amp;&amp; rc-service samba restart</code></td></tr>
 <tr><td>Install software</td><td><code>apk add &lt;pkg&gt; &amp;&amp; nas commit</code></td></tr>
 <tr><td>Get alerts on my phone</td><td>add <code>ntfy:https://ntfy.sh/topic</code> to <code>/etc/mountnas/notify.conf</code> → <code>nas notify --test</code></td></tr>
 <tr><td>Turn the dashboard on</td><td><code>nas web on &amp;&amp; nas commit</code></td></tr>

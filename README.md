@@ -179,7 +179,7 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`.
 - **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
 - **Firewall (ufw)** (off by default): the image ships fully open. `ufw allow SSH && ufw enable && nas commit` to turn it on — see [Firewall](#firewall) first.
-- **New admin user**: `adduser <name> wheel` (so `doas` works), then `nas commit`.
+- **New admin user**: `adduser -s /bin/bash <name>`, then `adduser <name> wheel` (so `doas` works), then `nas commit`. (bash is the MountNAS default shell — root gets it automatically.)
 
 ## Disabling Unused Services
 
@@ -377,6 +377,7 @@ __Shipped config that differs from stock__
 * Upgrades reconcile more than packages: releases ship an `rc.base` runlevel table and `confd.base` defaults next to `world.base`, so a newly enabled service or config default reaches boxes that upgrade — via a three-way merge that never undoes a service you disabled, and never overwrites a `conf.d` file you own
 * `/etc/inittab`: gettys on tty1–6 **and** ttyS0, so serial consoles (IPMI SoL, Proxmox `qm terminal`) get a login prompt out of the box
 * `/etc/doas.conf` pre-configured (`permit persist :wheel`)
+* bash is the default login shell: root is switched off busybox ash once at boot (a deliberate later `chsh` is never overridden), and new users are documented with `adduser -s /bin/bash`. `/bin/sh` stays busybox ash for scripts.
 * Empty `/etc/motd` and a MountNAS `/etc/issue` banner instead of Alpine's defaults; eudev instead of busybox mdev; chronyd, smartd, crond, acpid, dbus, rpcbind enabled by default
 
 __Boot / image level__

@@ -68,6 +68,21 @@ start() {
 		log "migrated /etc/lbu/include+exclude into protected_paths.d/lbu.list (the old files were never read); commit to persist"
 	fi
 
+	# Default login shell is bash (1.0rc7): switch root ONCE off the stock
+	# /bin/sh. Marker-guarded like .rcheal-1 — a user who later chsh's to
+	# ash/zsh on purpose is never fought; only the stock value is upgraded.
+	# (busybox adduser has no configurable default shell, so new users get
+	# bash via the documented 'adduser -s /bin/bash' — root is handled here.)
+	if [ ! -f /etc/mountnas/.bashshell-1 ] && [ -x /bin/bash ]; then
+		# stock Alpine ships root with /bin/sh (verified on a live rc6 guest;
+		# some setups show /bin/ash) — match both, and ONLY those
+		if grep -qE '^root:.*:/bin/a?sh$' /etc/passwd; then
+			sed -i -E 's,^(root:.*:)/bin/a?sh$,\1/bin/bash,' /etc/passwd \
+				&& log "root login shell -> /bin/bash (commit to persist)"
+		fi
+		mkdir -p /etc/mountnas && : > /etc/mountnas/.bashshell-1 2>/dev/null || true
+	fi
+
 	# Seed the prompt's unsaved-count cache. The PS1 indicator only READS this
 	# file (never runs lbu itself), so the interactive prompt stays instant.
 	lbu status 2>/dev/null | grep -c . > "$STATE/unsaved" 2>/dev/null || echo 0 > "$STATE/unsaved"
