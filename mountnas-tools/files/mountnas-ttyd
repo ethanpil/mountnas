@@ -31,10 +31,16 @@ start_pre() {
 start() {
 	ebegin "Starting MountNAS browser terminal (port $PORT)"
 	# -W: writable (ttyd >=1.7 defaults read-only); the client gets a login
-	# prompt on a fresh pty per connection
+	# prompt on a fresh pty per connection.
+	# Client defaults: zmodem/trzsz file transfer (rz/sz, trz/tsz) and sixel
+	# graphics are enabled — useful on a NAS for pulling a file through the
+	# browser session.
 	start-stop-daemon --start --background \
 		--make-pidfile --pidfile "$PIDFILE" \
-		--exec /usr/bin/ttyd -- -W -p "$PORT" -t titleFixed="MountNAS terminal" /bin/login
+		--exec /usr/bin/ttyd -- -W -p "$PORT" \
+		-t titleFixed="MountNAS terminal" \
+		-t enableZmodem=true -t enableTrzsz=true -t enableSixel=true \
+		/bin/login
 	eend $?
 }
 

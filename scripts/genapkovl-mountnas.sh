@@ -309,6 +309,17 @@ EOF
 mk root:root 0644 "$tmp/etc/motd" <<'EOF'
 EOF
 
+# ---- default locale (musl-locales) ----
+# /etc/profile is alpine-baselayout's file; it sources /etc/profile.d/*.sh,
+# and a locale.sh here is the Alpine-documented way to set the default.
+# Seed config (user-owned, lbu-persisted) — edit and 'nas commit' to change.
+mk root:root 0644 "$tmp/etc/profile.d/locale.sh" <<'EOF'
+# Default locale (musl-locales provides the translations).
+# Edit to taste, then: nas commit
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+EOF
+
 # ---- issue: MountNAS placeholder so the very first pre-login screen is not
 # Alpine's default. The mountnas-issue service runs gen-issue at boot, which
 # repaints this with the ASCII logo + live IP. (/etc/issue is lbu-excluded.)

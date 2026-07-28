@@ -15,12 +15,20 @@ tree
 pv
 mc
 tmux
+# byobu: friendlier tmux front-end (status bars, F-key bindings) — persistent
+# sessions matter on a box managed over SSH; -doc carries its help screens
+byobu
+byobu-doc
 nano
 lsof
 psmisc
 jq
 yq
 tzdata
+# musl-locales(-lang): real LC_* message/locale support on musl — paired with
+# the LANG=en_US.UTF-8 default seeded in /etc/profile.d/locale.sh
+musl-locales
+musl-locales-lang
 
 # --- device manager (eudev, replaces mdev) ---
 eudev
@@ -136,6 +144,9 @@ fdupes
 zstd
 lz4
 xz
+# 7zip: .7z archives arrive on every consolidated old drive; also the fastest
+# way to unpack Windows-made archives with odd encodings
+7zip
 
 # --- hardware identification ---
 pciutils
