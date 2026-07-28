@@ -421,8 +421,8 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td><code>disks [--json]</code></td><td>Every disk: identity, partitions, temps (spin-down safe), fstab state, paste-ready fstab lines.</td></tr>
 <tr><td><code>restart</code></td><td>Re-mount fstab disks and (re)start Docker/Samba/NFS — no reboot. Run after editing fstab.</td></tr>
 <tr><td><code>changes [--diff]</code></td><td>What <code>commit</code> would save; <code>--diff</code> shows the content. <span class="mut">(alias: changed)</span></td></tr>
-<tr><td><code>commit [-m "note"]</code></td><td>Save in-RAM config to the stick. Label it — labels show in <code>rollback --list</code>. <span class="mut">(alias: save)</span></td></tr>
-<tr><td><code>rollback [--list|&lt;n&gt;]</code></td><td>Config time machine: restore a previous committed overlay (applies at next boot; roll-forward possible).</td></tr>
+<tr><td><code>commit [-m "note"]</code></td><td>Save in-RAM config to the stick. Run interactively it asks for a note (Enter skips) — notes show in <code>rollback --list</code>. <span class="mut">(alias: save)</span></td></tr>
+<tr><td><code>rollback [--list|&lt;n&gt;]</code></td><td>Config time machine: revert to a previous committed overlay (applies at next boot; roll-forward possible).</td></tr>
 <tr><td><code>backup [--to &lt;dir|file&gt;]</code></td><td>Verified image of the whole boot USB. Copy it off-box; it is the upgrade/dead-stick recovery net.</td></tr>
 <tr><td><code>upgrade [--check|--yes] &lt;img|url&gt;</code></td><td>In-place OS upgrade from a release image; config/data untouched. Requires a backup first.</td></tr>
 <tr><td><code>history [-n N|--all]</code></td><td>Append-only operations log: setups, commits, rollbacks, backups, upgrades, power events — with who and when.</td></tr>

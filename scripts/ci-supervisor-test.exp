@@ -130,7 +130,12 @@ expect {
 expect -re {:~# }
 
 # --- persist and reboot: everything must come back without hand-holding ---
+# an interactive commit (tty, no -m) asks for a note — answer with Enter (skip)
 send "nas commit && echo COMMIT\"-OK\"\r"
+expect {
+    -re {Enter for none} { send "\r" }
+    timeout { die "nas commit never asked for a note (interactive prompt missing?)" }
+}
 expect {
     "COMMIT-OK" {}
     timeout { die "nas commit failed (or exit-code propagation broke)" }

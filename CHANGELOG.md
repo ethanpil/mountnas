@@ -19,6 +19,24 @@ default locale, browser-terminal file transfer, and the dashboard link fix.
   file` (or `tsz`) in the web terminal downloads straight through the
   browser, `rz`/`trz` uploads, and sixel-capable tools can render inline.
 
+- **`nas commit` asks for the note.** Run interactively without `-m`, commit
+  (and `nas save`) now prompts `Note for this save (Enter for none):` — the
+  notes that label `nas rollback --list` no longer require remembering a
+  flag. Enter skips; `-m` still works; scripts, cron and `ssh host "nas
+  commit"` (no tty) are never prompted, and internal commits (the wizard,
+  upgrades, `shutdown --save`) never ask.
+- **`nas log` works as an alias of `nas logs`** — including `nas log --help`,
+  which used to fall back to the generic overview instead of the logs page.
+- **Richer tab completion:** `nas help <Tab>` completes help topics,
+  `nas upgrade <Tab>` completes release files as well as flags,
+  `nas backup --to <Tab>` completes directories, and the `--persist`
+  values now complete under zsh too.
+
+### Changed
+- The rollback description now reads "Revert to a previous committed
+  config" (it restores nothing from thin air — it swaps back to an overlay
+  you committed).
+
 ### Fixed
 - **The dashboard's Web-terminal link works now.** The link was built from
   the box's first IP *including its CIDR suffix* —

@@ -12,7 +12,7 @@ _nas_complete() {
 	case "$prev" in
 	# command list: keep in sync with the dispatcher in files/nas AND the zsh
 	# compdef (files/zsh-nas-completion)
-	nas)             COMPREPLY=($(compgen -W "setup status disks restart changes changed commit save rollback backup logs web ttyd history notify report shutdown reboot upgrade version about help" -- "$cur")) ;;
+	nas)             COMPREPLY=($(compgen -W "setup status disks restart changes changed commit save rollback backup logs log web ttyd history notify report shutdown reboot upgrade version about help" -- "$cur")) ;;
 	status)          COMPREPLY=($(compgen -W "--deep --json" -- "$cur")) ;;
 	web|ttyd)        COMPREPLY=($(compgen -W "on off status" -- "$cur")) ;;
 	history)         COMPREPLY=($(compgen -W "-n --all" -- "$cur")) ;;
@@ -21,10 +21,13 @@ _nas_complete() {
 	changes|changed) COMPREPLY=($(compgen -W "--diff" -- "$cur")) ;;
 	commit|save)     COMPREPLY=($(compgen -W "-m" -- "$cur")) ;;
 	rollback)        COMPREPLY=($(compgen -W "--list" -- "$cur")) ;;
-	logs)            COMPREPLY=($(compgen -W "-f -n --persist" -- "$cur")) ;;
+	backup)          COMPREPLY=($(compgen -W "--to" -- "$cur")) ;;
+	--to)            COMPREPLY=($(compgen -d -- "$cur")) ;;
+	logs|log)        COMPREPLY=($(compgen -W "-f -n --persist" -- "$cur")) ;;
 	--persist)       COMPREPLY=($(compgen -W "on off status" -- "$cur")) ;;
-	upgrade)         COMPREPLY=($(compgen -W "--check --yes" -- "$cur")) ;;
+	upgrade)         COMPREPLY=($(compgen -W "--check --yes" -- "$cur") $(compgen -f -- "$cur")) ;;
 	reboot|shutdown) COMPREPLY=($(compgen -W "--yes --save" -- "$cur")) ;;
+	help)            COMPREPLY=($(compgen -W "setup status disks restart changes commit save rollback backup logs log web ttyd history notify report shutdown reboot upgrade version about" -- "$cur")) ;;
 	esac
 }
 complete -F _nas_complete nas

@@ -176,7 +176,7 @@ ${C_HD}Everyday${C_NO}
   ${C_B}web${C_NO} / ${C_B}ttyd${C_NO} Dashboard + guide / browser terminal  [on [port]|off|status]
 
 ${C_HD}Recover${C_NO}
-  ${C_B}rollback${C_NO}  Restore a previous committed config          [--list | <n>]
+  ${C_B}rollback${C_NO}  Revert to a previous committed config        [--list | <n>]
   ${C_B}backup${C_NO}    Image the boot USB to a file (see UPGRADE.md)  [--to <dir>]
   ${C_B}restart${C_NO}   Re-mount disks + (re)start services (no reboot)
   ${C_B}history${C_NO}   Operations log: setups/commits/backups/upgrades   [-n N]
@@ -1337,6 +1337,10 @@ _snap_note() {
 }
 
 cmd_commit() {
+	# --no-ask: internal callers only (wizard, upgrade, shutdown --save) —
+	# their commits must never stop for the interactive note prompt below
+	ask=1
+	[ "${1:-}" = "--no-ask" ] && { ask=0; shift; }
 	note=""
 	if [ "${1:-}" = "-m" ]; then
 		note="${2:-}"
@@ -1349,6 +1353,15 @@ cmd_commit() {
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
 	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
 		&& { bad "a data path is in the lbu include list — refusing (would tar your data disk)"; return 1; }
+	# No -m on an interactive run: ask for the note instead of making the user
+	# remember the flag. Enter skips; prompting happens AFTER the refusal
+	# gates so a doomed commit never asks first. Non-tty callers (ssh -T,
+	# cron, pipes) skip straight through.
+	if [ "$ask" = 1 ] && [ -z "$note" ] && [ -t 0 ] && [ -t 1 ]; then
+		printf 'Note for this save (Enter for none): '
+		IFS= read -r note || note=""
+		note=$(printf '%s' "$note" | tr '\t\n' '  ')
+	fi
 	step "Saving configuration..."
 	lbu commit -v || { bad "lbu commit failed"; return 1; }
 	if [ -n "$note" ]; then
@@ -1549,7 +1562,7 @@ _power() { act="$1"; word="$2"; shift 2
 	done
 	case "$mode" in
 	save)
-		cmd_commit || return 1 ;;
+		cmd_commit --no-ask || return 1 ;;
 	yes)
 		n=$(lbu status 2>/dev/null | grep -c .)
 		[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) will be LOST (use --save to commit first)" ;;
@@ -1558,7 +1571,7 @@ _power() { act="$1"; word="$2"; shift 2
 		if [ "${n:-0}" -gt 0 ]; then
 			echo "You have $n unsaved change(s)."
 			printf 'Before %s: [S]ave / [D]iscard / [C]ancel: ' "$word"; read -r a
-			case "$a" in S|s) cmd_commit || return 1 ;; D|d) : ;; *) echo "Cancelled."; return 1 ;; esac
+			case "$a" in S|s) cmd_commit --no-ask || return 1 ;; D|d) : ;; *) echo "Cancelled."; return 1 ;; esac
 		fi ;;
 	esac
 	_ops_log "$word" "requested (mode: $mode)"
@@ -1687,7 +1700,7 @@ cmd_setup() {
 	date '+%Y-%m-%d %H:%M' > /etc/mountnas/setup-done
 	_ops_log setup "wizard completed (hostname: $(hostname))"
 
-	printf '%s[5/5]%s Saving...\n' "$C_B" "$C_NO"; cmd_commit
+	printf '%s[5/5]%s Saving...\n' "$C_B" "$C_NO"; cmd_commit --no-ask
 	# "Setup complete" stays a contiguous literal (CI expects it)
 	hdr "Setup complete"
 	cat <<EOF
@@ -2196,7 +2209,7 @@ EOF
 	# write-bootcfg — the last step that writes to $BOOTMNT — not right after
 	# the renames as it used to.
 	_cleanup; trap - EXIT HUP INT TERM
-	cmd_commit
+	cmd_commit --no-ask
 
 	echo
 	# real ok() (the old heredoc faked an uncolored "[ OK ]"); the literal
@@ -2242,7 +2255,7 @@ EOF
 ;;
 	rollback) cat <<EOF
 nas rollback [--list | <number>]
-  Restore a previous committed config. lbu keeps the last few overlays on
+  Revert to a previous committed config. lbu keeps the last few overlays on
   /cfg automatically; --list shows them, <number> swaps one in as the
   active config (crash-safe). Applies at the NEXT boot; the replaced
   config is kept as a snapshot, so you can roll forward again.
@@ -2259,7 +2272,7 @@ nas backup [--to <dir|file>]
   Data disks are NOT included — back those up separately (restic is baked in).
 EOF
 ;;
-	logs) cat <<EOF
+	logs|log) cat <<EOF
 nas logs [-n N | -f | --persist on|off|status]
   View the system log (RAM by default). --persist on moves syslog to
   /mnt/nasdata/logs with rotation so a crash leaves history behind —
@@ -2294,8 +2307,10 @@ EOF
 nas commit [-m "note"]   (alias: nas save)
   Save the in-RAM /etc changes to the USB config partition. Review first
   with 'nas changes --diff'. Undo a bad commit with 'nas rollback'.
-  -m attaches a note shown by 'nas rollback --list', so snapshots stay
-  identifiable ("before enabling nfs", "smb share added", ...).
+  Run interactively without -m, it asks for a note (Enter skips) — notes
+  are shown by 'nas rollback --list', so snapshots stay identifiable
+  ("before enabling nfs", "smb share added", ...). -m still works for
+  scripts and one-liners.
 EOF
 ;;
 	restart) cat <<EOF
@@ -2404,7 +2419,7 @@ case "${1:-help}" in
 	report) cmd_report ;;
 	commit|save) shift; cmd_commit "$@" ;;
 	rollback) shift; cmd_rollback "$@" ;;
-	logs) shift; cmd_logs "$@" ;;
+	logs|log) shift; cmd_logs "$@" ;;
 	web) shift; cmd_web "$@" ;;
 	ttyd) shift; cmd_ttyd "$@" ;;
 	history) shift; cmd_history "$@" ;;
