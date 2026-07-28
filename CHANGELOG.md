@@ -1,11 +1,45 @@
 # Changelog
 
-## [Unreleased]
+## [1.0rc7] — 2026-07-27
+
+**Seventh 1.0 release candidate.** Quality-of-life package additions, a
+default locale, browser-terminal file transfer, and the dashboard link fix.
 
 ### Added
-- **Compressed zram swap, on by default** — one zstd zram device sized to half of RAM (seeded `/etc/conf.d/zram-init`, `zram-init` in the **boot** runlevel). The RAM-resident OS's cold pages compress well, so a 4 GB box keeps real headroom under a Docker load that used to squeeze it. This does **not** lower the 4 GB floor: the RAM root is capped at half of physical RAM and swap cannot raise that cap. Prefer no swap? `rc-update del zram-init boot && nas commit`.
-- **`nas upgrade` now delivers newly enabled services and newly seeded `/etc/conf.d` defaults.** Until now `rc_add` only wrote into the seed overlay on the config partition, which the upgrade never touches — so a service enabled in a new release reached freshly flashed sticks only. Two releases were affected: an upgraded box had **ufw in no runlevel** (rules loaded when you ran `ufw enable`, then silently never loaded again after a reboot) and would have had no zram at all. Releases now ship an `rc.base` table and a `confd.base` directory next to `world.base`, and the upgrade reconciles against them. Runlevels use a **three-way merge, not a union**: it adds only what is new in the release and removes only what the release dropped, so `rc-update del smartd default` survives every future upgrade. `conf.d` defaults are **create-if-absent and never overwritten** (a changed shipped default lands as `.new` beside yours). Every change is printed and recorded in `nas history`. Boxes already past this point are healed once, automatically, at the next boot.
-- **Swap is visible.** `nas status` shows swap on its memory line and as its own check, `nas status --json` gains a `memory` object (total/available/swap total/swap used), the dashboard gets a Swap row, and `nas report` captures `/proc/swaps`, `free`, and the zram config — a box thrashing into zram used to look identical to an idle one on every surface.
+- **New baked-in packages:** `7zip` (`7z` — .7z and Windows-made archives),
+  `byobu` + `byobu-doc` (friendlier tmux front-end — persistent sessions with
+  status bars, for boxes managed over SSH), and `musl-locales` +
+  `musl-locales-lang` (real locale/message support on musl).
+- **A default locale ships:** `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8`,
+  seeded as `/etc/profile.d/locale.sh` (the file `/etc/profile` sources for
+  exactly this — `/etc/profile` itself belongs to alpine-baselayout). It is
+  your config: edit it, then `nas commit`.
+- **The browser terminal can move files and draw graphics.** `nas ttyd` now
+  starts ttyd with `enableZmodem`, `enableTrzsz` and `enableSixel` on — `sz
+  file` (or `tsz`) in the web terminal downloads straight through the
+  browser, `rz`/`trz` uploads, and sixel-capable tools can render inline.
+
+### Fixed
+- **The dashboard's Web-terminal link works now.** The link was built from
+  the box's first IP *including its CIDR suffix* —
+  `http://10.0.2.15/24:22222/`, a dead URL — since the link first shipped.
+  Surfaced by the tightened QEMU assertion the moment it required a
+  well-formed URL instead of a substring.
+
+### Docs
+- **Package-list audit:** README and the built-in guide now document every
+  user-facing package — `busybox-extras` and `sgdisk` were missing from the
+  README, `sgdisk` and the samba client tools from the guide — and both
+  gained the five new packages. Verified against `packages.list` with zero
+  stale entries remaining.
+
+## [1.0rc6] — 2026-07-27
+
+**Sixth 1.0 release candidate.** The over-engineering review release: two
+local packages removed, four latent upgrade-path bugs fixed, a power-cut
+heal, and the restore drill automated. The review's verdict on the codebase
+overall: the divergences from stock Alpine are earned; the cuts below were
+the exceptions.
 
 ### Added
 - **The dashboard header now shows the browser terminal.** A pill at the top
@@ -20,7 +54,6 @@
   Removing cmkfs also removes the build pipeline's only unpinned input (it was
   resolved to the latest upstream release at build time, by design). Two fewer
   local packages to sign, exclude from preflight, and document.
-- **Leaner base image.** `mosh` and `lm-sensors-detect` leave the base set (nothing in MountNAS invoked either, and `perl` plus the protobuf stack fall out of the dependency closure with them), and Docker is listed explicitly as `docker-engine` + `docker-cli` + `docker-cli-buildx` + `docker-cli-compose` rather than via the meta package. Net: **~48 MB less RAM at boot and ~14 MB less on the USB**, with `docker build`, `docker compose`, and everything else unchanged. Existing boxes converge at their next `nas upgrade`.
 
 ### Fixed
 - **Upgrades now deliver kernel cmdline changes.** `nas upgrade` staged every
@@ -53,15 +86,12 @@
   supervisor truncated `/var/log/mountnas.log` on every start — losing
   exactly the history a storage problem makes you want. It now appends and
   self-trims past 500 lines.
-- **Shutdown no longer swapoffs the zram device.** OpenRC stops boot-runlevel services on the way down, and `zram-init`'s `stop()` runs `swapoff` — which must decompress *every* stored page back into RAM before the device can be released. On a box tight enough to have filled its zram (precisely the box the feature exists for) that stalls the shutdown or invokes the OOM killer, and an OOM'd openrc means `mount-ro` never runs and `/cfg` is left dirty. The seeded config now carries `rc_keyword="-shutdown"`, so the service is simply left running; the pages are volatile ones the power-off discards anyway. A manual `rc-service zram-init stop` still tears the device down normally. *(Upgrading from 1.0rc4: `/etc/conf.d/zram-init` is yours, so the new default arrives as `/etc/conf.d/zram-init.new` — copy the `rc_keyword` line across if you want the fix.)*
-- **`nas disks` no longer invents a drive.** With zram swap always present, `nas disks`, `nas disks --json`, `nas status --deep` and the sensors block listed `/dev/zram0` as a physical disk (lsblk types it as one) — a phantom row in the inventory users are told to configure storage from, an off-by-one for anything counting `--json` disks, and pointless `smartctl`/`hdparm` probes on every status run.
-- **A failed `nas upgrade` says what actually went wrong.** A full RAM root (unchecked `mktemp`) and a payload with no partition table both reported "cannot mount the image's BOOT partition — is this really a MountNAS release image?", sending users to re-download a perfectly good file. Each case now names itself.
-- **The upgrade's degraded path can no longer strand a box offline.** If the boot USB's `world.base` is missing or truncated (a power cut zeroes FAT files), the reconciliation could not tell base packages from user extras and kept packages the new release dropped — which then fail to resolve from the on-media repo at every subsequent boot. The `mountnas` service now mirrors `world.base` into `/etc` at boot, and the upgrade falls back to that copy.
-
-### Fixed
-- **`nas upgrade` no longer intermittently aborts with "cannot mount the image's BOOT partition" on a good image.** After `losetup -fP`, eudev re-processes the loop device's change events and each partition-table rescan *deletes and re-adds* the partition nodes — so the alpha-era fix (wait for `p1` to exist, then mount once) could still land its single mount attempt in a deletion window and abort the upgrade (safely — nothing written — but spuriously). Caught by the QEMU suite validating 1.0rc3: reproducible ~1 in 3 on the docker-survives-upgrade test, where dockerd keeps udev busy. Now `udevadm settle` runs after `partprobe` and the *mount itself* retries (bounded ~10 s) — verified 4/4 green where the shipped code failed 1 in 3. A genuinely non-image payload now takes ~10 s to be rejected instead of failing instantly.
 
 ### Testing
+- **The backup restore drill is automated** (it already lived in the suite as
+  `test_backup_restore_drill`; the docs and CONTEXT now reflect it): back up
+  a configured box, write the image to a fresh stick, boot it, and prove the
+  OS + committed config came back. Passed against this release.
 - **The late power-cut test is honest now.** It ran as a self-upgrade
   (old == new), so its version assertion could never actually detect a mixed
   kernel/modloop pair. It now upgrades from the previous release when one is
@@ -71,6 +101,44 @@
   of grepping `[FAIL]` in the human output — the display format no longer has
   a CI consumer. Its flimsiest expect match (`{HCP}`, a substring of "DHCP")
   now matches the real wizard prompt.
+
+### Docs
+- README's "Design Principles & Justifications" folded into CONTEXT.md; the
+  stock-Alpine diff refreshed; CONTEXT.md caught up to the post-review
+  reality (four local apks, review outcomes, the dashboard's real
+  trusted-LAN posture) and its resolved historical notes condensed.
+
+## [1.0rc5] — 2026-07-26
+
+**Fifth 1.0 release candidate.** One shutdown fix.
+
+### Fixed
+- **Shutdown no longer swapoffs the zram device.** OpenRC stops boot-runlevel services on the way down, and `zram-init`'s `stop()` runs `swapoff` — which must decompress *every* stored page back into RAM before the device can be released. On a box tight enough to have filled its zram (precisely the box the feature exists for) that stalls the shutdown or invokes the OOM killer, and an OOM'd openrc means `mount-ro` never runs and `/cfg` is left dirty. The seeded config now carries `rc_keyword="-shutdown"`, so the service is simply left running; the pages are volatile ones the power-off discards anyway. A manual `rc-service zram-init stop` still tears the device down normally. *(Upgrading from 1.0rc4: `/etc/conf.d/zram-init` is yours, so the new default arrives as `/etc/conf.d/zram-init.new` — copy the `rc_keyword` line across if you want the fix.)*
+
+### Testing
+- The upgrade-reconciliation test's simulation was fixed to match the
+  newly-shipped rc.base/confd.base delivery.
+
+## [1.0rc4] — 2026-07-24
+
+**Fourth 1.0 release candidate.** Compressed swap by default, a leaner base,
+and upgrades that deliver everything a new release enables.
+
+### Added
+- **Compressed zram swap, on by default** — one zstd zram device sized to half of RAM (seeded `/etc/conf.d/zram-init`, `zram-init` in the **boot** runlevel). The RAM-resident OS's cold pages compress well, so a 4 GB box keeps real headroom under a Docker load that used to squeeze it. This does **not** lower the 4 GB floor: the RAM root is capped at half of physical RAM and swap cannot raise that cap. Prefer no swap? `rc-update del zram-init boot && nas commit`.
+- **`nas upgrade` now delivers newly enabled services and newly seeded `/etc/conf.d` defaults.** Until now `rc_add` only wrote into the seed overlay on the config partition, which the upgrade never touches — so a service enabled in a new release reached freshly flashed sticks only. Two releases were affected: an upgraded box had **ufw in no runlevel** (rules loaded when you ran `ufw enable`, then silently never loaded again after a reboot) and would have had no zram at all. Releases now ship an `rc.base` table and a `confd.base` directory next to `world.base`, and the upgrade reconciles against them. Runlevels use a **three-way merge, not a union**: it adds only what is new in the release and removes only what the release dropped, so `rc-update del smartd default` survives every future upgrade. `conf.d` defaults are **create-if-absent and never overwritten** (a changed shipped default lands as `.new` beside yours). Every change is printed and recorded in `nas history`. Boxes already past this point are healed once, automatically, at the next boot.
+- **Swap is visible.** `nas status` shows swap on its memory line and as its own check, `nas status --json` gains a `memory` object (total/available/swap total/swap used), the dashboard gets a Swap row, and `nas report` captures `/proc/swaps`, `free`, and the zram config — a box thrashing into zram used to look identical to an idle one on every surface.
+
+### Changed
+- **Leaner base image.** `mosh` and `lm-sensors-detect` leave the base set (nothing in MountNAS invoked either, and `perl` plus the protobuf stack fall out of the dependency closure with them), and Docker is listed explicitly as `docker-engine` + `docker-cli` + `docker-cli-buildx` + `docker-cli-compose` rather than via the meta package. Net: **~48 MB less RAM at boot and ~14 MB less on the USB**, with `docker build`, `docker compose`, and everything else unchanged. Existing boxes converge at their next `nas upgrade`.
+
+### Fixed
+- **`nas disks` no longer invents a drive.** With zram swap always present, `nas disks`, `nas disks --json`, `nas status --deep` and the sensors block listed `/dev/zram0` as a physical disk (lsblk types it as one) — a phantom row in the inventory users are told to configure storage from, an off-by-one for anything counting `--json` disks, and pointless `smartctl`/`hdparm` probes on every status run.
+- **A failed `nas upgrade` says what actually went wrong.** A full RAM root (unchecked `mktemp`) and a payload with no partition table both reported "cannot mount the image's BOOT partition — is this really a MountNAS release image?", sending users to re-download a perfectly good file. Each case now names itself.
+- **The upgrade's degraded path can no longer strand a box offline.** If the boot USB's `world.base` is missing or truncated (a power cut zeroes FAT files), the reconciliation could not tell base packages from user extras and kept packages the new release dropped — which then fail to resolve from the on-media repo at every subsequent boot. The `mountnas` service now mirrors `world.base` into `/etc` at boot, and the upgrade falls back to that copy.
+- **`nas upgrade` no longer intermittently aborts with "cannot mount the image's BOOT partition" on a good image.** After `losetup -fP`, eudev re-processes the loop device's change events and each partition-table rescan *deletes and re-adds* the partition nodes — so the alpha-era fix (wait for `p1` to exist, then mount once) could still land its single mount attempt in a deletion window and abort the upgrade (safely — nothing written — but spuriously). Caught by the QEMU suite validating 1.0rc3: reproducible ~1 in 3 on the docker-survives-upgrade test, where dockerd keeps udev busy. Now `udevadm settle` runs after `partprobe` and the *mount itself* retries (bounded ~10 s) — verified 4/4 green where the shipped code failed 1 in 3. A genuinely non-image payload now takes ~10 s to be rejected instead of failing instantly.
+
+### Testing
 - **`upgrade_golden_guest` now honors `MOUNTNAS_NAS_SRC`.** The plain `upgrade_guest` fixture injected the repo's `nas` into guests, but the golden-based fixture (docker/samba upgrade tests) silently didn't — re-runs meant to verify a local `nas` fix were exercising the shipped binary instead (which is exactly how the loop-mount fix's first verification round fooled itself).
 
 ## [1.0rc3] — 2026-07-24

@@ -397,6 +397,7 @@ __MountNAS Helper Utilities__
 __Core Shell / Base Utilities__
 * bash
 * zsh (alternate login shell — `chsh -s /bin/zsh`, then `nas commit`)
+* busybox-extras (the httpd applet behind `nas web`)
 * coreutils
 * findutils
 * util-linux
@@ -406,12 +407,14 @@ __Core Shell / Base Utilities__
 * pv
 * mc
 * tmux
+* byobu (friendlier tmux front-end — persistent sessions with status bars; `byobu-doc` included)
 * nano
 * lsof
 * psmisc
 * jq
 * yq
 * tzdata
+* musl-locales + musl-locales-lang (real locale support on musl; default `LANG=en_US.UTF-8` seeded in `/etc/profile.d/locale.sh` — edit and `nas commit` to change)
 * chrony
 * acpid
 * doas
@@ -420,6 +423,7 @@ __Disk Partitioning__
 
 * parted
 * gptfdisk
+* sgdisk (scriptable GPT partitioning)
 * cfdisk
 * sfdisk
 
@@ -447,6 +451,7 @@ __File Integrity / Dedup / Compression__
 * xxhash (fast checksums for verifying large copies)
 * fdupes (duplicate-file finder)
 * zstd, lz4, xz (busybox only decompresses these)
+* 7zip (`7z` — .7z and Windows-made archives)
 
 __Device Manager__
 
