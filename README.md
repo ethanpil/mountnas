@@ -203,11 +203,20 @@ nas status                 # verify: docker now listed as disabled
 nas commit                 # REQUIRED — the setting is RAM-only until committed
 ```
 
-Stop the dropped service yourself (that first command): the supervisor only manages what's *currently* listed, so once Docker is off the list `nas restart` won't stop a Docker that's already running — it just stops managing it. A reboot works too.
+Some common values:
 
-`nas status` (and the web dashboard) know about the override and won't warn about services you deliberately disabled — it lists them as disabled instead. Re-enable by adding the service back to the list, then `nas restart` **and `nas commit`** again. The file is yours: upgrades never overwrite it.
+| Goal | Line |
+| --- | --- |
+| Keep Samba + NFS (no Docker) | `DATA_SERVICES="samba nfs"` |
+| Keep Docker + NFS (no Samba) | `DATA_SERVICES="docker nfs"` |
+| Keep Samba only | `DATA_SERVICES="samba"` |
+| No data services at all | `DATA_SERVICES=""` |
 
-⚠️ `DATA_SERVICES=""` does **not** disable everything — an empty value falls back to the built-in default (`docker samba nfs`). Turn services off by omitting them from the list, not by emptying it.
+**This switch covers only Docker, Samba, and NFS** — the three services the supervisor holds back until `/mnt/nasdata` is mounted. Everything else (`sshd`, `smartd`, `avahi-daemon`, `crond`, …) is an ordinary runlevel service and naming it here does nothing; disable those with `rc-update del` as described below.
+
+**You do not need `rc-update del` for these three** — they're in no runlevel, so there's nothing to remove. The one-time `rc-service docker stop` above is only to stop what's *already running*: the supervisor manages what's *currently* listed, so once Docker is off the list `nas restart` won't stop a running Docker, it just stops managing it. A reboot does the same job. After that the supervisor simply never starts it again.
+
+`nas status` (and the web dashboard) know about the override and won't warn about services you deliberately disabled — it lists them as disabled instead. Re-enable by adding the service back to the list, then `nas restart` **and `nas commit`** again. The file is yours: upgrades never overwrite it. If it ever has a syntax error, the built-in default applies rather than silently stopping your shares.
 
 **Runlevel services** (everything else) use the standard Alpine pattern — stop it, remove it from the runlevel, commit:
 

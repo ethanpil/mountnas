@@ -232,6 +232,23 @@ cmd_help() {
 	_help_page2
 }
 
+# THE single reader of the DATA_SERVICES override (callers: cmd_status,
+# cmd_restart — the supervisor gets its own copy via OpenRC's conf.d
+# sourcing). Reads in a subshell so a user's conf.d can never contaminate
+# ours, and prefixes the value with a sentinel byte so we can tell an
+# EXPLICITLY EMPTY list ("run no data services") apart from a conf.d whose
+# sourcing died (a stray exit, a set -u typo, a missing file) — the latter
+# must fail SAFE to the built-in set rather than silently drop every data
+# service from the checks. '-' not ':-' so an empty list stays empty.
+_data_services() {
+	local _ds
+	_ds=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; printf '=%s' "${DATA_SERVICES-docker samba nfs}")
+	case "$_ds" in
+		=*) printf '%s' "${_ds#=}" ;;
+		*)  printf '%s' "docker samba nfs" ;;
+	esac
+}
+
 # nas status [--deep]
 # Fast glance + storage-config validation (all read-only, no disk spin-up).
 # --deep adds SMART, SnapRAID status and time-sync — those can wake sleeping disks
@@ -276,11 +293,7 @@ cmd_status() {
 	# Data services DISABLED via DATA_SERVICES= in /etc/conf.d/mountnas (the
 	# supported way to turn off Docker/Samba/NFS — see the supervisor's header)
 	# are skipped, not warned: a deliberate off must not read as a failure.
-	ds_on=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; echo "${DATA_SERVICES:-docker samba nfs}")
-	# a conf.d that errors under sourcing (set -u on an unset var, a stray
-	# exit) empties the subshell — the data services must not silently
-	# vanish from the checks because of a config typo
-	[ -n "$ds_on" ] || ds_on="docker samba nfs"
+	ds_on=$(_data_services)
 	ds_off=""
 	for s in docker samba nfs; do
 		case " $ds_on " in *" $s "*) ;; *) ds_off="$ds_off $s" ;; esac
@@ -860,10 +873,8 @@ cmd_restart() {
 		# waits out the loop and the stop is a harmless no-op.
 		# Hold only what the supervisor manages: a service removed from
 		# DATA_SERVICES (the supported disable/opt-out) is the user's to run —
-		# stopping it here would kill a service mountnas does not own. Same
-		# override-sourcing (incl. the empty-on-error fallback) as cmd_status.
-		rs_ds=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; echo "${DATA_SERVICES:-docker samba nfs}")
-		[ -n "$rs_ds" ] || rs_ds="docker samba nfs"
+		# stopping it here would kill a service mountnas does not own.
+		rs_ds=$(_data_services)
 		for s in $rs_ds; do
 			i=0
 			while ! rc-service "$s" status >/dev/null 2>&1 && [ "$i" -lt 20 ]; do

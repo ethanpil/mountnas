@@ -8,11 +8,21 @@ LOG=/var/log/mountnas.log
 # Overridable from /etc/conf.d/mountnas (OpenRC sources it before this file
 # runs): set DATA_SERVICES to ONLY what you keep, e.g.
 #   DATA_SERVICES="samba nfs"        # a box that does not use Docker
+#   DATA_SERVICES=""                 # no data services at all
 # and 'nas commit'. That is the supported way to disable Docker/Samba/NFS —
 # they live in no runlevel, and 'apk del' does not survive an upgrade's
 # world reconciliation. 'nas status' reads the same override and will not
 # warn about services you deliberately disabled.
-DATA_SERVICES="${DATA_SERVICES:-docker samba nfs}"
+#
+# SCOPE: this list governs ONLY the three storage-gated services above — the
+# ones held back until /mnt/nasdata is mounted. Every OTHER service (sshd,
+# smartd, avahi, crond, ...) is a normal runlevel service and is disabled the
+# normal way: rc-update del <name> default && nas commit.
+#
+# '-' NOT ':-' on purpose: :- treats set-but-empty as absent, so
+# DATA_SERVICES="" used to silently mean "all three" — the exact opposite of
+# what it reads like. With '-' an explicitly empty list means EMPTY.
+DATA_SERVICES="${DATA_SERVICES-docker samba nfs}"
 
 # after rpcbind: nfs's dependency start collides with rpcbind's own
 # default-runlevel start when this service wins the boot ordering — nfs then

@@ -274,9 +274,16 @@ nas commit                # rules + the enable flag live in /etc/ufw</code></pre
 sed -i 's/^#DATA_SERVICES=/DATA_SERVICES=/' /etc/conf.d/mountnas   # or edit the file
 nas status                 # verify: docker now listed as disabled
 nas commit                 # REQUIRED — the setting is RAM-only until committed</code></pre>
-<p>Stop the dropped service yourself: the supervisor only manages what is <i>currently</i> listed, so once Docker is off the list <code>nas restart</code> will not stop a Docker that is already running — it just stops managing it. A reboot works too.</p>
-<p><code>nas status</code> and this dashboard understand the override: a deliberately disabled service is listed as disabled, never warned about. Re-enable by adding it back to the list, then <code>nas restart</code> <b>and <code>nas commit</code></b> again. The file is yours — upgrades never overwrite it.</p>
-<p><b>Note:</b> <code>DATA_SERVICES=""</code> does <b>not</b> disable everything — an empty value falls back to the built-in default (<code>docker samba nfs</code>). Drop services by omitting them from the list.</p>
+<table>
+<tr><th>Goal</th><th>Line</th></tr>
+<tr><td>Keep Samba + NFS (no Docker)</td><td><code>DATA_SERVICES="samba nfs"</code></td></tr>
+<tr><td>Keep Docker + NFS (no Samba)</td><td><code>DATA_SERVICES="docker nfs"</code></td></tr>
+<tr><td>Keep Samba only</td><td><code>DATA_SERVICES="samba"</code></td></tr>
+<tr><td>No data services at all</td><td><code>DATA_SERVICES=""</code></td></tr>
+</table>
+<p><b>Scope:</b> this switch covers <b>only</b> Docker, Samba and NFS — the three services held back until <code>/mnt/nasdata</code> mounts. Everything else (<code>sshd</code>, <code>smartd</code>, <code>avahi-daemon</code>, <code>crond</code>, ...) is an ordinary runlevel service; naming it here does nothing, so disable those with <code>rc-update del</code> (below).</p>
+<p><b>No <code>rc-update del</code> needed for these three</b> — they are in no runlevel, so there is nothing to remove. The one-time <code>rc-service docker stop</code> only stops what is <i>already running</i>: the supervisor manages what is <i>currently</i> listed, so once Docker is off the list <code>nas restart</code> will not stop a running Docker, it just stops managing it (a reboot does the same). After that it is simply never started again.</p>
+<p><code>nas status</code> and this dashboard understand the override: a deliberately disabled service is listed as disabled, never warned about. Re-enable by adding it back to the list, then <code>nas restart</code> <b>and <code>nas commit</code></b> again. The file is yours — upgrades never overwrite it, and a syntax error falls back to the built-in default rather than silently stopping your shares.</p>
 <h3>Runlevel services</h3>
 <pre><code>rc-service &lt;name&gt; stop &amp;&amp; rc-update del &lt;name&gt; default &amp;&amp; nas commit</code></pre>
 <p>Most services live in the <code>default</code> runlevel. A few start earlier and live in <code>boot</code> (<code>zram-init</code>, <code>ufw</code>) — for those say <code>boot</code> instead of <code>default</code>; <code>rc-status boot</code> lists them. <code>nas upgrade</code> preserves your choice: a service you remove stays removed across upgrades.</p>

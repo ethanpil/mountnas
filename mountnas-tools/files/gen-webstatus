@@ -236,9 +236,15 @@ fi
 # Everything shown is daemon metadata the CLI returns in one round-trip.
 # a deliberately disabled docker (DATA_SERVICES= in /etc/conf.d/mountnas)
 # must not read as "held waiting for the disk" — same override-awareness as
-# nas status, incl. its empty-on-source-error fallback
-ds_on=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; echo "${DATA_SERVICES:-docker samba nfs}")
-[ -n "$ds_on" ] || ds_on="docker samba nfs"
+# nas status. The '=' sentinel separates an explicitly empty list (no data
+# services at all) from a conf.d whose sourcing died, which falls back to the
+# built-in set; '-' not ':-' so an empty list stays empty. Kept in sync with
+# _data_services() in the nas CLI (separate files, no shared shell library).
+ds_on=$(unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; printf '=%s' "${DATA_SERVICES-docker samba nfs}")
+case "$ds_on" in
+	=*) ds_on=${ds_on#=} ;;
+	*)  ds_on="docker samba nfs" ;;
+esac
 case " $ds_on " in
 	*" docker "*) docker_html='<span class="mut">docker not running (held until the data disk is up)</span>' ;;
 	*) docker_html='<span class="mut">docker disabled via /etc/conf.d/mountnas</span>' ;;

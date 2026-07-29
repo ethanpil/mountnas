@@ -163,6 +163,35 @@ def test_disable_data_service_via_conf(dev_guest):
     assert "disabled via /etc/conf.d/mountnas" in idx, \
         "dashboard docker card shows the wrong reason for a deliberate disable"
 
+    # An EXPLICITLY EMPTY list means none at all. Until 1.0rc7 the expansion
+    # was ${DATA_SERVICES:-...}, which treats set-but-empty as absent — so the
+    # one value that reads as "run nothing" was the one value that ran
+    # everything. Guard the fix in both directions below.
+    # Stop them FIRST: the supervisor only manages what is currently listed,
+    # so once the list is empty its stop() is a no-op by design and anything
+    # already running would stay up (documented behaviour, not a regression).
+    # The property under test is that it never STARTS them.
+    for svc in ("docker", "samba", "nfs"):
+        g.run(f"rc-service {svc} stop", timeout=120)
+    g.run("printf 'DATA_SERVICES=\"\"\\n' > /etc/conf.d/mountnas", check=True)
+    g.run("rc-service mountnas restart", timeout=240, check=True)
+    for svc in ("docker", "samba", "nfs"):
+        assert g.run(f"rc-service {svc} status").rc != 0, \
+            f"{svc} started despite an empty DATA_SERVICES (the :- footgun is back)"
+    st = g.run("nas status", timeout=180)
+    assert st.rc == 0, f"disable-all must not fail status (rc={st.rc}):\n{st.out}"
+    assert "disabled by /etc/conf.d/mountnas" in st.out, st.out
+    for svc in ("docker not running", "samba not running", "nfs not running"):
+        assert svc not in st.out, f"deliberate disable warned as a failure: {svc}"
+
+    # ...but a conf.d that BREAKS under sourcing must fail SAFE to the built-in
+    # set, not read as "the user disabled everything" — emptiness alone cannot
+    # be the error signal once an empty list is meaningful.
+    g.run("printf 'exit 3\\n' > /etc/conf.d/mountnas", check=True)
+    st = g.run("nas status", timeout=180)
+    assert "disabled by /etc/conf.d/mountnas" not in st.out, \
+        "a broken conf.d was read as a deliberate disable-all (sentinel lost)"
+
 
 # ---------------------------------------------------------------- ttyd
 

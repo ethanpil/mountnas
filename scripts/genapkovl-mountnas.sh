@@ -149,24 +149,33 @@ EOF
 mk root:root 0644 "$tmp/etc/conf.d/mountnas" <<'EOF'
 # MountNAS data services — you own this file (edit, then: nas commit).
 #
-# The 'mountnas' supervisor starts these once /mnt/nasdata is mounted. They
-# are in NO runlevel, so 'rc-update del' does nothing for them, and 'apk del'
-# is undone by the next 'nas upgrade' (its world reconciliation restores the
-# base package set). Editing the line below is the supported way to turn one
-# off, and it survives upgrades untouched.
+# SCOPE: this setting governs ONLY the three storage-gated services —
+# docker, samba and nfs. Those are the ones the 'mountnas' supervisor holds
+# back until /mnt/nasdata is actually mounted, which is why they need a
+# switch of their own: they sit in NO runlevel, so 'rc-update del' does
+# nothing for them, and 'apk del' is undone by the next 'nas upgrade' (its
+# world reconciliation restores the base package set).
 #
-# Uncomment and list ONLY the services you KEEP:
+# EVERY OTHER SERVICE (sshd, smartd, avahi-daemon, crond, chronyd, ufw,
+# zram-init, ...) is an ordinary runlevel service — naming it below does
+# NOTHING. Disable those the standard Alpine way instead:
+#   rc-service <name> stop && rc-update del <name> default && nas commit
 #
-#DATA_SERVICES="samba nfs"      # a box that does not use Docker
+# Uncomment the line below and list ONLY the data services you KEEP.
+#   "samba nfs" = no Docker      "samba" = Samba only      "" = none at all
 #
-# Then stop the one you dropped and apply:
+#DATA_SERVICES="samba nfs"
+#
+# Then stop whatever you dropped and apply:
 #   rc-service docker stop && nas restart && nas commit
 # (stop it yourself first — the supervisor only manages what is listed, so
-# it will not stop a service you have just removed from the list.)
+# it will not stop a service you just removed from the list. A reboot does
+# the same job.)
 #
 # Commented out or unset = the built-in default: docker samba nfs
-# NOTE: DATA_SERVICES="" does NOT disable everything — an empty value falls
-# back to that same default. Drop services by omitting them from the list.
+# An explicitly empty list means EMPTY — no data services start. If this
+# file is unreadable or has a syntax error the built-in default applies
+# instead, so a typo can never silently stop your shares.
 EOF
 
 mk root:root 0644 "$tmp/etc/docker/daemon.json" <<'EOF'

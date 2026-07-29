@@ -163,7 +163,23 @@ unpinned auto-latest fetch. Do not re-add either without an explicit ask.)
   busy-modloop problem, which the modules-to-RAM free step solves directly.
 - **Data services (docker/samba/nfs) are NOT in any runlevel.** The `mountnas`
   service starts them only once `/mnt/nasdata` is mounted. Do not `rc-update add`
-  them — `nas status` flags it.
+  them — `nas status` flags it. Their ONLY supported off switch is
+  `DATA_SERVICES=` in `/etc/conf.d/mountnas` (seeded since 1.0rc7, shipped
+  commented out so the built-in default stays authoritative and a future
+  data service still reaches boxes nobody edited). It governs those three
+  services and nothing else; every other service is an ordinary runlevel
+  service disabled with `rc-update del`.
+  **The expansion is `${DATA_SERVICES-...}`, NOT `:-`** — with `:-` a
+  set-but-empty list silently meant "all three", the exact opposite of how it
+  reads (fixed 1.0rc7). Because an empty list is now meaningful, the three
+  subshell readers cannot use emptiness as their error signal: they prefix
+  the value with an `=` sentinel and fall back to the built-in set only when
+  the sentinel is absent (sourcing died / file missing), so a conf.d typo
+  fails SAFE instead of stopping every share. There is ONE reader in the CLI
+  (`_data_services()`, used by cmd_status and cmd_restart); `gen-webstatus`
+  carries a synced copy (separate file, no shared shell library) and the
+  supervisor gets the value from OpenRC's own conf.d sourcing. Four readers
+  total — keep them consistent.
 - **apk repos are enabled and PINNED to the image's Alpine version; the cache
   lives at `/cfg/cache`.** Never switch the CDN lines to `latest-stable` (the
   symlink moves on a new Alpine release → version skew against the installed

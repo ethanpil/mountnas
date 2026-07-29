@@ -27,6 +27,15 @@ default locale, browser-terminal file transfer, and the dashboard link fix.
   upgrades, `shutdown --save`) never ask.
 - **`nas log` works as an alias of `nas logs`** — including `nas log --help`,
   which used to fall back to the generic overview instead of the logs page.
+- **`DATA_SERVICES=""` now means what it looks like.** Setting an empty list
+  used to silently start all three services — the expansion treated
+  set-but-empty as absent, so the one value that reads as "run nothing" was
+  the one value that ran everything. An explicitly empty list now disables
+  Docker, Samba and NFS together. A conf.d that is missing or has a syntax
+  error still falls back to the built-in set, so a typo can never quietly
+  stop your shares — the readers tell the two cases apart with a sentinel
+  rather than by testing for emptiness. The CLI's two copies of that read are
+  now one helper (`_data_services`).
 - **The data-service switch is discoverable.** `/etc/conf.d/mountnas` now
   ships on every box — commented out, with the whole recipe for turning
   Docker/Samba/NFS off explained inline — and `nas help` lists it among the
