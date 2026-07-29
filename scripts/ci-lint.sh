@@ -10,7 +10,10 @@
 # CONTEXT.md §6 documents recurring ash-strictness bugs). -S warning: SC2015-style
 # style notes are accepted idiom here. Excludes: SC2034 (openrc-run vars like
 # description= look unused), SC3043 ('local' — supported by busybox ash),
-# SC3045 ('read -s' — supported by busybox ash).
+# SC3045 ('read -s' — supported by busybox ash), SC3033 (hyphenated function
+# names — undefined in POSIX but accepted by BOTH shells that source
+# profile.d here; verified on a live box in busybox ash and bash, and
+# 'command <name>' still bypasses the function. Needed to guard 'rc-update').
 set -eu
 cd "$(dirname "$0")/.."
 # a shebang is by definition LINE 1 — grep -rl would also match scripts whose
@@ -22,7 +25,7 @@ files=$(find mountnas-tools/files -type f | while IFS= read -r f; do
 done)
 [ -n "$files" ] || { echo "FAIL: shebang discovery found no scripts"; exit 1; }
 # shellcheck disable=SC2086  # $files is a newline list of repo paths (no spaces)
-shellcheck -s sh -S warning -e SC2034,SC3043,SC3045 \
+shellcheck -s sh -S warning -e SC2034,SC3043,SC3045,SC3033 \
 	$files mountnas-tools/files/profile-*.sh scripts/*.sh
 # bash-only, sourced (no shebang, so discovery skips it): lint as bash. The
 # zsh completion (files/zsh-nas-completion) is zsh syntax — shellcheck cannot

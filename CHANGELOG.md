@@ -27,6 +27,15 @@ default locale, browser-terminal file transfer, and the dashboard link fix.
   upgrades, `shutdown --save`) never ask.
 - **`nas log` works as an alias of `nas logs`** — including `nas log --help`,
   which used to fall back to the generic overview instead of the logs page.
+- **`rc-update del docker` now tells you the right answer.** Docker, Samba and
+  NFS sit in no runlevel, so `rc-update add`/`del` on one could only ever
+  answer with OpenRC's bare "service is not in the runlevel `default`" — a
+  true statement that points nowhere. An interactive-shell guard now
+  intercepts those and prints the `/etc/conf.d/mountnas` recipe instead. It
+  reads the managed set from the supervisor, so a data service added in a
+  future release is covered automatically; every other service and
+  subcommand passes straight through, and scripts, `doas` and
+  `command rc-update` are untouched.
 - **`DATA_SERVICES=""` now means what it looks like.** Setting an empty list
   used to silently start all three services — the expansion treated
   set-but-empty as absent, so the one value that reads as "run nothing" was

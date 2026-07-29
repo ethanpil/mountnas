@@ -180,6 +180,15 @@ unpinned auto-latest fetch. Do not re-add either without an explicit ask.)
   carries a synced copy (separate file, no shared shell library) and the
   supervisor gets the value from OpenRC's own conf.d sourcing. Four readers
   total — keep them consistent.
+  A fifth consumer is the **`rc-update` guard** in `profile-nas-aliases.sh`:
+  a hyphenated shell function (legal in both busybox ash and bash — see the
+  SC3033 note in §6) that intercepts `add`/`del` for these services and
+  prints the conf.d recipe. It derives the set by `sed`-ing the supervisor's
+  own default line, so keep that line's shape (`DATA_SERVICES-<list>}`)
+  parseable. It is deliberately interactive-only (`case $- in *i*`), so
+  scripts, `doas` and `command rc-update` bypass it — which also means a
+  test must run it from a script file under `ash -i` (`ash -c` and `set -i`
+  do NOT produce the interactive flag).
 - **apk repos are enabled and PINNED to the image's Alpine version; the cache
   lives at `/cfg/cache`.** Never switch the CDN lines to `latest-stable` (the
   symlink moves on a new Alpine release → version skew against the installed
@@ -429,8 +438,11 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
   push/PR via `.github/workflows/lint.yml`). It DISCOVERS its targets (shebang
   grep over `mountnas-tools/files/` + profile.d globs + `scripts/*.sh`) so a new
   script can never ship unlinted; flags are `shellcheck -s sh -S warning
-  -e SC2034,SC3043,SC3045` (excludes deliberate: SC2034 — openrc-run vars like
-  `description=` look unused; SC3043/SC3045 — `local` and `read -s` are fine in
+  -e SC2034,SC3043,SC3045,SC3033` (excludes deliberate: SC2034 — openrc-run
+  vars like `description=` look unused; SC3033 — a hyphenated function name
+  (`rc-update()`, the data-service guard in nas-aliases.sh) is undefined in
+  POSIX but accepted by both busybox ash and bash, verified on a live box,
+  and `command rc-update` still bypasses it; SC3043/SC3045 — `local` and `read -s` are fine in
   busybox ash). It also guards the §6 apostrophe landmine: an awk pass flags any
   stray apostrophe inside build.yml's `su -c '…'` block, which shellcheck cannot
   see.

@@ -35,6 +35,7 @@ _DEV_FILES = [
     ("mountnas-ttyd", "/etc/init.d/mountnas-ttyd",            "755"),
     ("web-guide.html", "/usr/share/mountnas/web/guide.html",  "644"),
     ("web-logo.png",  "/usr/share/mountnas/web/logo.png",     "644"),
+    ("profile-nas-aliases.sh", "/etc/profile.d/nas-aliases.sh", "644"),
 ]
 
 
@@ -191,6 +192,44 @@ def test_disable_data_service_via_conf(dev_guest):
     st = g.run("nas status", timeout=180)
     assert "disabled by /etc/conf.d/mountnas" not in st.out, \
         "a broken conf.d was read as a deliberate disable-all (sentinel lost)"
+
+
+def test_rc_update_guard_redirects_data_services(dev_guest):
+    """'rc-update del docker' cannot work — the data services sit in no
+    runlevel — and OpenRC's bare "not in the runlevel" answer points nowhere.
+    An interactive-shell function in /etc/profile.d/nas-aliases.sh intercepts
+    add/del for the supervisor-managed set and prints the conf.d recipe
+    instead. It must NOT touch anything else, and 'command rc-update' must
+    still bypass it."""
+    g = dev_guest
+
+    # The snippet gates on `case $- in *i*)`, so the guard exists ONLY in an
+    # interactive shell — which is the point (scripts and automation must be
+    # untouched). Neither `ash -c` nor `set -i` produces that flag; running a
+    # SCRIPT FILE under `ash -i` does. Hence the write-then-run dance.
+    def run(cmd):
+        g.run("printf '%s\\n' '. /etc/profile.d/nas-aliases.sh' "
+              f"'{cmd}' > /tmp/guard.sh", check=True)
+        return g.run("busybox ash -i /tmp/guard.sh", timeout=60)
+
+    for cmd in ("rc-update del docker", "rc-update docker del",
+                "rc-update add nfs default", "rc-update del samba"):
+        r = run(cmd)
+        assert r.rc == 1, f"{cmd!r} was not intercepted (rc={r.rc})"
+        assert "managed by the mountnas supervisor" in r.out, r.out
+        assert "/etc/conf.d/mountnas" in r.out, r.out
+
+    # pass-through: unrelated subcommands and unrelated services are untouched
+    assert "default" in run("rc-update show").out, \
+        "rc-update show was swallowed by the guard"
+    r = run("rc-update add chronyd default")
+    assert r.rc == 0 and "managed by the mountnas supervisor" not in r.out, \
+        f"guard fired on an ordinary runlevel service:\n{r.out}"
+
+    # the escape hatch reaches the real binary (OpenRC's own error, not ours)
+    r = run("command rc-update del docker")
+    assert "managed by the mountnas supervisor" not in r.out, \
+        "'command rc-update' did not bypass the guard function"
 
 
 # ---------------------------------------------------------------- ttyd
