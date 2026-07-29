@@ -138,6 +138,37 @@ mk root:root 0644 "$tmp/etc/conf.d/ufw" <<'EOF'
 ufw_nonfatal_if_disabled=yes
 EOF
 
+# ---- conf.d/mountnas: the data-service switch ----
+# Ships with the setting COMMENTED OUT on purpose: the supervisor's built-in
+# default then stays authoritative, so a future release that adds a data
+# service still reaches boxes whose owner never edited this file. Seeding it
+# at all is a DISCOVERABILITY fix — the variable was documented only in the
+# README, the web guide and the init script's header, so anyone browsing
+# /etc/conf.d/ (where ufw and zram-init do appear) found no trace of the one
+# switch they were most likely looking for.
+mk root:root 0644 "$tmp/etc/conf.d/mountnas" <<'EOF'
+# MountNAS data services — you own this file (edit, then: nas commit).
+#
+# The 'mountnas' supervisor starts these once /mnt/nasdata is mounted. They
+# are in NO runlevel, so 'rc-update del' does nothing for them, and 'apk del'
+# is undone by the next 'nas upgrade' (its world reconciliation restores the
+# base package set). Editing the line below is the supported way to turn one
+# off, and it survives upgrades untouched.
+#
+# Uncomment and list ONLY the services you KEEP:
+#
+#DATA_SERVICES="samba nfs"      # a box that does not use Docker
+#
+# Then stop the one you dropped and apply:
+#   rc-service docker stop && nas restart && nas commit
+# (stop it yourself first — the supervisor only manages what is listed, so
+# it will not stop a service you have just removed from the list.)
+#
+# Commented out or unset = the built-in default: docker samba nfs
+# NOTE: DATA_SERVICES="" does NOT disable everything — an empty value falls
+# back to that same default. Drop services by omitting them from the list.
+EOF
+
 mk root:root 0644 "$tmp/etc/docker/daemon.json" <<'EOF'
 {
   "data-root": "/mnt/nasdata/docker",

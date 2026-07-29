@@ -200,6 +200,7 @@ ${C_HD}Important files & paths${C_NO} (edit, then: nas commit)
   ${C_B}/etc/exports${C_NO}             NFS exports
   ${C_B}/etc/snapraid.conf${C_NO}       SnapRAID parity; mergerfs = fstab mount options
   ${C_B}/etc/docker/daemon.json${C_NO}  Docker   (data-root = $DATA/docker)
+  ${C_B}/etc/conf.d/mountnas${C_NO}     DATA_SERVICES= — turn docker/samba/nfs off
   ${C_B}/etc/nut/${C_NO}                UPS: nut.conf, ups.conf, upsd.conf, upsmon.conf
   ${C_B}/etc/smartd.conf${C_NO}         SMART alerts;  /etc/chrony/chrony.conf time sync
   ${C_B}/etc/ssh/sshd_config${C_NO}     SSH;  /root/.ssh/authorized_keys = your keys

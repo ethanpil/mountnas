@@ -185,16 +185,29 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 
 Every service can be turned off permanently — a NAS that only serves Samba doesn't need Docker's RAM, and every listener you stop shrinks the attack surface. Two mechanisms, depending on how the service is started:
 
-**Data services (Docker, Samba, NFS)** are started by the `mountnas` supervisor, not a runlevel, so `rc-update del` does nothing for them. Set `DATA_SERVICES` in `/etc/conf.d/mountnas` to **only what you keep**:
+**Data services (Docker, Samba, NFS)** are started by the `mountnas` supervisor, not a runlevel, so `rc-update del` does nothing for them. `/etc/conf.d/mountnas` ships on every box with the switch commented out and explained — uncomment `DATA_SERVICES` there and list **only what you keep**:
 
 ```sh
-rc-service docker stop                                     # stop it now
-echo 'DATA_SERVICES="samba nfs"' > /etc/conf.d/mountnas    # a box that doesn't use Docker
-nas status                                                 # verify: docker now listed as disabled
-nas commit                                                 # REQUIRED — the setting is RAM-only until committed
+rc-service docker stop     # stop it now — see the note below
 ```
 
-`nas status` (and the web dashboard) know about the override and won't warn about services you deliberately disabled — it lists them as disabled instead. Re-enable by editing the list back (or deleting the file), then `nas restart` **and `nas commit`** again.
+```sh
+sed -i 's/^#DATA_SERVICES=/DATA_SERVICES=/' /etc/conf.d/mountnas   # or just edit the file
+```
+
+```sh
+nas status                 # verify: docker now listed as disabled
+```
+
+```sh
+nas commit                 # REQUIRED — the setting is RAM-only until committed
+```
+
+Stop the dropped service yourself (that first command): the supervisor only manages what's *currently* listed, so once Docker is off the list `nas restart` won't stop a Docker that's already running — it just stops managing it. A reboot works too.
+
+`nas status` (and the web dashboard) know about the override and won't warn about services you deliberately disabled — it lists them as disabled instead. Re-enable by adding the service back to the list, then `nas restart` **and `nas commit`** again. The file is yours: upgrades never overwrite it.
+
+⚠️ `DATA_SERVICES=""` does **not** disable everything — an empty value falls back to the built-in default (`docker samba nfs`). Turn services off by omitting them from the list, not by emptying it.
 
 **Runlevel services** (everything else) use the standard Alpine pattern — stop it, remove it from the runlevel, commit:
 

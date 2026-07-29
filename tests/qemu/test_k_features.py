@@ -123,10 +123,29 @@ def test_disable_data_service_via_conf(dev_guest):
     a 'not running' warning."""
     g = dev_guest
     g.poll_until("rc-service docker status", timeout=300, desc="docker up")
-    # the documented recipe: stop it now, list only what you KEEP, check
     g.run("rc-service docker stop", timeout=120)
-    g.run("printf 'DATA_SERVICES=\"samba nfs\"\\n' > /etc/conf.d/mountnas",
-          check=True)
+    # /etc/conf.d/mountnas SHIPS seeded from 1.0rc7 (discoverability: it is the
+    # switch users hunt for, and /etc/conf.d/ showed ufw + zram-init but no
+    # trace of this one), with the setting commented out so the supervisor's
+    # built-in default stays authoritative and a future data service still
+    # reaches boxes whose owner never edited the file. Seed changes only land
+    # in a BUILT image, never via a dev push, so this is conditional until
+    # rc7 is the image under test — then it hard-asserts (same pattern as the
+    # avahi-tools check in category C).
+    if g.run("test -f /etc/conf.d/mountnas").rc == 0:
+        assert g.run("grep -q '^#DATA_SERVICES=' /etc/conf.d/mountnas").rc == 0, \
+            "seeded conf.d lost its commented DATA_SERVICES example"
+        assert g.run("grep -q '^DATA_SERVICES=' /etc/conf.d/mountnas").rc != 0, \
+            "seeded conf.d sets DATA_SERVICES live — it must ship commented out"
+        # the documented recipe: uncomment the example to keep only samba+nfs
+        g.run("sed -i 's/^#DATA_SERVICES=/DATA_SERVICES=/' /etc/conf.d/mountnas",
+              check=True)
+        assert "samba nfs" in g.run(
+            "sed -n 's/^DATA_SERVICES=//p' /etc/conf.d/mountnas", check=True).out, \
+            "the documented sed did not activate the seeded example line"
+    else:
+        g.run("printf 'DATA_SERVICES=\"samba nfs\"\\n' > /etc/conf.d/mountnas",
+              check=True)
     g.run("rc-service mountnas restart", timeout=240, check=True)
     g.poll_until("rc-service samba status", timeout=180,
                  desc="kept service (samba) back up")

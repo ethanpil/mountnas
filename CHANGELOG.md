@@ -27,6 +27,16 @@ default locale, browser-terminal file transfer, and the dashboard link fix.
   upgrades, `shutdown --save`) never ask.
 - **`nas log` works as an alias of `nas logs`** — including `nas log --help`,
   which used to fall back to the generic overview instead of the logs page.
+- **The data-service switch is discoverable.** `/etc/conf.d/mountnas` now
+  ships on every box — commented out, with the whole recipe for turning
+  Docker/Samba/NFS off explained inline — and `nas help` lists it among the
+  important paths. `DATA_SERVICES` was documented only in the README, the web
+  guide and the init script's header, so anyone browsing `/etc/conf.d/` (where
+  `ufw` and `zram-init` do appear) found no trace of the one switch they were
+  most likely looking for. The setting ships commented so the supervisor's
+  built-in default stays authoritative and a future data service still
+  reaches boxes that never edited the file; existing boxes receive it at
+  their next upgrade, and an edited file is never overwritten.
 - **Richer tab completion:** `nas help <Tab>` completes help topics,
   `nas upgrade <Tab>` completes release files as well as flags,
   `nas backup --to <Tab>` completes directories, and the `--persist`
