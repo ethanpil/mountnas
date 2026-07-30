@@ -30,6 +30,23 @@ from pathlib import Path
 
 from . import config as C
 
+# Terminal control sequences reach the raw serial stream and must be stripped
+# from CAPTURED OUTPUT, exactly as a real terminal would consume them.
+# Since bash became the default login shell (1.0rc7) every interactive prompt
+# is wrapped in bracketed-paste toggles -- \e[?2004h before the prompt and
+# \e[?2004l when a command runs -- where busybox ash emitted nothing at all.
+# Those bytes are invisible to a human on any terminal, but a scraper that
+# keeps them poisons every exact-match assertion (they land at the FRONT of
+# the captured output, so even .strip() does not help).
+# Covers CSI (\e[...X, incl. the private-mode '?' forms and colours), OSC
+# (\e]...BEL, e.g. window-title writes) and the two-byte Fe escapes.
+_ANSI_RE = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*\x07|[@-Z\\-_])")
+
+
+def strip_ansi(s: str) -> str:
+    """Remove terminal escape sequences from captured console output."""
+    return _ANSI_RE.sub("", s)
+
 log = logging.getLogger("mountnas.serial")
 
 
@@ -177,11 +194,12 @@ class SerialConsole:
         self.sendline(f'{cmd}; echo {marker}"="$?')
         self.expect(re.escape(marker) + r"=(\d+)", timeout=timeout)
         rc = int(self.match.group(1))
-        raw = self.before or ""
+        raw = strip_ansi(self.before or "")
         lines = raw.splitlines()
         if lines and marker in lines[0]:
             lines = lines[1:]
-        output = "\n".join(lines).strip("\r\n")
+        # bracketed-paste toggles leave their own blank line where they sat
+        output = "\n".join(lines).strip("\r\n \t")
         self.expect(C.PROMPT, timeout=30)
         dur = time.monotonic() - start
         log.debug("serial rc=%d cmd=%s", rc, cmd)

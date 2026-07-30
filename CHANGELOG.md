@@ -86,6 +86,16 @@ default locale, browser-terminal file transfer, and the dashboard link fix.
   gained the five new packages. Verified against `packages.list` with zero
   stale entries remaining.
 
+### Testing
+- **Serial capture strips terminal escapes.** With bash as the login shell,
+  every interactive prompt is wrapped in bracketed-paste toggles that busybox
+  ash never emitted, and captured serial output inherited them at the front —
+  breaking two exact-match assertions on the 1.0rc7 validation run (the
+  release itself is unaffected: the bytes are invisible on a real terminal,
+  and bracketed paste is a safety feature that stops a pasted block from
+  auto-executing). The harness now consumes escape sequences the way a
+  terminal does. Full suite on 1.0rc7: **87/87**.
+
 ## [1.0rc6] — 2026-07-27
 
 **Sixth 1.0 release candidate.** The over-engineering review release: two

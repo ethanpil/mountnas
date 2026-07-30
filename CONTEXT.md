@@ -677,6 +677,18 @@ _reltag sed.
   disabled. Maintainer decision (2026-07-27): the page content stays — do
   not trim cards to re-earn the old claim. The header shows a Web-terminal
   pill (green link when mountnas-ttyd runs, grey "off" otherwise).
+- **Serial capture must strip ANSI** (learned on the 1.0rc7 validation run):
+  bash became the default login shell, and bash wraps every interactive
+  prompt in bracketed-paste toggles (`\e[?2004h` / `\e[?2004l`) where busybox
+  ash emitted nothing. Those bytes land at the FRONT of captured serial
+  output, so `.strip()` does not save an exact-match assertion — two tests
+  failed on `'\x1b[?2004l\nfresh' != 'fresh'`. `serial_console.run()` now
+  runs `strip_ansi()` over the capture, as a real terminal would. This is a
+  HARNESS concern only: the escapes are invisible to a human on any terminal
+  and bracketed paste is a genuine safety feature (a pasted multi-line block
+  is not executed line-by-line), so do NOT "fix" it by disabling it in the
+  shipped bash config. The CI `.exp` gates were unaffected — they match
+  substrings, not whole lines.
 - **Diskless dev-test caveat** (tests/qemu category K): pushing repo tools
   into a guest patches the RAM root only — a reboot rebuilds from the
   released apk and the pushed files vanish. Post-reboot assertions must read
