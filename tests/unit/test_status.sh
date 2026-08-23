@@ -191,6 +191,13 @@ run_nas status --deep --json; a=$OUT; ra=$RC
 run_nas status --json --deep; b=$OUT
 assert_eq 0 "$ra"
 printf '%s' "$a" | jq -e . >/dev/null || fail "not JSON: $a"
+# The two orders must agree AND --deep must actually arrive. Comparing the
+# orders only with each other cannot tell a working parser from one that
+# drops the flag in both — the regression this parser exists to prevent.
+assert_eq true "$(printf '%s' "$a" | jq -r .deep)" "--deep reached the JSON"
+assert_eq true "$(printf '%s' "$b" | jq -r .deep)" "--deep reached the JSON (reversed)"
+run_nas status --json
+assert_eq false "$(printf '%s' "$OUT" | jq -r .deep)" "plain --json is not deep"
 assert_eq "$(printf '%s' "$a" | jq -S 'del(.uptime_seconds, .memory)')" "$(printf '%s' "$b" | jq -S 'del(.uptime_seconds, .memory)')"
 
 finish

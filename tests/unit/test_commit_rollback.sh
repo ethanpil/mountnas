@@ -7,9 +7,16 @@ act="/cfg/$host.apkovl.tar.gz"
 stub mountpoint 'case "$2" in /|/cfg) exit 0 ;; esac; exit 1'
 # 'lbu commit' rotates like the real one: the old active overlay becomes
 # <host>.<stamp>.tar.gz, then a new active overlay is written
+# A COUNTER, not the clock. Snapshot names and note keys are whole-second
+# mtimes, and busybox 'date' drops %N, so the stub used to 'sleep 1' after
+# every commit to make successive overlays differ in both mtime and content.
+# That cost 7 s of a 12 s suite. The counter gives each overlay a distinct
+# mtime (touch -d @epoch) and distinct content, with no clock dependency.
+: > /tmp/lbu-n
 stub lbu "case \"\$1\" in
-	commit) [ -f '$act' ] && mv '$act' \"/cfg/$host.\$(date -u -r '$act' +%Y%m%d%H%M%S).tar.gz\"
-	        echo \"ovl \$(date +%s%N)\" > '$act'; sleep 1 ;;
+	commit) n=\$(( \$(cat /tmp/lbu-n 2>/dev/null || echo 0) + 1 )); echo \"\$n\" > /tmp/lbu-n
+	        [ -f '$act' ] && mv '$act' \"/cfg/$host.\$(date -u -r '$act' +%Y%m%d%H%M%S).tar.gz\"
+	        echo \"ovl \$n\" > '$act'; touch -d \"@\$(( 1700000000 + n * 60 ))\" '$act' ;;
 	status) cat /tmp/lbu-status 2>/dev/null ;;
 	esac"
 reset() { rm -f /cfg/*.tar.gz /cfg/*.tar.gz.* /cfg/.mountnas-notes /cfg/mountnas-ops.log; : > /etc/apk/protected_paths.d/lbu.list; : > /tmp/lbu-status; }

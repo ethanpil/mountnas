@@ -30,7 +30,12 @@ t() {
 # The marker FILE is the only record of a failure: a 'fail' inside a
 # ( subshell ) cannot set a variable in this shell.
 _end_case() {
-	[ -n "$_case" ] || return 0
+	# A 'fail' raised during file setup, before any case, must not be charged
+	# to the next case — and must not vanish when no case follows it.
+	if [ -z "$_case" ]; then
+		[ -e "$STUBS/.failed" ] || return 0
+		_case="(before the first t)"
+	fi
 	if [ -e "$STUBS/.failed" ]; then
 		rm -f "$STUBS/.failed"; _fail=$((_fail + 1)); printf '  FAIL %s\n' "$_case"
 	else

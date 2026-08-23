@@ -80,8 +80,34 @@ t "_stage_dir/_commit_dir: swap by rename, drop .old, restore on failure"
 	# a missing source fails and leaves nothing staged
 	_stage_dir "$w/absent" "$w/live" && fail "_stage_dir succeeded on a missing source"
 	[ ! -e "$w/live.new" ] || fail "partial .new left after failure"
-	_stage_file "$w/live/g" "$w/target"; _commit_file "$w/target"
-	assert_eq n2 "$(cat "$w/target")"
+	# _stage_file must NOT touch the live path — that is the whole crash-safe
+	# property. Assert the intermediate state, not only the final content:
+	# a _stage_file that wrote straight to the target passed this case before.
+	echo live > "$w/target"
+	_stage_file "$w/live/g" "$w/target" || fail "_stage_file failed"
+	[ -f "$w/target.new" ] || fail "_stage_file wrote no .new"
+	assert_eq n2 "$(cat "$w/target.new")" "staged content"
+	assert_eq live "$(cat "$w/target")" "_stage_file must not touch the live file"
+	_commit_file "$w/target" || fail "_commit_file failed"
+	assert_eq n2 "$(cat "$w/target")" "committed content"
+	[ ! -e "$w/target.new" ] || fail "_commit_file left .new behind"
+	rm -rf "$w"
+)
+
+t "_commit_dir puts the old tree back when the swap-in fails"
+(
+	src_nas
+	w=$(mktemp -d); mkdir -p "$w/new"; echo n > "$w/new/f"
+	mkdir -p "$w/live"; echo o > "$w/live/keep"
+	_stage_dir "$w/new" "$w/live" || fail "_stage_dir failed"
+	# Make the swap-in fail. _commit_dir renames the live tree to .old first,
+	# so with no .new to move in, the second mv fails and the restore path
+	# must put the old tree back. (A non-directory at .new does NOT work as a
+	# trigger: the target name is free by then, so the mv succeeds.)
+	rm -rf "$w/live.new"
+	_commit_dir "$w/live" && fail "_commit_dir reported success after a failed swap"
+	[ -d "$w/live" ] || fail "the live tree was left missing"
+	assert_eq o "$(cat "$w/live/keep")" "the old tree came back"
 	rm -rf "$w"
 )
 

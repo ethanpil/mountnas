@@ -51,8 +51,12 @@ assert_rc 0
 assert_eq "MountNAS unit-test (build 9.9.9)" "$OUT"
 
 t "the prompt cache is refreshed after a command"
-stub lbu 'printf "A etc/x\nM etc/y\n"'
+# Clear it first: the test files share one root, and an earlier file leaves
+# its own count here. Without this the case passes on stale state — removing
+# the dispatcher's _refresh_unsaved call kept the whole suite green.
+rm -f /run/mountnas/unsaved
+stub lbu 'printf "A etc/x\nM etc/y\nD etc/z\n"'
 run_nas version
-assert_eq 2 "$(cat /run/mountnas/unsaved)" "unsaved count"
+assert_eq 3 "$(cat /run/mountnas/unsaved)" "unsaved count"
 
 finish
