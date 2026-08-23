@@ -39,7 +39,7 @@ _rec() {
 ok()  { printf '  %s[ OK ]%s %s\n' "$C_OK" "$C_NO" "$*"; _rec OK "$*"; }
 warn(){ printf '  %s[WARN]%s %s\n' "$C_WA" "$C_NO" "$*"; _rec WARN "$*"; }
 bad() { printf '  %s[FAIL]%s %s\n' "$C_FA" "$C_NO" "$*"; _rec FAIL "$*"; }
-confirm() { printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
+confirm() { local a; printf '%s [y/N] ' "$1"; read -r a; [ "$a" = y ] || [ "$a" = Y ]; }
 # ---------- shared UI kit (presentation only — never writes check records) ----
 # One visual grammar for every screen, ASCII-only so serial consoles render it:
 #   hdr   level-1 section header  '== title ====…'  filled to column 68

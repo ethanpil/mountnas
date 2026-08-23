@@ -8,7 +8,7 @@
 # user-facing front: list what is configured, test it, or send ad-hoc
 # messages from scripts and cron jobs.
 cmd_notify() {
-	local nsub sinks this
+	local nsub sinks
 	case "${1:-}" in
 	""|--list|status)
 		sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null)

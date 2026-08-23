@@ -41,6 +41,10 @@ _cmd_help_for() {
 	notify) help_notify ;;
 	*) return 1 ;;
 	esac
+	# 0 for every known topic, as before the split: the status of the
+	# page itself (a failed write to a closed stdout) must not read as
+	# 'no such topic' and print the overview on top of the failure.
+	return 0
 }
 
 # 'nas <cmd> --help' NEVER executes the command: focused help when we have a
