@@ -5,15 +5,16 @@
 # (/usr/sbin/nas, /usr/libexec/mountnas/...) and write real config files
 # (/etc/fstab, /cfg/...). They must therefore run in a THROWAWAY root:
 #
-#   in a container (CI does this with the Actions 'container:' key):
+#   in a container (the Lint workflow runs this command):
 #     docker run --rm -v "$PWD:/repo" alpine:3.24 sh /repo/tests/unit/run.sh
 #
 #   on any Alpine host with apk and network (no docker needed):
 #     sh tests/unit/run.sh --chroot        # builds a root under /tmp, chroots
 #
 # Without --chroot the script refuses to run unless it can see that it is
-# inside a container (/.dockerenv, or MOUNTNAS_UNIT_THROWAWAY=1 to override
-# when you know the root is disposable).
+# inside a container. It looks for the marker file that docker (/.dockerenv)
+# or podman (/run/.containerenv) creates. Set MOUNTNAS_UNIT_THROWAWAY=1 to
+# override when you know the root is disposable.
 #
 # Hardware and the Alpine services are replaced by stubs on PATH (see
 # harness.sh); the shell, awk, jq and the file logic are real.
@@ -27,22 +28,54 @@ if [ "${1:-}" = "--chroot" ]; then
 	command -v apk >/dev/null || { echo "--chroot needs apk (an Alpine host)"; exit 1; }
 	ver=$(cut -d. -f1,2 /etc/alpine-release)
 	root=$(mktemp -d /tmp/nas-unit.XXXXXX)
-	trap 'umount "$root/proc" 2>/dev/null; rm -rf "$root"' EXIT
+	# Each umount needs '|| :': under 'set -e' a failed command in the trap
+	# stops the trap, and the root then stays on disk. The umounts DO fail
+	# on every error before the mounts below.
+	cleanup() {
+		umount "$root/dev" 2>/dev/null || :
+		umount "$root/proc" 2>/dev/null || :
+		# NEVER delete a root that still holds a mount: /dev is a bind of the
+		# HOST's /dev, and a recursive delete through it removes the host's
+		# device nodes.
+		if grep -q " $root/" /proc/mounts 2>/dev/null; then
+			echo "WARNING: $root still has mounts — not deleting it" >&2
+			return 0
+		fi
+		rm -rf "$root"
+	}
+	trap cleanup EXIT
 	echo "building a throwaway Alpine v$ver root in $root ..."
-	apk -q -X "https://dl-cdn.alpinelinux.org/alpine/v$ver/main" -U --allow-untrusted \
+	# --keys-dir, NOT --allow-untrusted: the packages below run as root in the
+	# chroot, so apk must verify their signatures. The host is Alpine (checked
+	# above), so its keys are the correct trust anchor. apk copies them into
+	# the new root with alpine-keys, and the in-chroot 'apk add' is verified too.
+	apk -q -X "https://dl-cdn.alpinelinux.org/alpine/v$ver/main" -U \
+		--keys-dir /etc/apk/keys \
 		--root "$root" --initdb add alpine-base busybox jq util-linux
-	mkdir -p "$root/repo" "$root/proc"
+	mkdir -p "$root/repo" "$root/proc" "$root/dev"
 	cp -a "$repo/mountnas-tools" "$repo/tests" "$root/repo/"
 	mount -t proc proc "$root/proc"
+	# 'apk --initdb' makes NO device nodes, and /tmp is usually nodev, so
+	# 'mknod' there gives unusable nodes. Bind the host's /dev instead.
+	# Without it /dev/null does not exist: the first '>/dev/null' CREATES a
+	# regular file, every later '2>/dev/null' fills it with error text, and
+	# every '</dev/null' reads that text back as stdin.
+	mount --bind /dev "$root/dev"
 	MOUNTNAS_UNIT_THROWAWAY=1 chroot "$root" /bin/sh /repo/tests/unit/run.sh
 	exit $?
 fi
 
-[ -f /.dockerenv ] || [ "${MOUNTNAS_UNIT_THROWAWAY:-0}" = 1 ] || {
+# /.dockerenv = docker, /run/.containerenv = podman (which never writes the
+# docker marker, not even through the podman-docker shim)
+[ -f /.dockerenv ] || [ -f /run/.containerenv ] \
+	|| [ "${MOUNTNAS_UNIT_THROWAWAY:-0}" = 1 ] || {
 	echo "refusing: this installs files under /usr and /etc. Run in a container,"
 	echo "or 'run.sh --chroot' on an Alpine host, or set MOUNTNAS_UNIT_THROWAWAY=1."
 	exit 1
 }
+# The tests need a real /dev/null. A regular file there breaks every stdin
+# redirect (see the bind mount in --chroot above).
+[ -c /dev/null ] || { echo "refusing: /dev/null is not a device node"; exit 1; }
 [ -f /etc/alpine-release ] || { echo "refusing: the tests need busybox ash on Alpine"; exit 1; }
 command -v jq >/dev/null || apk add -q jq util-linux
 
