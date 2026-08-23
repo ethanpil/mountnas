@@ -110,3 +110,15 @@ undef=$(printf '%s\n' "$helpfns" | while read -r h; do
 done)
 [ -z "$undef" ] || { echo "FAIL: _cmd_help_for names help function(s) not defined in files/cmd/*.sh: $undef"; exit 1; }
 echo "nas help functions: every _cmd_help_for entry is defined in files/cmd/"
+
+# The guards above all start from the dispatcher, so they cannot see the
+# opposite drift: a cmd/<name>.sh that defines cmd_<name> but that the
+# dispatcher never calls. The file IS sourced (the cmd/*.sh glob), so nothing
+# fails — 'nas <name>' just answers "unknown command". grep -w, so cmd_status
+# does not match the cmd_status_json line and hide a real miss.
+undispatched=$(grep -hoE '^cmd_[a-z_]+\(\)' mountnas-tools/files/cmd/*.sh | tr -d '()' \
+	| sort -u | while read -r c; do
+		grep -qw "$c" mountnas-tools/files/nas || printf '%s ' "$c"
+	done)
+[ -z "$undispatched" ] || { echo "FAIL: cmd function(s) defined but never dispatched: $undispatched"; exit 1; }
+echo "nas commands: every cmd_* in files/cmd/ is dispatched"
