@@ -8,15 +8,12 @@ its own disposable golden_guest.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from lib import config as C
 from lib import images
 from lib.guest import DiskSpec
-
-FILES_DIR = Path(__file__).resolve().parent.parent.parent / "mountnas-tools" / "files"
 
 
 # ---------------------------------------------------------------- read-only
@@ -284,16 +281,21 @@ def test_released_image_ships_expected_files(wired_shared_guest):
         "/usr/share/zsh/site-functions/_nas",
         "/etc/periodic/15min/mountnas-datawatch",
     ]
-    # The nas CLI is a dispatcher + sourced tree since 2026-08 (lib.sh and one
-    # cmd/<name>.sh per command). Hard-assert the whole tree once the shipped
-    # nas is the dispatcher; the list comes from the repo so a cmd file the
-    # APKBUILD forgets is caught here.
-    if g.run("grep -q '^NAS_LIB=' /usr/sbin/nas").rc == 0:
-        manifest.append("/usr/libexec/mountnas/lib.sh")
-        manifest += [f"/usr/libexec/mountnas/cmd/{c.name}"
-                     for c in sorted((FILES_DIR / "cmd").glob("*.sh"))]
     missing = [p for p in manifest if g.run(f"test -e {p}").rc != 0]
     assert not missing, f"mountnas-tools files missing from the image: {missing}"
+
+    # The nas CLI is a dispatcher plus a sourced tree (lib.sh and one
+    # cmd/<name>.sh per command) since 1.0rc8.  Check the IMAGE against
+    # ITSELF, never against this checkout: the APKBUILD installs the cmd
+    # files with a glob, so it cannot forget one, and a checkout that is
+    # AHEAD of the release under test must not fail a packaging test.
+    # (tests/unit installs the tree from the same commit it tests, and its
+    # help-topic loop covers every command file.)
+    if g.run("test -e /usr/libexec/mountnas/lib.sh").rc == 0:
+        assert g.run("ls /usr/libexec/mountnas/cmd/*.sh").rc == 0, \
+            "the nas CLI tree has no cmd/*.sh — the APKBUILD glob is broken"
+        assert g.run("grep -q 'NAS_LIB' /usr/sbin/nas").rc == 0, \
+            "lib.sh ships but /usr/sbin/nas does not source it"
 
     tools = ["btm", "cyme", "ttyd"]
     absent = [t for t in tools if g.run(f"command -v {t}").rc != 0]

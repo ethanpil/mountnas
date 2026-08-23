@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import threading
 import time
@@ -616,31 +617,59 @@ class Guest:
 # ---------------------------------------------------------------------------
 
 
-# The nas CLI is a dispatcher (/usr/sbin/nas) plus sourced files
-# (/usr/libexec/mountnas/lib.sh and cmd/*.sh). A dev push must move the
-# WHOLE tree: a repo dispatcher over released sourced files (or the reverse)
-# mixes two versions of one program. Paths below mirror the APKBUILD.
-def nas_tree_files(files_dir: Path) -> list[tuple[Path, str, str]]:
-    """(local path, guest path, mode) for every file of the nas CLI."""
-    out = [(files_dir / "nas", "/usr/sbin/nas", "755"),
-           (files_dir / "lib.sh", "/usr/libexec/mountnas/lib.sh", "644")]
-    cmds = sorted((files_dir / "cmd").glob("*.sh"))
-    if not cmds:
-        raise FileNotFoundError(f"no cmd/*.sh under {files_dir}")
-    out += [(c, f"/usr/libexec/mountnas/cmd/{c.name}", "644") for c in cmds]
-    return out
+_NAS_LIB = "/usr/libexec/mountnas"
+_NAS_STAGE = f"{_NAS_LIB}/.stage"
 
 
 def push_nas_tree(guest: "Guest", files_dir: Path) -> None:
-    """Push the repo's nas CLI (dispatcher + lib + cmd files) over the guest's.
-    Each file lands as .new and is renamed, so a running nas never reads a
-    half-written file."""
-    guest.run("mkdir -p /usr/libexec/mountnas/cmd", check=True)
-    for local, dst, mode in nas_tree_files(files_dir):
-        if not local.is_file():
-            raise FileNotFoundError(f"repo file missing: {local}")
-        guest.push(local, f"{dst}.new")
-        guest.run(f"mv {dst}.new {dst} && chmod {mode} {dst}", check=True)
+    """Push the repo's nas CLI (dispatcher + lib.sh + cmd/*.sh) over the guest's.
+
+    ONE transfer and ONE swap. The dispatcher sources lib.sh and every
+    cmd/*.sh at start, so a file-by-file push leaves the guest with a new
+    dispatcher and no tree to source -- on a pre-split image lib.sh does not
+    exist at all, and any nas started in that window dies.  Everything is
+    staged on the target filesystem first and renamed at the end, with the
+    DISPATCHER LAST, so the guest runs one whole version or the other.
+
+    The cmd directory is REPLACED, not merged: a file the repo renamed would
+    otherwise stay behind, and the dispatcher's cmd/*.sh glob would source the
+    old definition on top of the new one.  Paths mirror the APKBUILD.
+    """
+    tree = [(files_dir / "nas", "usr/sbin/nas", 0o755),
+            (files_dir / "lib.sh", f"{_NAS_LIB.lstrip('/')}/lib.sh", 0o644)]
+    cmds = sorted((files_dir / "cmd").glob("*.sh"))
+    if not cmds:
+        raise FileNotFoundError(f"no cmd/*.sh under {files_dir}")
+    tree += [(c, f"{_NAS_LIB.lstrip('/')}/cmd/{c.name}", 0o644) for c in cmds]
+
+    with tempfile.TemporaryDirectory() as td:
+        tar_path = Path(td) / "nas-tree.tar"
+        with tarfile.open(tar_path, "w") as tf:
+            for local, arcname, mode in tree:
+                if not local.is_file():
+                    raise FileNotFoundError(f"repo file missing: {local}")
+                info = tf.gettarinfo(str(local), arcname=arcname)
+                info.mode = mode
+                info.uid = info.gid = 0
+                info.uname = info.gname = "root"
+                with local.open("rb") as fh:
+                    tf.addfile(info, fh)
+        guest.push(tar_path, f"{_NAS_STAGE}.tar")
+
+    # every mv is a rename within the RAM root, so each one is atomic
+    guest.run(
+        f"set -e; rm -rf {_NAS_STAGE} {_NAS_LIB}/cmd.new {_NAS_LIB}/cmd.old; "
+        f"mkdir -p {_NAS_STAGE} {_NAS_LIB}; "
+        f"tar -xf {_NAS_STAGE}.tar -C {_NAS_STAGE}; "
+        f"mv {_NAS_STAGE}{_NAS_LIB}/cmd {_NAS_LIB}/cmd.new; "
+        f"mv {_NAS_STAGE}{_NAS_LIB}/lib.sh {_NAS_LIB}/lib.sh.new; "
+        f"mv {_NAS_STAGE}/usr/sbin/nas /usr/sbin/nas.new; "
+        f"if [ -d {_NAS_LIB}/cmd ]; then mv {_NAS_LIB}/cmd {_NAS_LIB}/cmd.old; fi; "
+        f"mv {_NAS_LIB}/cmd.new {_NAS_LIB}/cmd; "
+        f"mv {_NAS_LIB}/lib.sh.new {_NAS_LIB}/lib.sh; "
+        f"mv /usr/sbin/nas.new /usr/sbin/nas; "
+        f"rm -rf {_NAS_STAGE} {_NAS_STAGE}.tar {_NAS_LIB}/cmd.old",
+        check=True)
 
 
 def import_busybox_image(guest: "Guest", tag: str = "mnq-busybox") -> None:

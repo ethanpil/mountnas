@@ -54,16 +54,17 @@ def prev_base(suite_config, prev_image_bundle, golden):
 # files next to it (lib.sh, cmd/*.sh) are pushed with it as one tree.
 NAS_SRC = os.environ.get("MOUNTNAS_NAS_SRC", "")
 if NAS_SRC and not (Path(NAS_SRC).is_file()
-                    and (Path(NAS_SRC).parent / "lib.sh").is_file()):
+                    and (Path(NAS_SRC).parent / "lib.sh").is_file()
+                    and any((Path(NAS_SRC).parent / "cmd").glob("*.sh"))):
     # Set-but-unusable used to be indistinguishable from unset: the guards below
     # silently skipped injection and the whole upgrade tier went green against
     # the SHIPPED nas. That is exactly how the 1.0rc3 loop-mount fix's first
     # verification round fooled itself, so fail loudly at collection instead.
     raise RuntimeError(
         f"MOUNTNAS_NAS_SRC={NAS_SRC!r} is not the repo's mountnas-tools/files/nas "
-        "(lib.sh must sit next to it) — upgrade tests would silently test the "
-        "shipped nas instead of your local one. Use an absolute path on the "
-        "machine running the suite, or unset it."
+        "(lib.sh and cmd/*.sh must sit next to it) — upgrade tests would "
+        "silently test the shipped nas instead of your local one. Use an "
+        "absolute path on the machine running the suite, or unset it."
     )
 
 
