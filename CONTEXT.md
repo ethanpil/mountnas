@@ -82,6 +82,7 @@ mountnas/
 │       ├── zsh-nas-completion        # /usr/share/zsh/site-functions/_nas (data, unlintable)
 │       └── logo
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
+├── snapraid-daemon/ APKBUILD + snapraidd.{initd,confd}   # LOCAL apk: compiled from source (see §11)
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
 ├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
@@ -91,9 +92,9 @@ mountnas/
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
 ```
 
-There are **four locally-built apks**, all signed by the per-build key and served
-from the on-media local repo: `mountnas-tools`, `snapraid`, `mergerfs`,
-`zerotier-one`. They are excluded from the upstream preflight resolve and are
+There are **five locally-built apks**, all signed by the per-build key and served
+from the on-media local repo: `mountnas-tools`, `snapraid`, `snapraid-daemon`,
+`mergerfs`, `zerotier-one`. They are excluded from the upstream preflight resolve and are
 why several CI steps exist. (`cmkfs` and `duf` were also local apks through
 beta-5; both were removed at the maintainer's direction in the 2026-07-27
 over-engineering review — cmkfs additionally carried the pipeline's only
@@ -748,3 +749,63 @@ Output: a GitHub Release tagged `<release_tag>` with the files in §4.
   backup docs (incl. the one-time alpha-1/2/3 migration). `CHANGELOG.md` —
   per-release history.
 - Build host base: Alpine **latest-stable (v3.24)**, `jirutka/setup-alpine`, `abuild`.
+
+---
+
+## 11. SnapRAID Daemon (added 2026-08-23)
+
+**It is a SEPARATE upstream project**, not a feature of snapraid 14.x.
+`github.com/amadvance/snapraid-daemon`, by SnapRAID's own author. SnapRAID 14
+only added the logging and `--gui-*` hooks the daemon drives, which is why the
+14.x release notes keep mentioning it ("required by SnapRAID Daemon 1.8", …).
+So MountNAS builds a second local apk; the daemon needs `snapraid>=14.6`, and
+the APKBUILD declares that rather than trusting packages.list ordering. CI must
+build it AFTER snapraid — `abuild -r` resolves a package's depends from the
+local repo, so the reverse order fails the build.
+
+**Build note:** `./configure` FAILS without `zip` (it packs the web UI into
+`/usr/share/snapraidd/commander.zip`). build.yml pre-installs it beside
+linux-headers.
+
+**What it replaces:** the hand-written `snapraid sync`/`scrub` cron lines the
+README used to be the only answer. It runs the SAME snapraid binary, so the
+array format, parity and recovery story are untouched, and `snapraid` on the
+command line keeps working. MountNAS therefore does NOT reimplement scheduling
+— `nas snapraid` is only an on/off/status switch, the same shape as `nas web`
+and `nas ttyd`.
+
+**Three settings are MountNAS defaults, not upstream's** (seeded in
+genapkovl, all three verified necessary on a live box):
+- `sys_log_directory = /mnt/nasdata/snapraid/logs` — upstream defaults to
+  /var/log/snapraid, which is RAM here. Those logs are the daemon's memory of
+  past tasks, so a reboot would erase its history. The init script's
+  `start_pre` creates the directory.
+- `net_port = 7627` (all interfaces) — upstream binds 127.0.0.1 only, which
+  would make the dashboard link and the LAN UI dead.
+- `net_web_root = commander.zip` — **without this the daemon answers the REST
+  API but returns 404 for every web page.** Confirmed by testing; it is not
+  optional.
+
+**Security posture, and it is wider than the rest of the box:** the REST API
+is READ-WRITE and has NO password — only an optional IP `net_acl`. Anyone who
+can reach the port can start a sync or a scrub and change daemon settings.
+That is a bigger door than the read-only `nas web` dashboard, so `nas snapraid
+on` prints the warning every time on a LAN bind, and README/guide both repeat
+it. The service ships OFF.
+
+**The daemon rewrites `/etc/snapraidd.conf` itself** through the API, so a
+change made in the web UI is RAM-only until `nas commit` — the usual MountNAS
+rule, but easy to miss because the change was not made in a shell.
+
+**Not verified end to end:** a complete daemon-driven sync. A maintenance run
+opens with snapraid's `up` (spinup), which resolves each disk's parent in
+sysfs and therefore fails on loop devices; the QEMU golden guest has no spare
+disk to hold parity on a device separate from the data, which snapraid
+refuses. Everything either side of that IS verified on a live Alpine box:
+package contents, the full OpenRC lifecycle (start/stop/restart/reload/status,
+nice 19 + ionice idle, start_pre creating the log dir), `nas snapraid
+on/off/status` including the port rewrite and the loopback case, the web UI and
+REST API answering, the dashboard pill/link/Protection row, and the daemon
+invoking the real CLI (`snapraid --gui --log >&2 <cmd>`) and reporting its
+output faithfully — including snapraid's own refusals (two content files
+required; parity must not share a device with data).

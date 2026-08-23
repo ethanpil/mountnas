@@ -182,12 +182,19 @@ nas commit                        # persist it</code></pre>
 <ol>
 <li>Mount data + parity disks in fstab like any other disk.</li>
 <li>Configure <code>/etc/snapraid.conf</code> (a commented template ships). Keep <code>/mnt/nasdata</code> out of the array.</li>
-<li>Schedule sync/scrub and pipe the result into a notification:</li>
+<li>Schedule sync/scrub — with the <a href="#snapraidd">SnapRAID Daemon</a> below, or with cron:</li>
 </ol>
 <pre><code>crontab -e
 0 3 * * *  snapraid sync 2&gt;&amp;1 | nas notify "snapraid sync"
 0 5 * * 0  snapraid scrub -p 8 -o 20 2&gt;&amp;1 | nas notify "snapraid scrub"</code></pre>
 <p>SnapRAID gives parity (recover a failed disk), mergerfs gives one namespace — they compose well. Then <code>nas commit</code>.</p>
+<h3 id="snapraidd">SnapRAID Daemon (scheduling + web UI)</h3>
+<p>The <a href="https://github.com/amadvance/snapraid-daemon">SnapRAID Daemon</a> is a separate project by SnapRAID's own author. It runs <b>the same <code>snapraid</code> binary</b> and adds what cron does not give you: scheduled sync and scrub with safety thresholds, SMART monitoring, disk spindown, notifications, and a web UI. Your array, parity files and recovery are unchanged, and <code>snapraid</code> on the command line keeps working either way. It is baked in and <b>off by default</b>:</p>
+<pre><code>nas snapraid on        # default port 7627
+nas commit             # REQUIRED — RAM-only until you save</code></pre>
+<p>Then open <code>http://&lt;box&gt;:7627/</code>. <code>nas snapraid status</code> shows whether it is enabled, running and saved; <code>nas snapraid off</code> stops it without touching the array. The dashboard header shows a SnapRAID pill that links straight to it while it runs.</p>
+<p class="warn"><b>The REST API is read-write and has no password.</b> Anyone who can reach the port can start a sync or a scrub and change settings — a wider door than this read-only dashboard. On an untrusted network keep it off, bind it to loopback (<code>net_port = 127.0.0.1:7627</code> in <code>/etc/snapraidd.conf</code>, then reach it over SSH or Tailscale), or restrict <code>net_acl</code> — then <code>nas commit</code>.</p>
+<p>Settings live in <code>/etc/snapraidd.conf</code>. MountNAS points its command logs at <code>/mnt/nasdata/snapraid/logs</code> (on a diskless box <code>/var/log</code> is RAM, and those logs are the daemon's memory of past tasks). <b>The daemon rewrites that file itself</b> when you change settings in the web UI, so run <code>nas commit</code> afterwards or the changes are gone at the next reboot.</p>
 <h3>Parity hygiene: sync vs scrub vs check</h3>
 <ul>
 <li><b><code>snapraid sync</code></b> updates parity to match today's data. <i>Files changed since the last sync are not protected</i> — run it nightly, and after any big copy.</li>
@@ -223,6 +230,7 @@ rc-service nfs restart &amp;&amp; nas commit</code></pre>
 <p>Runs with <code>data-root = /mnt/nasdata/docker</code>. Keep compose files and appdata under <code>/mnt/nasdata</code> so they survive a dead USB and travel with the data. <a href="https://docs.docker.com/compose/"><code>docker compose</code></a> is included.</p>
 <h3>Remote access (all off by default)</h3>
 <ul>
+<li><b>SnapRAID Daemon:</b> <code>nas snapraid on &amp;&amp; nas commit</code> — scheduled sync/scrub, SMART monitoring, spindown and notifications for your parity array, with a web UI at <code>http://&lt;box&gt;:7627/</code> (the dashboard links to it when running). Runs the same <code>snapraid</code> binary; see <a href="#snapraidd">SnapRAID Daemon</a> for the read-write API warning.</li>
 <li><b>Browser terminal (<a href="https://github.com/tsl0922/ttyd">ttyd</a>):</b> <code>nas ttyd on &amp;&amp; nas commit</code> — a real login prompt at <code>http://&lt;box&gt;:22222/</code> (the dashboard links to it when running). Root login works: <code>on</code> whitelists ptys in <code>/etc/securetty</code> once. Plain HTTP on the trusted LAN, so the password transits in cleartext.</li>
 <li><b><a href="https://tailscale.com/">Tailscale</a>:</b> <code>rc-update add tailscale default &amp;&amp; rc-service tailscale start &amp;&amp; tailscale up &amp;&amp; nas commit</code></li>
 <li><b><a href="https://www.zerotier.com/">ZeroTier</a>:</b> <code>rc-update add zerotier-one default &amp;&amp; rc-service zerotier-one start &amp;&amp; zerotier-cli join &lt;net&gt; &amp;&amp; nas commit</code></li>
@@ -257,7 +265,7 @@ nas commit</code></pre></li>
 <p>ufw is baked in but <b>disabled</b>: the box ships fully open, trusting your LAN and your router's perimeter. To turn it on, allow your services <b>first</b> (or you lock yourself out), then enable and save:</p>
 <pre><code>ufw allow SSH             # FIRST — port 22
 ufw allow CIFS            # samba; 'ufw app list' shows all profiles (NFS, ...)
-ufw allow 8080/tcp        # if you use 'nas web'  (22222 for the terminal)
+ufw allow 8080/tcp        # if you use 'nas web'  (22222 terminal, 7627 SnapRAID daemon)
 ufw enable                # active now AND at every boot (loads before networking)
 nas commit                # rules + the enable flag live in /etc/ufw</code></pre>
 <p><code>nas status</code> shows the firewall state (and flags an enabled config whose rules aren't loaded); this dashboard renders the full ruleset while it's active. <b>Docker-published ports bypass ufw</b> (Docker programs its own iptables rules) — publish to <code>127.0.0.1:</code> or use internal Docker networks for containers that must stay private. Off again: <code>ufw disable &amp;&amp; nas commit</code>.</p>
@@ -299,7 +307,7 @@ nas commit                 # REQUIRED — the setting is RAM-only until committe
 <tr><td><code>sshd</code></td><td>⚠️ console-only administration</td><td><b>all remote access</b> — have a monitor/keyboard first</td></tr>
 </table>
 <h3>Optional services</h3>
-<p>Tailscale, ZeroTier, NUT and the ufw firewall ship off; if you enabled one, the same stop + <code>rc-update del</code> + commit removes it (the firewall: just <code>ufw disable &amp;&amp; nas commit</code> — its service stays in the boot runlevel as a no-op by design). The dashboard and terminal: <code>nas web off</code> / <code>nas ttyd off</code>, then <code>nas commit</code>. WireGuard has no daemon — <code>wg-quick down &lt;iface&gt;</code> and remove your local.d/cron hook.</p>
+<p>Tailscale, ZeroTier, NUT and the ufw firewall ship off; if you enabled one, the same stop + <code>rc-update del</code> + commit removes it (the firewall: just <code>ufw disable &amp;&amp; nas commit</code> — its service stays in the boot runlevel as a no-op by design). The dashboard, terminal and SnapRAID daemon: <code>nas web off</code> / <code>nas ttyd off</code> / <code>nas snapraid off</code>, then <code>nas commit</code>. WireGuard has no daemon — <code>wg-quick down &lt;iface&gt;</code> and remove your local.d/cron hook.</p>
 <div class="warn"><b>Don't <code>apk del</code> baked-in packages to disable a service</b> — <code>nas upgrade</code>'s world reconciliation restores the base package set, so the binaries return by design. Disabling the <i>service</i> is the supported, upgrade-proof way; idle binaries cost nothing (the OS lives in RAM regardless).</div>
 </section>
 
@@ -411,6 +419,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td>Install software</td><td><code>apk add &lt;pkg&gt; &amp;&amp; nas commit</code></td></tr>
 <tr><td>Get alerts on my phone</td><td>add <code>ntfy:https://ntfy.sh/topic</code> to <code>/etc/mountnas/notify.conf</code> → <code>nas notify --test</code></td></tr>
 <tr><td>Turn the dashboard on</td><td><code>nas web on &amp;&amp; nas commit</code></td></tr>
+<tr><td>Schedule SnapRAID sync/scrub</td><td><code>nas snapraid on &amp;&amp; nas commit</code></td></tr>
 <tr><td>Protect the boot stick</td><td><code>nas backup</code> — then copy the file OFF the box</td></tr>
 <tr><td>Upgrade MountNAS</td><td><code>nas upgrade --check</code> → <code>nas backup</code> → <code>nas upgrade &lt;url&gt;</code> → <code>nas reboot</code></td></tr>
 <tr><td>See what happened on this box</td><td><code>nas history</code></td></tr>
@@ -501,6 +510,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td>Not reachable on the network</td><td>Wired DHCP is auto-configured on first boot; check cable/link. Custom config: <code>/etc/network/interfaces</code>, <code>rc-service networking restart</code>, commit.</td></tr>
 <tr><td>Custom init.d service vanished</td><td>lbu does not track <code>/etc/init.d</code>. Once: <code>lbu include /etc/init.d/&lt;name&gt;</code>, then commit.</td></tr>
 <tr><td><code>commit</code> fails: "tar: empty archive"</td><td>RAM root is full (<code>df -h /</code>). Free space or reboot, then commit.</td></tr>
+<tr><td>SnapRAID daemon page not loading</td><td><code>nas snapraid status</code>; check the port (default 7627) and that you committed after <code>nas snapraid on</code>. A daemon bound to <code>127.0.0.1</code> is reachable only on the box.</td></tr>
 <tr><td>Dashboard not loading</td><td><code>nas web status</code>; check the port (default 8080) and that you committed after <code>nas web on</code>.</td></tr>
 <tr><td>Notifications not arriving</td><td><code>nas notify --test</code>, then <code>tail /var/log/mountnas.log</code>. Email sinks additionally need <code>/etc/msmtprc</code>.</td></tr>
 </table>
