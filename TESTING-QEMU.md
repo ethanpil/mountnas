@@ -222,7 +222,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (85 tests)
+## 4. The complete test catalog (86 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -366,7 +366,7 @@ user networking.
 | `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` resolves to the **LAN-reachable** address (the default-route source), not the Docker bridge — avahi otherwise advertises the hostname on `docker0` (`172.17.0.1`) too and hands it out first. The seed ships `deny-interfaces=docker0` from 1.0rc2; the test self-applies it against older images so the fixed behavior is asserted either way. (avahi-tools ships from beta-7; fetched from the CDN otherwise, skips only when offline.) |
 | `test_hostname_change_regenerates_banner` | `gen-issue` picks up a hostname change and rewrites the banner (the wizard and if-up hook both lean on it). |
 
-### K — Newest features (`test_k_features.py`, 8 tests)
+### K — Newest features (`test_k_features.py`, 10 tests)
 
 These exercise features that exist in the repo but not yet in a published
 image, so each runs on `dev_guest`: a golden guest with the repo's current
@@ -382,6 +382,7 @@ post-reboot assertions read raw files instead of invoking new commands.
 | `test_disable_data_service_via_conf` | The documented "Disabling Unused Services" recipe works: with `DATA_SERVICES="samba nfs"` in `/etc/conf.d/mountnas`, the supervisor keeps Docker off across a restart, and `nas status` stays exit-0, listing docker as *disabled* rather than warning "not running". |
 | `test_supervisor_settles_rpcbind_before_nfs` | The nfs/rpcbind race is fixed: from a fully-stopped rpcbind+nfs (the exact boot-time gap), the fixed supervisor settles rpcbind first and brings nfs up via `nas restart` — previously nfs failed at boot and stayed down until a manual restart (caught by the beta-6 validation dashboard render). The boot-*ordering* half (`after rpcbind` in `depend()`) is validated by the beta-7 release run, since a diskless reboot rebuilds the RAM root from the released apk. |
 | `test_ops_log_history_and_no_commit_persistence` | A commit lands in `nas history` with a well-formed record (UTC ts, op, actor with `@`, details), and `/cfg/mountnas-ops.log` survives a reboot **without** any commit — the direct-to-/cfg design. |
+| `test_snapraid_daemon_enable_disable_and_ui` | The SnapRAID Daemon end to end: the package ships the binary, the OpenRC script and the web assets; the seeded `/etc/snapraidd.conf` sets a log directory off `/var/log`, `net_web_root` (without which every page 404s) and an ACTIVE `maintenance_schedule` in the `HH:MM` form upstream accepts, plus the sync thresholds; the packaged default and option reference exist under `/usr/share/snapraidd`; `nas snapraid on` enables and starts it, the web UI answers 200 and the REST API answers, `start_pre` created the log directory, reload works, the dashboard shows the real schedule and a well-formed link, and `nas snapraid off` stops it without touching the array. Self-skips on an image built before the package shipped. |
 | `test_web_dashboard_guide_and_json` **[network]** | `nas web on` serves the dashboard (hostname, services, disks, the docker containers table with a live probe container, the hardware-inventory collapsible with `lsusb -tv`/`lspci`/DIMMs), valid `/status.json`, the full `/guide.html`, and the logo; `nas web status` reports running; the enable is in the ops log; `nas web off` stops serving. Installs busybox-extras from the CDN, hence the marker. The rendered page is saved as a report artifact for visual review. |
 | `test_ttyd_browser_terminal` **[network]** | `nas ttyd on` serves the login-prompt terminal on 22222 with the cleartext + commit-honesty warnings, and whitelists ptys in `/etc/securetty` exactly once (root login; idempotency asserted on a second `on`); the dashboard render links "Web terminal" while it runs (and drops the link after `off`); the enable lands in the ops log; `nas ttyd off` stops serving. Installs ttyd from the CDN. |
 

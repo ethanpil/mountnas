@@ -463,6 +463,21 @@ def test_snapraid_daemon_enable_disable_and_ui(dev_guest):
         "without net_web_root the daemon answers the API but 404s every page"
     assert "/mnt/nasdata" in conf, \
         "sys_log_directory must be on the data disk: /var/log is RAM here"
+    # Active, not commented out: with these unset the daemon schedules nothing
+    # and runs a sync with no abort threshold — less protected than an
+    # upstream default install.
+    for key in ("maintenance_schedule", "sync_threshold_deletes",
+                "sync_threshold_updates", "scrub_percentage"):
+        assert re.search(rf"^{key}\s*=\s*\S", conf, re.M), \
+            f"{key} is not set in the seeded config"
+    # HH:MM or 'DAY HH:MM' — upstream rejects cron syntax outright
+    assert re.search(r"^maintenance_schedule\s*=\s*(\w{3}\s+)?\d{1,2}:\d{2}", conf, re.M), \
+        "maintenance_schedule is not in the HH:MM form upstream accepts"
+    # the packaged fallbacks that make the feature work on an UPGRADED box
+    assert g.run("test -f /usr/share/snapraidd/snapraidd.conf.default").rc == 0, \
+        "no packaged default config — an upgraded box could never enable the daemon"
+    assert g.run("test -f /usr/share/snapraidd/snapraidd.conf.example").rc == 0, \
+        "no packaged option reference (the man page is not shipped)"
 
     assert "off" in g.run("nas snapraid status", check=True).out
 
@@ -490,15 +505,24 @@ def test_snapraid_daemon_enable_disable_and_ui(dev_guest):
                  "http://127.0.0.1:7627/", timeout=60).rc == 0, \
         "daemon stopped serving after a reload"
 
-    # the dashboard advertises it: header pill plus a footer link
-    g.run("nas web on", timeout=120, check=True)
+    # The dashboard advertises it: header pill plus a footer link. Render the
+    # page directly -- no `nas web on`, which needs busybox-extras/httpd and
+    # would turn a missing optional package into a hard failure here.
     g.run("/usr/libexec/mountnas/gen-webstatus", timeout=120)
     page = g.run("cat /run/mountnas/web/index.html", check=True).out
     assert "SnapRAID" in page, "dashboard does not mention the daemon"
-    assert ":7627/" in page, f"dashboard has no link to the daemon UI"
-    assert "running &middot; schedules sync + scrub" in page, \
-        "Protection card does not show the daemon as running"
-    g.run("nas web off", timeout=120)
+    # A WELL-FORMED href, not a substring: the ttyd pill once shipped
+    # http://10.0.2.15/24:22222/ (the CIDR suffix left on the IP), which a
+    # ':7627/' substring check cannot catch. The same code builds this one.
+    assert re.search(r'href="http://\d+\.\d+\.\d+\.\d+:7627/"', page), \
+        "no well-formed link to the daemon UI in the dashboard"
+    # The row must report the schedule the config ACTUALLY has, never assert a
+    # behaviour: a running daemon with no maintenance_schedule syncs nothing.
+    sched = g.run("sed -n 's/^[[:space:]]*maintenance_schedule[[:space:]]*=[[:space:]]*//p' "
+                  "/etc/snapraidd.conf | tail -n1", check=True).out.strip()
+    assert sched, "the seeded config sets no maintenance_schedule — the daemon would sync nothing"
+    assert f"sync + scrub at {sched}" in page, \
+        f"Protection card does not show the real schedule ({sched!r})"
 
     off = g.run("nas snapraid off", timeout=120)
     assert off.rc == 0, off.out
