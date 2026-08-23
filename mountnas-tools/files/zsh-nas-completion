@@ -4,7 +4,7 @@
 # Command list: keep in sync with the dispatcher in files/nas AND the bash
 # completion (files/bash-nas-completion.sh).
 local -a cmds
-cmds=(setup status disks restart changes changed commit save rollback backup logs log web ttyd history notify report shutdown reboot upgrade version about help)
+cmds=(about backup changed changes commit disks help history log logs notify reboot report restart rollback save setup shutdown snapraid status ttyd upgrade version web)
 if (( CURRENT == 2 )); then
 	_describe "nas command" cmds
 elif [[ $words[CURRENT-1] == --persist ]]; then

@@ -37,6 +37,7 @@ _cmd_help_for() {
 	report) help_report ;;
 	web) help_web ;;
 	ttyd) help_ttyd ;;
+	snapraid) help_snapraid ;;
 	history) help_history ;;
 	notify) help_notify ;;
 	*) return 1 ;;
@@ -97,6 +98,7 @@ case "${1:-help}" in
 	logs|log) shift; cmd_logs "$@" ;;
 	web) shift; cmd_web "$@" ;;
 	ttyd) shift; cmd_ttyd "$@" ;;
+	snapraid) shift; cmd_snapraid "$@" ;;
 	history) shift; cmd_history "$@" ;;
 	notify) shift; cmd_notify "$@" ;;
 	backup) shift; cmd_backup "$@" ;;
