@@ -3,6 +3,7 @@ name: Lint
 # ash strictness bug class in CONTEXT.md §6 recurs; the full image build is
 # manual-dispatch only, so without this the lint only ran at release time).
 # Same command CI's build job runs; the file list is discovered in ci-lint.sh.
+# The second job runs the nas CLI unit tests (tests/unit) under busybox ash.
 on:
   push:
   pull_request:
@@ -13,3 +14,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Lint shell scripts (shellcheck)
         run: sh scripts/ci-lint.sh
+  unit:
+    # The nas CLI unit tests: busybox ash on Alpine, in a throwaway container
+    # (the tests install the CLI at its real paths and write real config
+    # files). Same command a developer runs locally with docker.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Unit tests (busybox ash, Alpine container)
+        run: docker run --rm -v "$PWD:/repo" alpine:3.24 sh /repo/tests/unit/run.sh

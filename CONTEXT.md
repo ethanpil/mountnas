@@ -84,6 +84,7 @@ mountnas/
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
+├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
 ├── tests/qemu/                       # self-hosted QEMU suite (78 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh on every push/PR
