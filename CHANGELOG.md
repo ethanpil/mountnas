@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
+  sources `/usr/libexec/mountnas/lib.sh` and one `cmd/<name>.sh` per command
+  at start (never on demand, so a running command cannot load a file that
+  `apk` replaced after it started). Function bodies did not change. (e25c508)
+- **Every function declares its variables with `local`.** The rule and the two
+  verified busybox-ash facts behind it are in CONTEXT.md. (25d5abe)
+
+### Testing
+- **Unit tests for the CLI** under busybox ash: `tests/unit/`, ~70 cases, run
+  in a throwaway Alpine root (`docker run ... sh /repo/tests/unit/run.sh` or
+  `run.sh --chroot`). The Lint workflow runs them on every push. (8b6253c)
+- The QEMU suite pushes the whole CLI tree into dev and upgrade guests; the
+  packaging manifest test lists `lib.sh` and every `cmd/*.sh`. (b5444e1)
+- `ci-lint` lints the sourced files and checks that every help page the
+  dispatcher maps to exists. (b5444e1)
+
 ## [1.0rc7] — 2026-07-27
 
 **Seventh 1.0 release candidate.** Quality-of-life package additions, a

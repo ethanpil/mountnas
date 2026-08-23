@@ -266,11 +266,6 @@ def test_released_image_ships_expected_files(wired_shared_guest):
     g = wired_shared_guest
     manifest = [
         "/usr/sbin/nas",
-        "/usr/libexec/mountnas/lib.sh",
-        # one cmd/<name>.sh per command, from the repo tree so a new command
-        # file that the APKBUILD forgets is caught here
-        *[f"/usr/libexec/mountnas/cmd/{c.name}"
-          for c in sorted((FILES_DIR / "cmd").glob("*.sh"))],
         "/etc/init.d/mountnas", "/etc/init.d/mountnas-mkdirs",
         "/etc/init.d/mountnas-net", "/etc/init.d/mountnas-sshkey",
         "/etc/init.d/mountnas-issue", "/etc/init.d/mountnas-web",
@@ -289,6 +284,14 @@ def test_released_image_ships_expected_files(wired_shared_guest):
         "/usr/share/zsh/site-functions/_nas",
         "/etc/periodic/15min/mountnas-datawatch",
     ]
+    # The nas CLI is a dispatcher + sourced tree since 2026-08 (lib.sh and one
+    # cmd/<name>.sh per command). Hard-assert the whole tree once the shipped
+    # nas is the dispatcher; the list comes from the repo so a cmd file the
+    # APKBUILD forgets is caught here.
+    if g.run("grep -q '^NAS_LIB=' /usr/sbin/nas").rc == 0:
+        manifest.append("/usr/libexec/mountnas/lib.sh")
+        manifest += [f"/usr/libexec/mountnas/cmd/{c.name}"
+                     for c in sorted((FILES_DIR / "cmd").glob("*.sh"))]
     missing = [p for p in manifest if g.run(f"test -e {p}").rc != 0]
     assert not missing, f"mountnas-tools files missing from the image: {missing}"
 
