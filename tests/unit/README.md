@@ -9,7 +9,7 @@ The tests install the CLI at its real paths and write real config files
 (`/etc/fstab`, `/cfg/...`), so they must run in a **throwaway root**:
 
 ```sh
-# in a container (what CI does)
+# in a container (the command the Lint workflow runs)
 docker run --rm -v "$PWD:/repo" alpine:3.24 sh /repo/tests/unit/run.sh
 ```
 
@@ -27,7 +27,7 @@ sh tests/unit/run.sh --chroot
 | `harness.sh` | `t`, `stub`, `run_nas`, `src_nas`, `assert_*`, `finish` (see its header) |
 | `test_dispatch.sh` | help interception, unknown commands, usage errors, the prompt cache |
 | `test_lib.sh` | `_uptime_h`, `_data_services`, the conf.d editors, `_snap_note`, `_ops_log`, disk helpers |
-| `test_status.sh` | every `nas status` check, the exit code, `--json`, flag order |
+| `test_status.sh` | the fstab, config, service, backup and firewall checks; the exit code; `--json`; flag order |
 | `test_commit_rollback.sh` | commit refusal gates, notes, rotation, `rollback`, `changes` |
 | `test_disks.sh` | inventory rendering, paste-ready fstab lines, a hostile label, `--json` |
 | `test_upgrade.sh` | argument gates, the YES gate, `--check`, the stage/commit helpers |

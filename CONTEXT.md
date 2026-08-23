@@ -87,7 +87,7 @@ mountnas/
 ├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
 ├── tests/qemu/                       # self-hosted QEMU suite (78 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
-├── .github/workflows/lint.yml        # ci-lint.sh on every push/PR
+├── .github/workflows/lint.yml        # ci-lint.sh + the tests/unit suite, on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
 ```
 
@@ -439,8 +439,9 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 **Lint + boot gate.**
 - **`scripts/ci-lint.sh`** runs before anything expensive (and again on every
   push/PR via `.github/workflows/lint.yml`). It DISCOVERS its targets (shebang
-  grep over `mountnas-tools/files/` + profile.d globs + `scripts/*.sh`) so a new
-  script can never ship unlinted; flags are `shellcheck -s sh -S warning
+  grep over `mountnas-tools/files/`) plus explicit globs for the shebang-LESS
+  files (profile.d, `lib.sh`, `cmd/*.sh`, `tests/unit/*.sh`) and `scripts/*.sh`,
+  so a new script can never ship unlinted; flags are `shellcheck -s sh -S warning
   -e SC2034,SC3043,SC3045,SC3033` (excludes deliberate: SC2034 — openrc-run
   vars like `description=` look unused; SC3033 — a hyphenated function name
   (`rc-update()`, the data-service guard in nas-aliases.sh) is undefined in

@@ -20,7 +20,7 @@ from pathlib import Path
 GOLDEN_SCHEMA_VERSION = 1
 
 # GitHub repo the release images are downloaded from (same one the `nas` CLI
-# uses -- see REPO= at the top of mountnas-tools/files/nas).
+# uses -- see REPO= in mountnas-tools/files/lib.sh).
 GITHUB_REPO = os.environ.get("MOUNTNAS_TEST_REPO", "ethanpil/mountnas")
 
 # ---------------------------------------------------------------------------

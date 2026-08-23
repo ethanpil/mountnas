@@ -220,7 +220,7 @@ jobs:
           # (~1 GiB) is MNASCFG, which holds the tiny overlay PLUS /cfg/cache
           # (user-installed apks). Empty space gzips to ~nothing, but the RAW
           # size sets the minimum stick, 'nas backup' read time, and the
-          # 'nas upgrade' temp-space precheck (need_kb in nas) — keep in sync.
+          # 'nas upgrade' temp-space precheck (need_kb in cmd/upgrade.sh) — keep in sync.
           # Partition sizes are frozen per deployed stick (upgrades replace
           # files, never partitions), so grow-only decisions happen here.
           truncate -s 3584M "$IMG"; LOOP=$(losetup -fP --show "$IMG")
