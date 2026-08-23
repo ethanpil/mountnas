@@ -104,10 +104,17 @@ fuse
 fuse3
 fuse-overlayfs
 
-# --- parity / volume mgmt (snapraid + mergerfs are built locally; see the
-#     /snapraid and /mergerfs APKBUILDs — compiled from source / repackaged
-#     from upstream's static binary, since neither is in latest-stable) ---
+# --- parity / volume mgmt (snapraid, snapraid-daemon and mergerfs are built
+#     locally; see the /snapraid, /snapraid-daemon and /mergerfs APKBUILDs —
+#     compiled from source / repackaged from upstream's static binary, since
+#     none of them is in latest-stable) ---
 snapraid
+# snapraid-daemon: the scheduler/REST-API/web-UI companion to snapraid (a
+# SEPARATE upstream project, also built locally — see /snapraid-daemon).
+# Service OFF by default; 'nas snapraid on' enables it. It runs the same
+# snapraid binary, so it replaces hand-written sync/scrub cron lines rather
+# than changing how the array works.
+snapraid-daemon
 mergerfs
 mdadm
 lvm2

@@ -1,0 +1,67 @@
+#!/sbin/openrc-run
+# snapraidd — SnapRAID Daemon: scheduler, REST API and web UI for SnapRAID.
+# OFF by default; 'nas snapraid on' is the opt-in switch (same pattern as
+# 'nas web' and 'nas ttyd').
+#
+# The daemon daemonizes itself and writes $pidfile, so this script does NOT
+# use command_background: start-stop-daemon starts it and the daemon forks.
+#
+# Upstream ships a systemd unit and a BSD-style rc script only. This script
+# carries the parts of that unit that matter on OpenRC:
+#   - after localmount + net   (the systemd unit waits for local-fs and
+#                               network-online: parity/data disks must be
+#                               mounted, and the API binds an address)
+#   - nice 19 / ionice idle    (Nice=19, IOSchedulingClass=idle — SnapRAID is
+#                               I/O heavy and must not lag the box)
+#   - reload = SIGHUP          (ExecReload=kill -HUP)
+# It runs as root, as upstream requires: the snapraid child it spawns needs
+# block-level access to the parity and data disks.
+description="SnapRAID Daemon (scheduler, REST API, web UI)"
+description_reload="Re-read /etc/snapraidd.conf without stopping the daemon"
+
+: "${CONF:=/etc/snapraidd.conf}"
+
+command="/usr/bin/snapraidd"
+command_args="--conf $CONF"
+pidfile="/run/snapraidd.pid"
+# SnapRAID is I/O heavy; keep it off the critical path of everything else.
+start_stop_daemon_args="--nicelevel ${NICELEVEL:-19} --ionice ${IONICE:-3}"
+extra_started_commands="reload"
+
+depend() {
+	# mountnas mounts the data/parity disks; the daemon reads the array
+	# through the snapraid CLI, so it must not start before they are there.
+	need localmount
+	after net mountnas
+	use logger
+}
+
+start_pre() {
+	if [ ! -f "$CONF" ]; then
+		eerror "$CONF not found — the daemon has nothing to serve."
+		eerror "MountNAS seeds that file; restore it or write one, then: nas commit"
+		return 1
+	fi
+	# The daemon runs the snapraid CLI; without it every task fails at the
+	# first command instead of at start, which is far harder to diagnose.
+	if ! command -v snapraid >/dev/null 2>&1; then
+		eerror "snapraid not found — install it with: apk add snapraid"
+		return 1
+	fi
+	# The daemon keeps its 'memory' of past syncs and scrubs in the command
+	# logs. On a diskless box /var/log is RAM, so a reboot would erase it —
+	# the seeded config points sys_log_directory at the data disk. Create the
+	# directory when it is missing so the daemon never starts blind.
+	_dir=$(sed -n 's/^[[:space:]]*sys_log_directory[[:space:]]*=[[:space:]]*//p' "$CONF" 2>/dev/null | tail -n1)
+	if [ -n "$_dir" ] && [ ! -d "$_dir" ]; then
+		mkdir -p "$_dir" 2>/dev/null \
+			|| ewarn "cannot create $_dir — the daemon loses its task history at every restart"
+	fi
+	return 0
+}
+
+reload() {
+	ebegin "Reloading SnapRAID Daemon configuration"
+	start-stop-daemon --signal HUP --pidfile "$pidfile"
+	eend $?
+}

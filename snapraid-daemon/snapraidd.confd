@@ -1,0 +1,14 @@
+# SnapRAID Daemon — OpenRC settings. You own this file (edit, then: nas commit).
+#
+# The DAEMON's own settings (port, schedules, thresholds, notifications) live
+# in /etc/snapraidd.conf, not here. This file only tunes how OpenRC starts it.
+
+# Config file passed to snapraidd with --conf.
+#CONF=/etc/snapraidd.conf
+
+# Scheduling priority of the daemon and every snapraid command it spawns.
+# SnapRAID is I/O heavy: the defaults keep a sync or scrub from slowing the
+# rest of the box. NICELEVEL 19 = lowest CPU priority, IONICE 3 = idle I/O.
+# Raise them only if a sync must finish as fast as possible.
+#NICELEVEL=19
+#IONICE=3

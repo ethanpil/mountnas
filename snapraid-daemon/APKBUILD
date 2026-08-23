@@ -1,0 +1,61 @@
+# Maintainer: MountNAS <ethan@piliavin.com>
+# SnapRAID-Daemon is a SEPARATE upstream project from SnapRAID itself
+# (github.com/amadvance/snapraid-daemon). SnapRAID 14.x only added the logging
+# and --gui-* hooks the daemon drives; the daemon is what turns SnapRAID from a
+# cron-driven CLI into a scheduled service with a REST API and a web UI. It is
+# in no Alpine repository, so MountNAS compiles it from source like snapraid.
+#
+# It runs the SAME snapraid binary underneath, so the array format, the config
+# and the recovery story are unchanged — the daemon only schedules and reports.
+pkgname=snapraid-daemon
+pkgver=1.14
+pkgrel=0
+pkgdesc="Scheduler, REST API and web UI for SnapRAID (runs the snapraid CLI)"
+url="https://github.com/amadvance/snapraid-daemon"
+arch="all"
+license="AGPL-3.0-or-later"
+# zip packs the web UI into /usr/share/snapraidd/commander.zip during the build;
+# configure FAILS without it. linux-headers matches snapraid's build needs.
+makedepends="linux-headers zip"
+# snapraid>=14.6: the daemon shells out to the CLI and needs its heartbeat
+# logging (daemon 1.11 release note). The version is what makes the pairing
+# safe, so declare it rather than rely on packages.list ordering.
+depends="snapraid>=14.6"
+options="!check"
+source="snapraid-daemon-$pkgver.tar.gz::https://github.com/amadvance/snapraid-daemon/releases/download/v$pkgver/snapraid-daemon-$pkgver.tar.gz
+	snapraidd.initd
+	snapraidd.confd
+	"
+builddir="$srcdir/snapraid-daemon-$pkgver"
+
+build() {
+	./configure \
+		--prefix=/usr \
+		--sysconfdir=/etc
+	make
+}
+
+package() {
+	make DESTDIR="$pkgdir" install
+	# Same reason as snapraid: an appliance running from RAM does not carry man
+	# pages ('snapraidd --help' covers the flags), and abuild wants them gzipped
+	# or split into a -doc subpackage.
+	rm -rf "$pkgdir"/usr/share/man
+	# 'make install' writes NO service file and NO /etc/snapraidd.conf: upstream
+	# only offers a systemd unit and a BSD rc script, and it skips both under
+	# DESTDIR. That suits MountNAS — the OpenRC script below is the only
+	# service file, and the config is seeded as USER config by
+	# scripts/genapkovl-mountnas.sh (CONTEXT.md: code in the apk, editable
+	# config in the overlay — an apk-installed /etc file is clobbered at boot).
+	install -Dm755 "$srcdir"/snapraidd.initd "$pkgdir"/etc/init.d/snapraidd
+	install -Dm644 "$srcdir"/snapraidd.confd "$pkgdir"/etc/conf.d/snapraidd
+}
+
+# Committed (NOT regenerated in CI) so the pinned release is integrity-checked:
+# if the GitHub asset is ever replaced, the build fails instead of shipping it.
+# On a pkgver bump, refresh with: abuild checksum
+sha512sums="
+5c1d6ae281d0f3eb369123af247641bdf153940d8cc3807e2ab59fc647acb4b62c401876306dd1b22d25aec192e82778502e6309c58768a488588a166c3b429c  snapraid-daemon-1.14.tar.gz
+b8e2d93c73b24ffa7b4f7a92dbb1fd60835813fa7057d03f468e241c80197120e1bbca8045d93c7e71d28fe3ca74fd39666a545c5e3fa9d1a31497347d42c2db  snapraidd.initd
+99d875b4908298964556c2ccb67c8af46d276cf8d7b44ad94b9e5e1cff4956ba0cafa9c3bc7fe51212931e1859e3ee99518ed6414ffbb425df4d4619644fa5bf  snapraidd.confd
+"
