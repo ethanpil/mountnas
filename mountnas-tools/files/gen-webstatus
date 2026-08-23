@@ -148,6 +148,18 @@ if [ -n "$sr_content" ]; then
 		sr_html='<span class="pill p-warn">configured, never synced</span>'
 	fi
 fi
+# SnapRAID Daemon state. Who schedules the sync is the question this row
+# answers: the daemon, a cron line, or nobody. The header pill links to its
+# UI; this row belongs beside the parity age it explains.
+if rc-service snapraidd status >/dev/null 2>&1; then
+	srd_html='<span class="pill p-ok">running &middot; schedules sync + scrub</span>'
+elif rc-update show default 2>/dev/null | grep -q snapraidd; then
+	srd_html='<span class="pill p-warn">enabled but not running</span>'
+elif command -v snapraidd >/dev/null 2>&1; then
+	srd_html='<span class="mut">off (nas snapraid on)</span>'
+else
+	srd_html='<span class="mut">not installed</span>'
+fi
 
 # ---- services (core from status --json; off-by-default probed here) --------
 services=$(printf '%s' "$sj" | jq -r '
@@ -330,6 +342,31 @@ if rc-service mountnas-ttyd status >/dev/null 2>&1; then
 	fi
 else
 	ttyd_hdr="<span class=\"pill p-off\"><i></i>Web terminal off</span>"
+fi
+
+# SnapRAID Daemon (snapraidd): same header-pill + footer-link treatment as
+# the browser terminal. Its port comes from net_port in /etc/snapraidd.conf
+# ("[IP:]PORT[s]"), so take the last field and drop a TLS 's'. A daemon bound
+# to loopback is running but NOT reachable from this page's reader, so it gets
+# the pill without a link — a dead http://<lan-ip>:7627/ would be worse than
+# no link at all.
+snapraid_link=""
+if rc-service snapraidd status >/dev/null 2>&1; then
+	sr_np=$(sed -n 's/^[[:space:]]*net_port[[:space:]]*=[[:space:]]*//p' /etc/snapraidd.conf 2>/dev/null 		| tail -n1 | tr -d '[:space:]')
+	sr_port=${sr_np##*,}; sr_port=${sr_port##*:}; sr_port=${sr_port%s}
+	case "$sr_port" in ''|*[!0-9]*) sr_port=7627 ;; esac
+	sr_ip=$(printf '%s' "$sj" | jq -r '.ips[0] // empty'); sr_ip=${sr_ip%%/*}
+	if printf '%s' "$sr_np" | grep -qE '(^|[,])(127\.|\[?::1)'; then
+		sr_ip=""   # loopback-bound: reachable on the box only
+	fi
+	if [ -n "$sr_ip" ]; then
+		snapraid_link="<a href=\"http://$sr_ip:$sr_port/\">SnapRAID</a>"
+		snapraid_hdr="<a class=\"termlink\" href=\"http://$sr_ip:$sr_port/\"><span class=\"pill p-ok\"><i></i>SnapRAID</span></a>"
+	else
+		snapraid_hdr="<span class=\"pill p-ok\"><i></i>SnapRAID</span>"
+	fi
+else
+	snapraid_hdr="<span class=\"pill p-off\"><i></i>SnapRAID off</span>"
 fi
 
 recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null | esc \
@@ -569,6 +606,7 @@ $css
   <div><h1>$host</h1><div class="sub">MountNAS $rel &middot; read-only dashboard</div></div>
   <div class="spacer"></div>
   $ttyd_hdr
+  $snapraid_hdr
   <div class="state $state">$state_word</div>
   <div class="upd">updated $gen_at<br>refreshes every 2 min</div>
 </header>
@@ -612,6 +650,7 @@ $css
         <dt>Last backup</dt><dd class="num">$lastbk</dd>
         <dt>Backups</dt><dd>$bk_html</dd>
         <dt>SnapRAID parity</dt><dd>$sr_html</dd>
+        <dt>SnapRAID daemon</dt><dd>$srd_html</dd>
         <dt>Alert sinks</dt><dd>$sinks_html</dd>
       </dl>
     </div>
@@ -667,6 +706,7 @@ $dimms</pre>
 <footer>
   <a href="guide.html">User guide</a>
   $ttyd_link
+  $snapraid_link
   <a href="status.json">status.json</a>
   <span>Read-only &mdash; manage over SSH with the <span class="mono">nas</span> CLI</span>
 </footer>
