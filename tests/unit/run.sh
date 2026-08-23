@@ -21,7 +21,6 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-files="$repo/mountnas-tools/files"
 
 if [ "${1:-}" = "--chroot" ]; then
 	[ "$(id -u)" = 0 ] || { echo "--chroot needs root"; exit 1; }
@@ -79,19 +78,21 @@ fi
 [ -f /etc/alpine-release ] || { echo "refusing: the tests need busybox ash on Alpine"; exit 1; }
 command -v jq >/dev/null || apk add -q jq util-linux
 
-# ---- install the CLI tree exactly as the APKBUILD does ----
-install -Dm755 "$files/nas" /usr/sbin/nas
-install -Dm644 "$files/lib.sh" /usr/libexec/mountnas/lib.sh
-for c in "$files"/cmd/*.sh; do
-	install -Dm644 "$c" "/usr/libexec/mountnas/cmd/$(basename "$c")"
-done
-for h in notify release-string data-watch smartd-notify health-digest; do
-	install -Dm755 "$files/$h" "/usr/libexec/mountnas/$h"
-done
-install -Dm644 "$files/logo" /usr/share/mountnas/logo
-mkdir -p /usr/share/mountnas
-echo 9.9.9 > /usr/share/mountnas/version
-echo unit-test > /usr/share/mountnas/release
+# ---- install exactly what the apk installs ----
+# The APKBUILD's package() is plain sh, so we RUN it instead of copying its
+# install lines. A hand-copied list drifts: the first one already missed
+# write-bootcfg, pick-nic and gen-issue, which the CLI calls by absolute
+# path. pkgdir="" installs to this throwaway root. pkgver and _reltag must
+# be set AFTER the source (which resets them) — the tests assert both
+# strings. The extra files package() installs (init.d, profile.d, cron,
+# web assets) are inert here: nothing starts a service or reads a profile.
+startdir="$repo/mountnas-tools"
+pkgdir=""
+# shellcheck disable=SC1090  # path is computed; the APKBUILD is linted by ci-lint
+. "$startdir/APKBUILD"
+pkgver=9.9.9
+_reltag=unit-test
+package
 
 # ---- run every test file in its own shell ----
 pass=0; fail=0; failed=""
