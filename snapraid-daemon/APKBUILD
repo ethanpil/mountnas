@@ -13,10 +13,16 @@ pkgrel=0
 pkgdesc="Scheduler, REST API and web UI for SnapRAID (runs the snapraid CLI)"
 url="https://github.com/amadvance/snapraid-daemon"
 arch="all"
-license="AGPL-3.0-or-later"
-# zip packs the web UI into /usr/share/snapraidd/commander.zip during the build;
-# configure FAILS without it. linux-headers matches snapraid's build needs.
-makedepends="linux-headers zip"
+# COPYING: "The SnapRAID-Daemon project as a whole ... is provided under the
+# GPL-3.0-or-later License", with bundled TommyDS (BSD-2-Clause) and
+# CivetWeb/JSMN (MIT). LICENSES/ holds exactly those three texts.
+license="GPL-3.0-or-later AND BSD-2-Clause AND MIT"
+# zip packs the web UI into /usr/share/snapraidd/commander.zip during the
+# build; configure FAILS without it. zlib-dev/zstd-dev are NOT optional in
+# practice: configure probes for them and silently disables HTTP compression
+# when they are absent, so leaving them out makes the package depend on
+# whatever the builder happened to have installed.
+makedepends="linux-headers zip zlib-dev zstd-dev"
 # snapraid>=14.6: the daemon shells out to the CLI and needs its heartbeat
 # logging (daemon 1.11 release note). The version is what makes the pairing
 # safe, so declare it rather than rely on packages.list ordering.
@@ -24,31 +30,47 @@ depends="snapraid>=14.6"
 options="!check"
 source="snapraid-daemon-$pkgver.tar.gz::https://github.com/amadvance/snapraid-daemon/releases/download/v$pkgver/snapraid-daemon-$pkgver.tar.gz
 	snapraidd.initd
-	snapraidd.confd
+	snapraidd.conf.default
 	"
 builddir="$srcdir/snapraid-daemon-$pkgver"
 
 build() {
+	# --with-init-type=none is NOT cosmetic: it defaults to 'auto', which
+	# installs a systemd unit or a BSD rc script depending on which
+	# directories exist ON THE BUILD HOST. Pinning it keeps the package
+	# reproducible and guarantees our OpenRC script is the only service file.
 	./configure \
 		--prefix=/usr \
-		--sysconfdir=/etc
+		--sysconfdir=/etc \
+		--with-init-type=none
 	make
 }
 
 package() {
 	make DESTDIR="$pkgdir" install
 	# Same reason as snapraid: an appliance running from RAM does not carry man
-	# pages ('snapraidd --help' covers the flags), and abuild wants them gzipped
-	# or split into a -doc subpackage.
+	# pages, and abuild wants them gzipped or split into a -doc subpackage.
 	rm -rf "$pkgdir"/usr/share/man
-	# 'make install' writes NO service file and NO /etc/snapraidd.conf: upstream
-	# only offers a systemd unit and a BSD rc script, and it skips both under
-	# DESTDIR. That suits MountNAS — the OpenRC script below is the only
-	# service file, and the config is seeded as USER config by
-	# scripts/genapkovl-mountnas.sh (CONTEXT.md: code in the apk, editable
-	# config in the overlay — an apk-installed /etc file is clobbered at boot).
+	# Ship upstream's fully commented option reference AND the MountNAS
+	# default config INSIDE the apk, under /usr/share (never /etc — see
+	# CONTEXT.md §3: an apk-installed /etc file is clobbered by the overlay at
+	# every boot). Two jobs:
+	#   .example  the only on-box reference for the ~30 config options; the
+	#             man page is dropped and the box may be offline.
+	#   .default  what the init script and 'nas snapraid on' copy to
+	#             /etc/snapraidd.conf when it is absent. The apkovl seed only
+	#             reaches a freshly flashed box, so without this the feature
+	#             would be unreachable on every box that UPGRADED into it.
+	install -Dm644 "$builddir"/snapraidd.conf.example \
+		"$pkgdir"/usr/share/snapraidd/snapraidd.conf.example
+	install -Dm644 "$srcdir"/snapraidd.conf.default \
+		"$pkgdir"/usr/share/snapraidd/snapraidd.conf.default
+	# The init script is code, so it ships in the apk like zerotier-one's.
+	# There is deliberately NO /etc/conf.d file: every setting the daemon has
+	# lives in its own /etc/snapraidd.conf, and a conf.d shipped by an apk
+	# would be the one editable /etc file in this repo that the overlay
+	# clobbers and 'nas upgrade' can never refresh.
 	install -Dm755 "$srcdir"/snapraidd.initd "$pkgdir"/etc/init.d/snapraidd
-	install -Dm644 "$srcdir"/snapraidd.confd "$pkgdir"/etc/conf.d/snapraidd
 }
 
 # Committed (NOT regenerated in CI) so the pinned release is integrity-checked:
@@ -56,6 +78,6 @@ package() {
 # On a pkgver bump, refresh with: abuild checksum
 sha512sums="
 5c1d6ae281d0f3eb369123af247641bdf153940d8cc3807e2ab59fc647acb4b62c401876306dd1b22d25aec192e82778502e6309c58768a488588a166c3b429c  snapraid-daemon-1.14.tar.gz
-b8e2d93c73b24ffa7b4f7a92dbb1fd60835813fa7057d03f468e241c80197120e1bbca8045d93c7e71d28fe3ca74fd39666a545c5e3fa9d1a31497347d42c2db  snapraidd.initd
-99d875b4908298964556c2ccb67c8af46d276cf8d7b44ad94b9e5e1cff4956ba0cafa9c3bc7fe51212931e1859e3ee99518ed6414ffbb425df4d4619644fa5bf  snapraidd.confd
+633564da00f6783d1c8de08e809c41007b910b60e2caf02e61dabe169d8954edd448a6dd7a9bba3298c552fd300b4fe1328b34a2e7c86345616cb201a5b0b4dd  snapraidd.initd
+3bd5e5ea86a513251fb9f82d9fd727c3dcd3a9834199116cda853b1659c3f1fa92f34a11c37fdf94406ae4fc2fb043690482d351c36bcfd304e015e1288529f6  snapraidd.conf.default
 "

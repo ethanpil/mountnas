@@ -1,0 +1,77 @@
+### SnapRAID Daemon — you own this file (edit, then: nas commit).
+###
+### This is the MountNAS default. Upstream's fully commented reference for
+### every option is on the box at /usr/share/snapraidd/snapraidd.conf.example
+### (also at github.com/amadvance/snapraid-daemon).
+###
+### The daemon REWRITES this file itself when you change a setting in its web
+### UI. Like every /etc file it then lives in RAM until you run 'nas commit',
+### so save after changing settings or they are gone at the next reboot.
+
+### System — the snapraid CLI, and where task logs go.
+# The log directory is the daemon's record of past syncs and scrubs. It MUST
+# be on the data disk: /var/log is RAM on a diskless box, so a reboot would
+# erase it. If you move /mnt/nasdata, move this too.
+sys_engine = /usr/bin/snapraid
+sys_log_directory = /mnt/nasdata/snapraid/logs
+sys_log_retention_days = 120
+
+### Network — REST API and web UI.
+# The port is bound on ALL interfaces so the box is reachable at
+# http://<host>.local:7627/ and the MountNAS dashboard can link to it.
+#
+# READ THIS BEFORE LEAVING IT OPEN: the REST API is READ-WRITE and has NO
+# password. Anyone who can reach the port can start a sync or a scrub and
+# change these settings. That is a wider door than the read-only 'nas web'
+# dashboard. On a network you do not trust, do ONE of:
+#   - leave the service off (nas snapraid off), or
+#   - bind it to loopback and reach it over SSH or Tailscale:
+#       net_port = 127.0.0.1:7627
+#   - or allow only your own subnet (keep +127.0.0.1: 'nas snapraid on'
+#     probes the daemon from loopback, and a list without it denies that):
+#       net_acl = +192.168.1.0/24,+127.0.0.1
+# Then: nas commit
+net_enabled = 1
+net_port = 7627
+# REQUIRED for the web UI. Without it the API answers but every page is 404.
+net_web_root = commander.zip
+# Browser hardening and CORS. Upstream's defaults, set explicitly because
+# this is a read-write surface.
+net_security_headers = 1
+net_allowed_origin = self
+# 1 would let the API rewrite hook_script and the notify settings.
+net_config_full_access = 0
+#net_acl = +192.168.1.0/24,+127.0.0.1
+
+### Maintenance — this is what replaces your snapraid cron lines.
+# Format is HH:MM, or "DAY HH:MM" for specific days (Mon 03:00, Thu 04:00).
+# It is NOT cron syntax. Unset means the daemon schedules NOTHING.
+maintenance_schedule = 02:00
+
+# Safety thresholds: abort the sync when more files than this were deleted or
+# changed since the last one. This is what stops a disconnected disk from
+# writing its whole file set out of parity. Raise them if you routinely churn
+# more files than this in a day; do not remove them.
+sync_threshold_deletes = 50
+sync_threshold_updates = 100
+
+# Scrub re-reads old blocks and verifies them against parity — this is what
+# catches silent bit rot. Each run checks this percentage, oldest first.
+scrub_percentage = 0.7
+scrub_older_than = 10
+touch_zero_subseconds = 1
+
+### Monitoring
+# SMART probing and disk spindown. MountNAS also runs smartd (-n standby,q)
+# for pre-failure alerts; this drives the daemon's own disk view and its
+# spindown timer.
+probe_interval_minutes = 3
+spindown_idle_minutes = 15
+
+### Notifications
+# Task results go to syslog, so they reach 'nas logs' and any persistent log
+# you enabled with 'nas logs --persist on'.
+notify_syslog_enabled = 1
+notify_syslog_level = info
+notify_result_level = error
+notify_differences = 1

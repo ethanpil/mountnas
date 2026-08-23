@@ -214,65 +214,12 @@ mk root:root 0644 "$tmp/etc/snapraid.conf" <<'EOF'
 EOF
 
 # ---- SnapRAID Daemon: scheduler + REST API + web UI (service OFF by default) ----
-# The daemon is a separate upstream project that drives the SAME snapraid
-# binary; it replaces the hand-written cron lines most SnapRAID users end up
-# with. Turn it on with 'nas snapraid on'. Three settings below are MountNAS
-# defaults rather than upstream's, and each matters on this appliance:
-#
-#  sys_log_directory  Upstream defaults to /var/log/snapraid. On a diskless
-#                     box that is RAM, so every reboot would erase the task
-#                     history the daemon uses as its memory of past syncs and
-#                     scrubs. It points at the data disk instead.
-#  net_port           Upstream binds 127.0.0.1 only. MountNAS is administered
-#                     over the LAN, so the port is bound on all interfaces —
-#                     the same trusted-LAN posture as 'nas web' and Samba.
-#  net_web_root       Without this the daemon serves the API but answers 404
-#                     for the web UI; 'commander.zip' resolves to the copy in
-#                     /usr/share/snapraidd.
-#
-# READ THIS BEFORE EXPOSING THE PORT: the REST API is READ-WRITE and has no
-# password. Anyone who can reach the port can start a sync or a scrub and
-# change the daemon's settings. That is a wider door than the read-only 'nas
-# web' dashboard. On an untrusted LAN, either leave the service off, or set
-# net_port to 127.0.0.1:7627 and reach it over SSH or Tailscale, or restrict
-# net_acl (e.g. net_acl = +192.168.1.0/24), then: nas commit
-#
-# The daemon can also rewrite THIS FILE through the API. Like every other
-# /etc file it lives in RAM until 'nas commit' — so save after changing
-# settings in the web UI, or they are gone at the next reboot.
-mk root:root 0644 "$tmp/etc/snapraidd.conf" <<'EOF'
-### SnapRAID Daemon — you own this file (edit, then: nas commit).
-### Full option reference: https://github.com/amadvance/snapraid-daemon
-
-# The snapraid CLI the daemon drives, and where it keeps command logs.
-# The log directory is the daemon's memory of past tasks: keep it on the
-# DATA disk, never in /var/log (RAM on a diskless box).
-sys_engine = /usr/bin/snapraid
-sys_log_directory = /mnt/nasdata/snapraid/logs
-sys_log_retention_days = 120
-
-# REST API + web UI. The port is bound on ALL interfaces so the box is
-# reachable at http://<host>.local:7627/ — see the warning in the MountNAS
-# README before using this on an untrusted network. Loopback only:
-#   net_port = 127.0.0.1:7627
-net_enabled = 1
-net_port = 7627
-# REQUIRED for the web UI. Without it the API answers but every page is 404.
-net_web_root = commander.zip
-
-# Restrict who may call the API (default: everyone who can reach the port).
-#net_acl = +192.168.1.0/24,+127.0.0.1
-
-# Everything below is a scheduling/safety default you are meant to tune.
-# Times are cron-like; thresholds abort a sync that would delete or change
-# more than you expect — the protection SnapRAID users most often want.
-#maintenance_schedule = 0 2 * * *
-#sync_threshold_deletes = 100
-#sync_threshold_updates = 500
-#scrub_percentage = 8
-#scrub_older_than = 10
-#spindown_idle_minutes = 30
-EOF
+# ONE source of truth: the same file the apk installs at
+# /usr/share/snapraidd/snapraidd.conf.default, which the init script also
+# copies when a box that UPGRADED into the package has no config yet. Seeding
+# it here as well means a freshly flashed box has it before first boot.
+# Its own comments carry the rationale for the MountNAS-specific settings.
+mk root:root 0644 "$tmp/etc/snapraidd.conf" < "$(dirname "$0")/../snapraid-daemon/snapraidd.conf.default"
 
 # ---- smartd: monitor all disks WITHOUT waking spun-down drives ----
 # The stock smartmontools DEVICESCAN polls every 30 min with no power-state
