@@ -63,8 +63,9 @@ rm -f /etc/conf.d/syslog
 
 t "_snap_note keys on the file mtime stamp"
 snap=/cfg/unit.20240102030405.tar.gz
-: > "$snap"; touch -d '2024-01-02 03:04:05' "$snap"
+# TZ first: busybox reads 'touch -d' in LOCAL time, _snap_note stamps with -u
 TZ=UTC; export TZ
+: > "$snap"; touch -d '2024-01-02 03:04:05' "$snap"
 printf '20240102030405\tbefore nfs\n20240101000000\tother\n' > /cfg/.mountnas-notes
 assert_eq "before nfs" "$(_snap_note "$snap")"
 assert_eq "" "$(_snap_note /cfg/does-not-exist)"
@@ -101,11 +102,12 @@ stub lsblk 'exit 1'
 assert_eq "" "$(_boot_usb_disk)"
 
 t "_phys_disks drops zram/loop/ram devices"
-stub_out lsblk 'sda  disk
+stub lsblk 'printf "sda  disk
 zram0 disk
 loop0 disk
 sr0  rom
-nvme0n1 disk'
+nvme0n1 disk
+"'
 assert_eq "sda
 nvme0n1" "$(_phys_disks)"
 

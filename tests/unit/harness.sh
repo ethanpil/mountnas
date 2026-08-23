@@ -3,7 +3,6 @@
 #
 #   t "name"                 start a test case
 #   stub <cmd> '<body>'      put a fake <cmd> on PATH (body is sh; "$@" are its args)
-#   stub_out <cmd> '<text>'  a fake <cmd> that only prints <text>
 #   run_nas <args...>        run /usr/sbin/nas; sets OUT (stdout+stderr) and RC
 #   run_nas_in <stdin> <args...>   same, with text on stdin (prompt answers)
 #   src_nas                  source lib.sh + cmd/*.sh into THIS shell (use in a
@@ -23,30 +22,26 @@ STATE=/run/mountnas; CFG=/cfg; DATA=/mnt/nasdata
 mkdir -p "$STATE" "$CFG" "$DATA" /etc/apk/protected_paths.d /etc/conf.d /etc/mountnas
 : > /etc/apk/protected_paths.d/lbu.list
 
-_case=""; _pass=0; _fail=0; _case_bad=0
+_case=""; _pass=0; _fail=0
 t() {
 	_end_case
-	_case=$1; _case_bad=0
+	_case=$1
 }
+# The marker FILE is the only record of a failure: a 'fail' inside a
+# ( subshell ) cannot set a variable in this shell.
 _end_case() {
 	[ -n "$_case" ] || return 0
-	# a failure inside a ( subshell ) cannot set _case_bad: the marker file
-	# carries it out
-	[ ! -e "$STUBS/.failed" ] || { _case_bad=1; rm -f "$STUBS/.failed"; }
-	if [ "$_case_bad" = 0 ]; then _pass=$((_pass + 1)); printf '  ok   %s\n' "$_case"
-	else _fail=$((_fail + 1)); printf '  FAIL %s\n' "$_case"; fi
+	if [ -e "$STUBS/.failed" ]; then
+		rm -f "$STUBS/.failed"; _fail=$((_fail + 1)); printf '  FAIL %s\n' "$_case"
+	else
+		_pass=$((_pass + 1)); printf '  ok   %s\n' "$_case"
+	fi
 	_case=""
 }
-_bad() { _case_bad=1; : > "$STUBS/.failed"; printf '       %s\n' "$*"; }
-fail() { _bad "$@"; }
+fail() { : > "$STUBS/.failed"; printf '       %s\n' "$*"; }
 
 stub() {
 	printf '#!/bin/sh\n%s\n' "$2" > "$STUBS/$1"; chmod 755 "$STUBS/$1"
-}
-stub_out() {
-	# printf %s via a heredoc so the text may hold quotes and backslashes
-	{ echo '#!/bin/sh'; echo "cat <<'__STUB__'"; printf '%s\n' "$2"; echo '__STUB__'; } > "$STUBS/$1"
-	chmod 755 "$STUBS/$1"
 }
 
 run_nas() {
@@ -65,18 +60,19 @@ src_nas() {
 }
 
 assert_eq() {
-	[ "$1" = "$2" ] || _bad "${3:-assert_eq}: want [$1] got [$2]"
+	[ "$1" = "$2" ] || fail "${3:-assert_eq}: want [$1] got [$2]"
 }
 assert_match() {
-	printf '%s\n' "$2" | grep -qE -- "$1" || _bad "${3:-assert_match}: /$1/ not in:
+	printf '%s\n' "$2" | grep -qE -- "$1" || fail "${3:-assert_match}: /$1/ not in:
 $(printf '%s\n' "$2" | sed 's/^/         | /')"
 }
 assert_nomatch() {
-	printf '%s\n' "$2" | grep -qE -- "$1" && _bad "${3:-assert_nomatch}: /$1/ found in output"
-	return 0
+	if printf '%s\n' "$2" | grep -qE -- "$1"; then
+		fail "${3:-assert_nomatch}: /$1/ found in output"
+	fi
 }
 assert_rc() {
-	[ "$RC" = "$1" ] || _bad "${2:-assert_rc}: want rc=$1 got rc=$RC
+	[ "$RC" = "$1" ] || fail "${2:-assert_rc}: want rc=$1 got rc=$RC
 $(printf '%s\n' "$OUT" | sed 's/^/         | /')"
 }
 finish() {

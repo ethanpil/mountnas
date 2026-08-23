@@ -33,7 +33,7 @@ baseline() {
 	stub rc-update ':'
 	stub lbu ':'
 	stub ip ':'
-	stub_out free 'Mem: 4000 1000 3000'
+	stub free 'echo "Mem: 4000 1000 3000"'
 	stub iptables 'exit 1'
 	stub hdparm 'echo " drive state is:  standby"'
 }
@@ -96,7 +96,7 @@ run_nas status
 assert_rc 1
 assert_match '\[FAIL\] a data path is in the lbu include list' "$OUT"
 
-t "samba path on the RAM root fails; on a blocked disk it says so"
+t "a samba path on the RAM root fails"
 baseline; printf '[x]\n   path = /srv/ram\n' > /etc/samba/smb.conf
 run_nas status
 assert_rc 1
@@ -115,7 +115,7 @@ assert_rc 1
 assert_match '\[FAIL\] Docker data-root \(/var/lib/docker\) NOT under /mnt/nasdata' "$OUT"
 
 t "a data service in a runlevel fails"
-baseline; stub_out rc-update '               docker | default'
+baseline; stub rc-update 'echo "               docker | default"'
 run_nas status
 assert_rc 1
 assert_match '\[FAIL\] docker is in a runlevel' "$OUT"
