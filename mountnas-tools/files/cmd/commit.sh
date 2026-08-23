@@ -5,6 +5,7 @@
 cmd_commit() {
 	# --no-ask: internal callers only (wizard, upgrade, shutdown --save) —
 	# their commits must never stop for the interactive note prompt below
+	local ask note nts keep f sz
 	ask=1
 	[ "${1:-}" = "--no-ask" ] && { ask=0; shift; }
 	note=""

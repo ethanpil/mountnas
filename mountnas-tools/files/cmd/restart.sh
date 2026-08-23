@@ -5,6 +5,7 @@
 cmd_restart() {
 	# Re-run the storage supervisor: re-mount data disks and (re)start
 	# docker/samba/nfs, without rebooting. Handy after editing /etc/fstab.
+	local rs_ds i s
 	rc-service mountnas restart
 	# OpenRC's `restart` restores the data services its own stop() stopped
 	# mid-transition, so if the supervisor parked the data disk as an

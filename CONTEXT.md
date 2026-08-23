@@ -608,9 +608,20 @@ _reltag sed.
 **beta-2 notes (first full live-test feedback, all fixed same day):**
 - Variable hygiene is load-bearing: cmd_report NESTS cmd_status --deep, and
   generic names (d, out) leaking from the nested loops sent the whole report
-  bundle into a directory named after the last disk. Rule: any function that
-  nests another uses prefixed names or local — _status_sensors is fully local
-  now.
+  bundle into a directory named after the last disk. Since the 2026-08 split
+  EVERY function in lib.sh and cmd/*.sh declares its variables with `local`
+  on its first line. The rule:
+  - lowercase = function-local, declared with `local` (bare names — Alpine's
+    busybox ash leaves a bare `local x` UNSET, verified; never
+    `local x=$(cmd)`, it hides the exit status);
+  - UPPERCASE = global (the lib.sh constants, NAS_CHECKS, UNSAVED_FRESH);
+  - a lowercase variable that must outlive its function is documented at
+    the assignment. Today that is ONE set: cmd_upgrade's raw/m/loop/dlf/
+    upg_committed, read by _cleanup from the EXIT trap — an EXIT trap fires
+    AFTER the function returned, when its locals are gone (verified). A
+    signal trap (INT/HUP/TERM) fires while the function is active and does
+    see its locals, which is why cmd_backup's `out` can be local.
+  tests/unit covers the nested callers (status inside status_json/report).
 - Dead mounts are a first-class state: a detached device leaves its mount in
   /proc/mounts (rw!) while all I/O returns EIO — mountpoint(1), findfs, and
   ro-flag checks ALL pass. Detection is a directory read probe (data-watch and

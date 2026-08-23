@@ -7,6 +7,7 @@
 # --diff additionally shows unified diffs of each file against the committed
 # overlay: review before you persist.
 cmd_changes() {
+	local out n d ovl st path old new om nm o
 	out=$(lbu status 2>/dev/null)
 	n=$(printf '%s' "$out" | grep -c .)
 	mkdir -p "$STATE"; printf '%s\n' "${n:-0}" > "$STATE/unsaved" 2>/dev/null || true; UNSAVED_FRESH=1

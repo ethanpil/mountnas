@@ -8,6 +8,7 @@ cmd_setup() {
 	# and two interleaved passwd/commit runs corrupt each other. mkdir is the
 	# atomic test-and-set; /run is tmpfs, so a crash-stale lock clears at boot,
 	# and the traps clear it on every normal or interrupted exit.
+	local cur hn pw_ok tz net nic i addr gw dns d
 	mkdir -p "$STATE"
 	if ! mkdir "$STATE/setup.lock" 2>/dev/null; then
 		bad "another 'nas setup' is already running (on another console?)"

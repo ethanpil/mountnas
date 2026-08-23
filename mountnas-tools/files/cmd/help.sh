@@ -63,6 +63,7 @@ ${C_HD}Add a disk${C_NO}  (disk/parity names are a convention; snapraid.conf dec
 EOF
 }
 cmd_help() {
+	local k
 	_help_page1
 	if [ -t 0 ] && [ -t 1 ]; then
 		printf '%s-- More: any key for files & guides (q to quit) --%s' "$C_D" "$C_NO"

@@ -15,7 +15,7 @@ _ttyd_unsaved() {
 	lbu status 2>/dev/null | grep -qE '(runlevels/[a-z]*/mountnas-ttyd|conf\.d/mountnas-ttyd|securetty)'
 }
 cmd_ttyd() {
-	local tport tp_i
+	local tport tp_i i
 	tport=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-ttyd 2>/dev/null | head -n1)
 	# a hand-edited conf.d can hold garbage; never propagate it into URLs
 	case "$tport" in ''|*[!0-9]*) tport=22222 ;; esac

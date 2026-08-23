@@ -2,7 +2,9 @@
 # nas shutdown / nas reboot
 # Sourced by /usr/sbin/nas (never run directly). Shared helpers: lib.sh.
 
-_power() { act="$1"; word="$2"; shift 2
+_power() {
+	local act word mode a n
+	act="$1"; word="$2"; shift 2
 	mode=ask
 	for a in "$@"; do
 		case "$a" in

@@ -30,6 +30,7 @@ fi
 # presentation only, so its format is free to change. The checks run in pipe
 # subshells, so a file append (not a shell variable) is what survives.
 _rec() {
+	local _oifs
 	[ -n "${NAS_CHECKS:-}" ] || return 0
 	# join all args with tabs ("$*" joins on the first char of IFS)
 	{ _oifs=$IFS; IFS=$(printf '\t'); printf '%s\n' "$*" >> "$NAS_CHECKS"; IFS=$_oifs; } 2>/dev/null
@@ -173,6 +174,7 @@ _data_services() {
 # covers SATA; NVMe registers its own sensor. "-" when no sensor exists (VMs,
 # USB bridges without SAT).
 _disk_temp() {
+	local f t
 	case "$(hdparm -C "/dev/$1" 2>/dev/null)" in
 		*standby*|*sleeping*) echo standby; return 0 ;;
 	esac
@@ -206,6 +208,7 @@ _syslog_target() {
 # append after stripping ("" removes persistence). Values pass through the
 # environment (not awk -v) so backslashes are never escape-processed.
 _syslog_set_persist() {
+	local f cur cleaned tmpf
 	f=/etc/conf.d/syslog
 	[ -f "$f" ] || : > "$f"
 	cur=$(sed -n 's/^SYSLOGD_OPTS="\(.*\)"[[:space:]]*$/\1/p' "$f" 2>/dev/null | head -n1)
@@ -224,6 +227,7 @@ _syslog_set_persist() {
 # is built on hand-edited config, so setting a port must never clobber a
 # user's additions (same never-clobber contract as _syslog_set_persist).
 _conf_set_port() {   # $1=conf.d file  $2=port
+	local f tmpf
 	f=$1
 	[ -f "$f" ] || : > "$f"
 	tmpf=$(mktemp) || return 1
@@ -239,6 +243,7 @@ _conf_set_port() {   # $1=conf.d file  $2=port
 # <host>.<mtime-stamp>.tar.gz, so a note attached at commit time follows the
 # snapshot automatically. Notes live in /cfg/.mountnas-notes (TS<TAB>text).
 _snap_note() {
+	local sn_ts
 	sn_ts=$(date -u -r "$1" +%Y%m%d%H%M%S 2>/dev/null) || return 0
 	awk -F'\t' -v t="$sn_ts" '$1==t{print $2; exit}' "$CFG/.mountnas-notes" 2>/dev/null
 }

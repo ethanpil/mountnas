@@ -11,6 +11,7 @@ cmd_backup() {
 	# --to) used to be silently IGNORED and the image landed in the default
 	# location, discovered only during a disaster restore. Unknown args and a
 	# missing --to value are usage errors like every other subcommand.
+	local dest out disk dev sz rc
 	dest=""
 	case "${1:-}" in
 	"") ;;

@@ -8,6 +8,7 @@
 # paste-ready fstab line for each unconfigured data partition. All identity
 # fields come from lsblk/sysfs — no disk spin-up.
 cmd_disks() {
+	local usb TAB blank_pending blank_dev k f1 f2 f3 f4 f5 f6 f7 f8 tag bus dtp drow ctag pad id sn fw lbl minfo have_nd lines n mp phys
 	usb=$(_boot_usb_disk)
 	TAB=$(printf '\t')
 
@@ -131,6 +132,7 @@ cmd_disks() {
 # null when no sensor exists); in_fstab marks partitions already referenced by
 # UUID in /etc/fstab.
 cmd_disks_json() {
+	local usb lj temps d t fuuids flabels fdevs
 	usb=$(_boot_usb_disk)
 	# one lsblk dump feeds both the disk-name list (for temps) and the output
 	lj=$(lsblk -Jbo 'NAME,TYPE,SIZE,FSTYPE,LABEL,UUID,MOUNTPOINT,FSAVAIL,VENDOR,MODEL,SERIAL,REV,TRAN,ROTA' 2>/dev/null)

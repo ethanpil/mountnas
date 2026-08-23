@@ -12,6 +12,7 @@ cmd_report() {
 	# whose loops assign generic names (d, s, out, ...) — a plain 'd' here was
 	# clobbered to the last disk name and the whole bundle wrote into a
 	# directory literally called "sdd" (beta-1 test D).
+	local rpt_d rpt_f f
 	rpt_f="/tmp/mountnas-report-$(hostname)-$(date +%Y%m%d-%H%M%S).tar.gz"
 	rpt_d=$(mktemp -d) || { bad "mktemp failed"; return 1; }
 	step "Collecting diagnostics (runs 'nas status --deep' — may wake sleeping disks) ..."

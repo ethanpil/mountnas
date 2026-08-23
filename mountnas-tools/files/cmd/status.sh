@@ -10,7 +10,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -323,6 +323,7 @@ cmd_status() {
 # text, so the display format is free to change without breaking consumers.
 # Exit code matches the human mode: 1 when any check FAILed.
 cmd_status_json() {
+	local dp jrc lb un
 	dp="${1:-}"
 	NAS_CHECKS=$(mktemp) || { echo '{"error":"mktemp failed"}'; return 1; }
 	NAS_NO_SENSORS=1

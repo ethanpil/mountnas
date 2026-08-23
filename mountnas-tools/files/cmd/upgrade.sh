@@ -65,6 +65,7 @@ _commit_dir() {
 # the kernel modules (tens of MB), retarget the kernel's firmware search path
 # away from the vanishing modloop, and detach it.
 _free_modloop() {
+	local src need_kb d free_kb fwp
 	src=$(readlink -f /lib/modules 2>/dev/null)
 	case "$src" in
 		/.modloop/*) ;;
@@ -110,6 +111,7 @@ _free_modloop() {
 # nas upgrade --check — one GitHub API call: is a different release published?
 # No auto-update, no scheduling; prints the exact command to run when one is.
 _upgrade_check() {
+	local api hc json tag rel_url
 	step "Checking the latest release of $REPO ..."
 	api="https://api.github.com/repos/$REPO/releases/latest"
 	# capture the HTTP status: a 404 (private repo, or no releases) used to be
@@ -149,6 +151,7 @@ _upgrade_check() {
 # kernel modules to RAM, detaches the loopback) — after that the modloop file can
 # be rewritten safely. Config (/cfg) and data disks are never touched.
 cmd_upgrade() {
+	local img url assume_yes a lb plb pbe page tmp img_gz need_kb avail_kb sums want got ec f d av cb pw rl svc sdirs sfiles old_wb new_wb old_rc new_rc
 	img=""; url=""; dlf=""; assume_yes=0
 	for a in "$@"; do
 		case "$a" in
@@ -206,6 +209,10 @@ EOF
 	# without a trap an interrupted upgrade leaks them (temp space usually lives
 	# on the data disk). Idempotent: every step is guarded, so running it again
 	# on the EXIT trap after an explicit call is harmless.
+	# raw, m, loop, dlf and upg_committed stay GLOBAL on purpose (not in the
+	# local list above): the EXIT trap below runs _cleanup AFTER this function
+	# has returned, when a local would already be gone — and _boot_restore
+	# reads upg_committed from inside that same trap.
 	raw=""; m=""; loop=""; upg_committed=0
 	_cleanup() {
 		[ -n "$m" ] && umount "$m" 2>/dev/null

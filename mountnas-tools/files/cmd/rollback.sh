@@ -14,6 +14,7 @@ _ovl_backups() {   # newest first, one path per line
 	ls -1t "$CFG/$(hostname)".[0-9]*.tar.gz 2>/dev/null
 }
 cmd_rollback() {
+	local act list i f fn an sel seln ts keep kc
 	act="$CFG/$(hostname).apkovl.tar.gz"
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted"; return 1; }
 	# a power cut between cp and mv in a previous rollback can leave a stale

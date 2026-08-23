@@ -9,6 +9,7 @@
 # syslogd after the data disk mounts at boot, so the target always exists by
 # the time it is written.
 cmd_logs() {
+	local nn t unc
 	case "${1:-}" in
 	--persist)
 		case "${2:-status}" in
