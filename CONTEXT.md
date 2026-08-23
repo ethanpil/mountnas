@@ -85,7 +85,7 @@ mountnas/
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
 ├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
-├── tests/qemu/                       # self-hosted QEMU suite (78 tests; TESTING-QEMU.md)
+├── tests/qemu/                       # self-hosted QEMU suite (85 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh + the tests/unit suite, on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
@@ -610,20 +610,23 @@ _reltag sed.
 - Variable hygiene is load-bearing: cmd_report NESTS cmd_status --deep, and
   generic names (d, out) leaking from the nested loops sent the whole report
   bundle into a directory named after the last disk. Since the 2026-08 split
-  EVERY function in lib.sh and cmd/*.sh declares its variables with `local`
-  on its first line. The rule:
+  every function in lib.sh and cmd/*.sh declares its ordinary working
+  variables with `local` on its first line. The rule:
   - lowercase = function-local, declared with `local` (bare names — Alpine's
     busybox ash leaves a bare `local x` UNSET, verified; never
     `local x=$(cmd)`, it hides the exit status);
   - UPPERCASE = the name outlives its function: the lib.sh constants,
-    NAS_CHECKS, UNSAVED_FRESH, and cmd_upgrade's UPG_RAW/UPG_MNT/UPG_LOOP/
-    UPG_DLF/UPG_COMMITTED. Those five carry the temp files, the loop device
+    NAS_CHECKS, NAS_NO_SENSORS, UNSAVED_FRESH, and cmd_upgrade's
+    UPG_RAW/UPG_MNT/UPG_LOOP/UPG_DLF/UPG_COMMITTED. Those five carry the temp files, the loop device
     and the phase flag to `_cleanup`, which the EXIT trap runs AFTER
     cmd_upgrade returns — when a local is already gone (verified). Never
     declare them local: the leak is silent (a multi-GB image and a loop
     device survive a Ctrl-C). A SIGNAL trap (INT/HUP/TERM) fires while the
     function is active and DOES see its locals, which is why cmd_backup's
     `out` can be local. The rule has no lowercase exception.
+  The one shape `local` does not reach is a `while read -r a b c` loop, whose
+  names are set by the redirection (cmd_disks' column names). Those are
+  loop-scoped by convention only — keep them uppercase and unique.
   tests/unit covers the nested callers (status inside status_json).
 - Dead mounts are a first-class state: a detached device leaves its mount in
   /proc/mounts (rw!) while all I/O returns EIO — mountpoint(1), findfs, and

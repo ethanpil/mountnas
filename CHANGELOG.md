@@ -18,6 +18,8 @@
   top of the failure. (6fa27d5)
 - `confirm()` keeps its answer local. It used to leave `a` in the caller.
   (6fa27d5)
+- `nas help <topic>` reports a missing help page instead of exiting 0.
+  (095be9e)
 
 ### Testing
 - **Unit tests for the CLI** under busybox ash: `tests/unit/`, 66 cases, run
@@ -33,8 +35,17 @@
   dispatcher and no tree to source. (feeaa80)
 - The packaging test checks the image against itself, so a checkout ahead of
   the release no longer fails it. (feeaa80)
+- `ci-lint` lints the sourced files (`lib.sh`, `cmd/*.sh`, `tests/unit/*.sh`)
+  and checks that every help page the dispatcher maps to exists. (b5444e1)
 - `ci-lint` fails when a `cmd_*` function is defined but never dispatched.
-  (f22dfd7)
+  (f22dfd7, holes closed in 91ddfe4)
+- The unit chroot builds its OWN /dev instead of binding the host's, and
+  refuses a root that has MountNAS installed, runs from a modloop, or has
+  /cfg mounted. (979045b)
+- Four unit tests could not fail; each is now proved by a mutation. The
+  suite also drops from 12.2 s to 4.2 s. (924cbca)
+- The QEMU packaging check gates on the dispatcher, so it can no longer skip
+  itself when `lib.sh` is the file that went missing. (62530ac)
 
 ## [1.0rc7] — 2026-07-27
 
