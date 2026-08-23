@@ -63,6 +63,21 @@ assert_match 'array and its parity are untouched' "$OUT"
 assert_eq "" "$(cat /tmp/rc-runlevel)" "removed from the runlevel"
 assert_eq "" "$(cat /tmp/rc-state)" "service stopped"
 
+t "on <port>: works on shapes the old value-matching rewrite silently skipped"
+for v in "7627,8080" "0.0.0.0:7627,8080" "junk"; do
+	seed "$v"; run_nas snapraid on 9100
+	np=$(grep '^net_port' "$CONF"); np=${np##*[:= ]}
+	assert_eq "9100" "$np" "net_port rewritten for [$v]"
+	assert_match ':9100/' "$OUT" "reported port matches the file for [$v]"
+done
+
+t "on <port> rejects a port outside 1-65535"
+seed; run_nas snapraid on 0
+assert_rc 1; assert_match 'port must be 1-65535' "$OUT"
+run_nas snapraid on 65536
+assert_rc 1; assert_match 'port must be 1-65535' "$OUT"
+seed; assert_eq "net_port = 7627" "$(grep '^net_port' $CONF)" "config untouched after a rejected port"
+
 t "on <port>: rewrites ONLY net_port and keeps every other line"
 seed; run_nas snapraid on 9000
 assert_rc 0
@@ -88,17 +103,30 @@ run_nas snapraid on 8123
 assert_eq "net_port = 127.0.0.1:8123" "$(grep '^net_port' $CONF)"
 assert_match 'http://127.0.0.1:8123/' "$OUT"
 
-t "a TLS port suffix and a multi-listener line still yield a port"
-seed "7627s"; run_nas snapraid status
-assert_match 'default port 7627|:7627/' "$OUT"
+# Every port case below asserts against a RUNNING daemon's URL. Asserting on
+# the stopped branch would pass on its constant "default port 7627" hint no
+# matter how the value parsed — a tautology.
+t "a TLS port suffix still yields a port"
+seed "7627s"; run_nas snapraid on
+assert_match 'http://[^ ]*:7627/' "$OUT"
+
+t "the LAST listener is the effective one"
 seed "127.0.0.1:7627,8080"; run_nas snapraid on
 assert_match ':8080/' "$OUT" "last listener wins"
+# ...and a mixed list is NOT loopback: the effective listener is on the LAN,
+# so the no-password warning must still fire.
+assert_match 'READ-WRITE and has NO password' "$OUT" "mixed list must not read as loopback"
+assert_nomatch 'bound to loopback only' "$OUT"
 
-t "a missing or garbled net_port falls back to 7627"
-seed; sed -i '/^net_port/d' "$CONF"; run_nas snapraid status
-assert_match 'default port 7627' "$OUT"
-seed; sed -i 's/^net_port.*/net_port = junk/' "$CONF"; run_nas snapraid status
-assert_match 'default port 7627' "$OUT"
+t "an ABSENT net_port is loopback, as the daemon itself defaults"
+seed; sed -i '/^net_port/d' "$CONF"; run_nas snapraid on
+assert_match 'http://127.0.0.1:7627/' "$OUT"
+assert_match 'bound to loopback only' "$OUT"
+assert_nomatch "$(hostname).local" "$OUT" "must not advertise a LAN URL when none is bound"
+
+t "a garbled net_port falls back to 7627"
+seed; sed -i 's/^net_port.*/net_port = junk/' "$CONF"; run_nas snapraid on
+assert_match ':7627/' "$OUT"
 
 t "on with no array configured hints instead of refusing"
 seed; : > /etc/snapraid.conf
@@ -114,11 +142,11 @@ assert_rc 1
 assert_match 'snapraidd missing' "$OUT"
 stub snapraidd 'exit 0'
 
-t "on refuses when the config was removed"
-seed; rm -f "$CONF"
+t "on refuses only when there is no config AND no packaged default"
+seed; rm -f "$CONF" /usr/share/snapraidd/snapraidd.conf.default
 run_nas snapraid on
 assert_rc 1
-assert_match '/etc/snapraidd.conf missing' "$OUT"
+assert_match 'no /etc/snapraidd.conf and no packaged default' "$OUT"
 
 t "a bad argument is a usage error"
 seed; run_nas snapraid bogus
@@ -128,11 +156,46 @@ run_nas snapraid on notaport
 assert_rc 1
 assert_match 'usage: nas snapraid' "$OUT"
 
-t "unsaved changes are called out"
-seed; stub lbu 'echo "M etc/snapraidd.conf"'
+t "an unsaved CONFIG is not reported as the service reverting"
+seed; echo up > /tmp/rc-state
+stub lbu 'echo "M etc/snapraidd.conf"'
 run_nas snapraid status
-assert_match 'NOT saved' "$OUT"
-stub lbu ':'
+assert_match 'settings NOT saved' "$OUT"
+assert_nomatch 'off after a reboot' "$OUT" "only the runlevel decides that"
+
+t "an unsaved RUNLEVEL entry is reported as the service reverting"
+stub lbu 'echo "A etc/runlevels/default/snapraidd"'
+run_nas snapraid status
+assert_match 'running now but NOT saved' "$OUT"
+assert_match 'off after a reboot' "$OUT"
+stub lbu ':'; : > /tmp/rc-state
+
+t "a running daemon with no maintenance_schedule says it syncs nothing"
+seed; echo up > /tmp/rc-state
+sed -i '/^maintenance_schedule/d' "$CONF"
+run_nas snapraid status
+assert_match 'no maintenance_schedule set' "$OUT"
+assert_match 'syncs NOTHING' "$OUT"
+printf 'maintenance_schedule = 02:00
+' >> "$CONF"
+run_nas snapraid status
+assert_match 'maintenance schedule: 02:00' "$OUT"
+assert_nomatch 'syncs NOTHING' "$OUT"
+: > /tmp/rc-state
+
+t "a missing config is seeded from the packaged default"
+seed; rm -f "$CONF"
+mkdir -p /usr/share/snapraidd
+printf '### packaged
+net_port = 7627
+maintenance_schedule = 02:00
+' \
+	> /usr/share/snapraidd/snapraidd.conf.default
+run_nas snapraid on
+assert_rc 0
+assert_match 'seeded /etc/snapraidd.conf from the packaged default' "$OUT"
+assert_match '^### packaged' "$(cat $CONF)"
+rm -f /usr/share/snapraidd/snapraidd.conf.default
 
 t "enabled but not running is reported distinctly"
 seed; echo snapraidd > /tmp/rc-runlevel; : > /tmp/rc-state

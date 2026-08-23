@@ -20,7 +20,7 @@ else
 		rollback)        _values flag --list ;;
 		backup)          _values flag --to ;;
 		logs|log)        _values flag -f -n --persist ;;
-		web|ttyd)        _values action on off status ;;
+		web|ttyd|snapraid) _values action on off status ;;
 		history)         _values flag -n --all ;;
 		notify)          _values flag --test ;;
 		upgrade)         _alternative "flags:flag:(--check --yes)" "files:image:_files" ;;

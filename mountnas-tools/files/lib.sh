@@ -226,16 +226,29 @@ _syslog_set_persist() {
 # mountnas-web documents WEB_REFRESH_SEC= in the same file, and this appliance
 # is built on hand-edited config, so setting a port must never clobber a
 # user's additions (same never-clobber contract as _syslog_set_persist).
-_conf_set_port() {   # $1=conf.d file  $2=port
-	local f tmpf
-	f=$1
+#
+# Matching is on the KEY, never on the shape of the old value: a matcher that
+# also had to recognise the value silently did nothing for shapes it did not
+# anticipate, while the caller still reported success. The key is appended
+# when absent, so this cannot no-op.
+# $1=file  $2=key  $3=value  $4=separator (default '='; the SnapRAID daemon
+# writes 'key = value')
+_conf_set_kv() {
+	local f k sep tmpf
+	f=$1; k=$2; sep=${4:-=}
 	[ -f "$f" ] || : > "$f"
 	tmpf=$(mktemp) || return 1
-	NP="$2" awk 'BEGIN{done=0}
-		/^PORT=/{ printf "PORT=%s\n", ENVIRON["NP"]; done=1; next }
+	NV="$3" NK="$k" NS="$sep" awk 'BEGIN{done=0; k=ENVIRON["NK"]}
+		$0 ~ "^[[:space:]]*" k "[[:space:]]*=" {
+			if (!done) { printf "%s%s%s\n", k, ENVIRON["NS"], ENVIRON["NV"]; done=1 }
+			next }
 		{print}
-		END{ if(!done) printf "PORT=%s\n", ENVIRON["NP"] }' "$f" > "$tmpf" || { rm -f "$tmpf"; return 1; }
+		END{ if(!done) printf "%s%s%s\n", k, ENVIRON["NS"], ENVIRON["NV"] }' "$f" > "$tmpf" \
+			|| { rm -f "$tmpf"; return 1; }
 	cat "$tmpf" > "$f" && rm -f "$tmpf"
+}
+_conf_set_port() {   # $1=conf.d file  $2=port
+	_conf_set_kv "$1" PORT "$2"
 }
 
 # Note for a snapshot file: looked up by the file's mtime stamp — the exact
