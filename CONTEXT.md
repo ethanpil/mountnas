@@ -38,7 +38,7 @@ that will silently regress if "cleaned up" without understanding it.
   drill is automated now: `test_backup_restore_drill` backs up a configured
   box, writes the image to a fresh virtual stick, boots it, and asserts the
   OS + committed config came back.)
-- **Self-hosted QEMU suite** (`tests/qemu/`, 84 tests, see `TESTING-QEMU.md`):
+- **Self-hosted QEMU suite** (`tests/qemu/`, 86 tests, see `TESTING-QEMU.md`):
   boots the real image under KVM and covers everything the CI smoke tests
   don't — per-command CLI behavior, fault injection (hot-unplug, EIO, power
   cuts mid-upgrade), lbu persistence, mail, the restore drill, and the
@@ -86,7 +86,7 @@ mountnas/
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
 ├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
-├── tests/qemu/                       # self-hosted QEMU suite (85 tests; TESTING-QEMU.md)
+├── tests/qemu/                       # self-hosted QEMU suite (86 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh + the tests/unit suite, on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
@@ -277,8 +277,8 @@ latest-stable. Corrected:
   (libstdc++ ABI). Upstream ships **fully-static** binaries → repackaged into a
   local apk (`mergerfs/APKBUILD`).
 
-The CI **preflight** (`apk add --simulate`) excludes all four local packages
-(`mountnas-tools|snapraid|mergerfs|zerotier-one`) since they aren't
+The CI **preflight** (`apk add --simulate`) excludes all five local packages
+(`mountnas-tools|snapraid|snapraid-daemon|mergerfs|zerotier-one`) since they aren't
 upstream.
 
 Package additions after the plan (alpha-3…: zsh/mosh, curated firmware set,
@@ -774,17 +774,50 @@ command line keeps working. MountNAS therefore does NOT reimplement scheduling
 — `nas snapraid` is only an on/off/status switch, the same shape as `nas web`
 and `nas ttyd`.
 
-**Three settings are MountNAS defaults, not upstream's** (seeded in
-genapkovl, all three verified necessary on a live box):
+**One canonical config, three places.** `snapraid-daemon/snapraidd.conf.default`
+is the single source: the apk installs it to
+`/usr/share/snapraidd/snapraidd.conf.default`, genapkovl seeds
+`/etc/snapraidd.conf` from that same file, and BOTH the init script and `nas
+snapraid on` copy it into place when `/etc/snapraidd.conf` is missing. That
+copy-if-absent is the upgrade path: `nas upgrade` never replaces the apkovl,
+so a box that upgraded INTO this package never saw the seed and would
+otherwise start the daemon on upstream defaults (loopback, 404 pages, no
+schedule). Do NOT ship a `/etc/conf.d/snapraidd` — the daemon reads no
+environment, and an unused conf.d file would be the one thing `nas upgrade`
+DOES overwrite (§3).
+
+**Four settings are MountNAS defaults, not upstream's**, all verified
+necessary on a live box:
 - `sys_log_directory = /mnt/nasdata/snapraid/logs` — upstream defaults to
   /var/log/snapraid, which is RAM here. Those logs are the daemon's memory of
   past tasks, so a reboot would erase its history. The init script's
-  `start_pre` creates the directory.
+  `start_pre` creates the directory (and refuses if the path resolves to `/`).
 - `net_port = 7627` (all interfaces) — upstream binds 127.0.0.1 only, which
   would make the dashboard link and the LAN UI dead.
 - `net_web_root = commander.zip` — **without this the daemon answers the REST
   API but returns 404 for every web page.** Confirmed by testing; it is not
   optional.
+- `maintenance_schedule = 02:00` — **upstream ships no schedule, and a daemon
+  with no schedule syncs NOTHING.** It runs, the UI works, the dashboard says
+  "running", and parity silently never updates. The value is `HH:MM`, not a
+  cron expression. `nas snapraid status` and the dashboard both report the
+  real schedule, or say out loud that nothing is scheduled.
+
+The rest of the file carries upstream's own defaults, written out ACTIVE
+rather than commented, so `nas snapraid` and the dashboard can read the values
+the daemon is actually using: `sync_threshold_deletes = 50`,
+`sync_threshold_updates = 100` (the daemon refuses a sync that would delete or
+change more than that — the anti-ransomware guard), `scrub_percentage = 0.7`,
+`probe_interval_minutes = 3`, `spindown_idle_minutes = 15`,
+`notify_syslog_enabled = 1`. Upstream's full commented reference ships beside
+the default as `/usr/share/snapraidd/snapraidd.conf.example`.
+
+**`net_acl` must keep `+127.0.0.1`.** The ACL is a whitelist; `nas snapraid on`
+probes the daemon over loopback to prove it is answering, so an ACL naming only
+the LAN makes a perfectly healthy daemon look broken. The probe uses the
+address the daemon actually BINDS (not a hardcoded 127.0.0.1), which is the
+other half of that bug: a daemon bound to one LAN address never answers on
+loopback at all.
 
 **Security posture, and it is wider than the rest of the box:** the REST API
 is READ-WRITE and has NO password — only an optional IP `net_acl`. Anyone who

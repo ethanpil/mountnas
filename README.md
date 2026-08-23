@@ -156,16 +156,20 @@ it without touching the array.
 > wider door than the read-only `nas web` dashboard. That is the same
 > trusted-LAN assumption Samba and `nas ttyd` make, but if your LAN is not
 > that, either keep the daemon off, bind it to loopback and reach it over SSH
-> or Tailscale (`net_port = 127.0.0.1:7627`), or restrict `net_acl`
-> (e.g. `net_acl = +192.168.1.0/24`). Edit `/etc/snapraidd.conf`, then
-> `nas commit`.
+> or Tailscale (`net_port = 127.0.0.1:7627`), or restrict `net_acl` — keep
+> `+127.0.0.1` in the list, because `nas snapraid on` probes the daemon from
+> loopback (e.g. `net_acl = +192.168.1.0/24,+127.0.0.1`). Edit
+> `/etc/snapraidd.conf`, then `nas commit`.
 
-Configure it in `/etc/snapraidd.conf` or through the web UI. Three settings are
+Configure it in `/etc/snapraidd.conf` or through the web UI. Four settings are
 MountNAS defaults rather than upstream's: the command logs go to
 `/mnt/nasdata/snapraid/logs` (on a diskless box `/var/log` is RAM, and those
 logs are the daemon's memory of past tasks), the port is bound on all
-interfaces so the LAN can reach it, and `net_web_root = commander.zip` — without
-which the API answers but every page is a 404.
+interfaces so the LAN can reach it, `net_web_root = commander.zip` — without
+which the API answers but every page is a 404 — and `maintenance_schedule =
+02:00`, because a daemon with no schedule runs and syncs nothing. The packaged
+copy of these defaults stays at `/usr/share/snapraidd/snapraidd.conf.default`,
+and the full option reference is next to it as `snapraidd.conf.example`.
 
 **The daemon writes that config file itself** when you change settings in the
 web UI. Like every other `/etc` file it lives in RAM until you `nas commit`, so

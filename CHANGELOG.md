@@ -3,14 +3,12 @@
 ## [Unreleased]
 
 ### Added
-- **SnapRAID Daemon** (`snapraid-daemon` 1.14, built from source like snapraid).
-  Scheduled sync and scrub with safety thresholds, SMART monitoring, disk
-  spindown, notifications, a REST API and a web UI — it runs the SAME snapraid
-  binary, so the array, parity and recovery are unchanged. Service OFF by
-  default: `nas snapraid on [port]` (7627), `off`, `status`. The dashboard
-  shows a SnapRAID pill and links to the UI while it runs.
-  NOTE: the REST API is read-write and has NO password; see the README before
-  exposing the port.
+- **SnapRAID Daemon** (`snapraid-daemon` 1.14, a fifth local apk): scheduled
+  sync and scrub, SMART monitoring, spindown, a REST API and a web UI, driving
+  the SAME snapraid binary. OFF by default — `nas snapraid on [port]` (7627),
+  `off`, `status`; the dashboard links to the UI while it runs. The API is
+  read-write with NO password; read the README before exposing the port.
+  (57f8fd2..74609f7)
 
 ### Changed
 - **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
