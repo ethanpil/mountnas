@@ -151,9 +151,21 @@ fi
 # SnapRAID Daemon state. Who schedules the sync is the question this row
 # answers: the daemon, a cron line, or nobody. The header pill links to its
 # UI; this row belongs beside the parity age it explains.
-if rc-service snapraidd status >/dev/null 2>&1; then
-	srd_html='<span class="pill p-ok">running &middot; schedules sync + scrub</span>'
-elif rc-update show default 2>/dev/null | grep -q snapraidd; then
+# ONE probe, reused by the header block further down: two independent probes
+# could disagree and render a page that contradicts itself.
+srd_up=0
+rc-service snapraidd status >/dev/null 2>&1 && srd_up=1
+if [ "$srd_up" = 1 ]; then
+	# Report the schedule it ACTUALLY has. A running daemon with no
+	# maintenance_schedule syncs nothing, so claiming otherwise would be the
+	# one way this card could mislead about parity.
+	srd_sched=$(sed -n 's/^[[:space:]]*maintenance_schedule[[:space:]]*=[[:space:]]*//p' 		/etc/snapraidd.conf 2>/dev/null | tail -n1 | esc)
+	if [ -n "$srd_sched" ]; then
+		srd_html="<span class=\"pill p-ok\">running &middot; sync + scrub at $srd_sched</span>"
+	else
+		srd_html='<span class="pill p-warn">running, but NO schedule set — syncs nothing</span>'
+	fi
+elif [ -L /etc/runlevels/default/snapraidd ]; then
 	srd_html='<span class="pill p-warn">enabled but not running</span>'
 elif command -v snapraidd >/dev/null 2>&1; then
 	srd_html='<span class="mut">off (nas snapraid on)</span>'
@@ -326,14 +338,16 @@ fi
 # that can see this page (mDNS names do not resolve everywhere). The header
 # element always shows whether the service is running; it is only a link when
 # there is something to click through to.
+# The box's first global IP, used by every service link below. ips[] entries
+# carry their CIDR suffix (10.0.2.15/24) — strip it or every href is
+# malformed (http://10.0.2.15/24:22222/, a dead link).
+lan_ip=$(printf '%s' "$sj" | jq -r '.ips[0] // empty'); lan_ip=${lan_ip%%/*}
+
 ttyd_link=""
 if rc-service mountnas-ttyd status >/dev/null 2>&1; then
 	ttyd_port=$(sed -n 's/^PORT=//p' /etc/conf.d/mountnas-ttyd 2>/dev/null | head -n1)
 	: "${ttyd_port:=22222}"
-	# ips[] entries carry their CIDR suffix (10.0.2.15/24) — strip it or the
-	# href is malformed (http://10.0.2.15/24:22222/, a dead link)
-	ttyd_ip=$(printf '%s' "$sj" | jq -r '.ips[0] // empty')
-	ttyd_ip=${ttyd_ip%%/*}
+	ttyd_ip=$lan_ip
 	if [ -n "$ttyd_ip" ]; then
 		ttyd_link="<a href=\"http://$ttyd_ip:$ttyd_port/\">Web terminal</a>"
 		ttyd_hdr="<a class=\"termlink\" href=\"http://$ttyd_ip:$ttyd_port/\"><span class=\"pill p-ok\"><i></i>Web terminal</span></a>"
@@ -351,14 +365,19 @@ fi
 # the pill without a link — a dead http://<lan-ip>:7627/ would be worse than
 # no link at all.
 snapraid_link=""
-if rc-service snapraidd status >/dev/null 2>&1; then
-	sr_np=$(sed -n 's/^[[:space:]]*net_port[[:space:]]*=[[:space:]]*//p' /etc/snapraidd.conf 2>/dev/null 		| tail -n1 | tr -d '[:space:]')
-	sr_port=${sr_np##*,}; sr_port=${sr_port##*:}; sr_port=${sr_port%s}
+if [ "$srd_up" = 1 ]; then
+	# The EFFECTIVE listener is the LAST entry of net_port ("[IP:]PORT[s]",
+	# comma-separated). Judging the whole value would call a daemon
+	# loopback-only whenever ANY listener is local, and drop the link while a
+	# LAN port is serving. An ABSENT net_port is loopback: the daemon's own
+	# default. Same rule as _snapraid_listener in cmd/snapraid.sh.
+	sr_lst=$(sed -n 's/^[[:space:]]*net_port[[:space:]]*=[[:space:]]*//p' /etc/snapraidd.conf 2>/dev/null 		| tail -n1 | tr -d '[:space:]' | sed 's/.*,//')
+	sr_port=${sr_lst##*:}; sr_port=${sr_port%s}
 	case "$sr_port" in ''|*[!0-9]*) sr_port=7627 ;; esac
-	sr_ip=$(printf '%s' "$sj" | jq -r '.ips[0] // empty'); sr_ip=${sr_ip%%/*}
-	if printf '%s' "$sr_np" | grep -qE '(^|[,])(127\.|\[?::1)'; then
-		sr_ip=""   # loopback-bound: reachable on the box only
-	fi
+	sr_ip=$lan_ip
+	case "$sr_lst" in
+		''|127.*|::1*|\[::1\]*) sr_ip="" ;;   # loopback-bound: on the box only
+	esac
 	if [ -n "$sr_ip" ]; then
 		snapraid_link="<a href=\"http://$sr_ip:$sr_port/\">SnapRAID</a>"
 		snapraid_hdr="<a class=\"termlink\" href=\"http://$sr_ip:$sr_port/\"><span class=\"pill p-ok\"><i></i>SnapRAID</span></a>"
