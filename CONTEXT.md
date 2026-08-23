@@ -38,7 +38,7 @@ that will silently regress if "cleaned up" without understanding it.
   drill is automated now: `test_backup_restore_drill` backs up a configured
   box, writes the image to a fresh virtual stick, boots it, and asserts the
   OS + committed config came back.)
-- **Self-hosted QEMU suite** (`tests/qemu/`, 86 tests, see `TESTING-QEMU.md`):
+- **Self-hosted QEMU suite** (`tests/qemu/`, 88 tests, see `TESTING-QEMU.md`):
   boots the real image under KVM and covers everything the CI smoke tests
   don't — per-command CLI behavior, fault injection (hot-unplug, EIO, power
   cuts mid-upgrade), lbu persistence, mail, the restore drill, and the
@@ -86,7 +86,7 @@ mountnas/
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
 ├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
-├── tests/qemu/                       # self-hosted QEMU suite (86 tests; TESTING-QEMU.md)
+├── tests/qemu/                       # self-hosted QEMU suite (88 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh + the tests/unit suite, on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE

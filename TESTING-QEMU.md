@@ -222,7 +222,12 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (86 tests)
+## 4. The complete test catalog (88 tests)
+
+> Counts here are pytest's COLLECTED ITEMS, not `def test_` functions:
+> `test_boot_disk_buses` is parametrized over three buses, so section A
+> holds 7 functions and 9 items. `pytest --collect-only -q | tail -1` is
+> the authority.
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
