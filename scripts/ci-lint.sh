@@ -35,7 +35,7 @@ shellcheck -s sh -S warning -e SC2034,SC3043,SC3045,SC3033 \
 # zsh completion (files/zsh-nas-completion) is zsh syntax — shellcheck cannot
 # lint zsh; it ships as data.
 shellcheck -s bash -S warning -e SC2034 mountnas-tools/files/bash-nas-completion.sh
-echo "shellcheck: all shipped scripts pass ($(printf '%s\n' $files | wc -l | tr -d ' ') shebang scripts + profile.d + completion + scripts/)"
+echo "shellcheck: all shipped scripts pass ($(printf '%s\n' $files | wc -l | tr -d ' ') shebang scripts + profile.d + lib.sh + cmd/ + tests/unit/ + completion + scripts/)"
 
 # Guard the CONTEXT.md §6 landmine (which shellcheck cannot see — it lives
 # inside workflow YAML): the big build step runs inside a single-quoted
@@ -114,11 +114,17 @@ echo "nas help functions: every _cmd_help_for entry is defined in files/cmd/"
 # The guards above all start from the dispatcher, so they cannot see the
 # opposite drift: a cmd/<name>.sh that defines cmd_<name> but that the
 # dispatcher never calls. The file IS sourced (the cmd/*.sh glob), so nothing
-# fails — 'nas <name>' just answers "unknown command". grep -w, so cmd_status
-# does not match the cmd_status_json line and hide a real miss.
-undispatched=$(grep -hoE '^cmd_[a-z_]+\(\)' mountnas-tools/files/cmd/*.sh | tr -d '()' \
-	| sort -u | while read -r c; do
-		grep -qw "$c" mountnas-tools/files/nas || printf '%s ' "$c"
-	done)
+# fails — 'nas <name>' just answers "unknown command".
+# The definition pattern allows digits and an optional space before '()', and
+# the dispatcher side is COMMENT-STRIPPED and split into tokens: searching the
+# raw file let a cmd_* named only in a comment count as dispatched.
+defcmds=$(grep -hoE '^cmd_[a-z0-9_]+ *\(\)' mountnas-tools/files/cmd/*.sh | tr -d ' ()' | sort -u)
+[ -n "$defcmds" ] || { echo "FAIL: could not extract cmd_* definitions from files/cmd/*.sh"; exit 1; }
+dispatched=$(sed 's/#.*//' mountnas-tools/files/nas | tr -c 'A-Za-z0-9_' '\n' \
+	| grep -xE 'cmd_[a-z0-9_]+' | sort -u)
+[ -n "$dispatched" ] || { echo "FAIL: could not extract dispatched cmd_* calls from files/nas"; exit 1; }
+undispatched=$(printf '%s\n' "$defcmds" | while read -r c; do
+	printf '%s\n' "$dispatched" | grep -qx "$c" || printf '%s ' "$c"
+done)
 [ -z "$undispatched" ] || { echo "FAIL: cmd function(s) defined but never dispatched: $undispatched"; exit 1; }
-echo "nas commands: every cmd_* in files/cmd/ is dispatched"
+echo "nas commands: every cmd_* in files/cmd/ is dispatched ($(printf '%s\n' "$defcmds" | grep -c .))"
