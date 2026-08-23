@@ -8,7 +8,7 @@
   the SAME snapraid binary. OFF by default — `nas snapraid on [port]` (7627),
   `off`, `status`; the dashboard links to the UI while it runs. The API is
   read-write with NO password; read the README before exposing the port.
-  (57f8fd2..74609f7)
+  (57f8fd2..ede625b)
 
 ### Changed
 - **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
