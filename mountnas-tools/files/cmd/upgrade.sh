@@ -97,7 +97,7 @@ _free_modloop() {
 	# detach. The service is the normal path; a direct/lazy umount is the
 	# fallback for a transient holder (a spurious 'target is busy' was seen
 	# once under QEMU) — with -l the mount leaves the namespace now and the
-	# UPG_LOOP device auto-clears when the last reference drops, which frees the
+	# loop device auto-clears when the last reference drops, which frees the
 	# modloop file for the crash-safe rename-overwrite either way.
 	if ! rc-service modloop stop >/dev/null 2>&1; then
 		umount /.modloop 2>/dev/null || umount -l /.modloop 2>/dev/null \
@@ -236,7 +236,7 @@ EOF
 	[ -n "$tmp" ] || { mountpoint -q "$DATA" && tmp="$DATA" || { bad "no temp space: data disk not mounted. Mount it or set TMPDIR=<disk dir>."; return 1; }; }
 	# gzip is detected by CONTENT (the 1f 8b magic), never by filename: a
 	# beta-2 tester fed a correctly-gzipped image saved as .img.tgz and the
-	# old *.gz match treated the compressed bytes as a UPG_RAW disk image
+	# old *.gz match treated the compressed bytes as a raw disk image
 	# (losetup garbage, unmountable p1). URLs are assumed compressed until
 	# downloaded (releases ship .img.gz), then re-sniffed.
 	img_gz=0
@@ -246,7 +246,7 @@ EOF
 		img_gz=1
 	fi
 	if [ "$img_gz" = 1 ]; then
-		need_kb=3932160   # ~3.75 GiB: image is 3.5 GiB UPG_RAW (gzip -l is unreliable >4 GiB)
+		need_kb=3932160   # ~3.75 GiB: image is 3.5 GiB raw (gzip -l is unreliable >4 GiB)
 	else
 		need_kb=$(( ( $(stat -c %s "$img" 2>/dev/null || echo 3758096384) / 1024 ) + 262144 ))
 	fi
