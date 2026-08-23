@@ -65,7 +65,9 @@ mountnas/
 ├── mountnas-tools/                   # LOCAL apk: the nas CLI + services (arch=x86_64, see §6)
 │   ├── APKBUILD
 │   └── files/                        # the actual scripts (NOT src/ — see §6)
-│       ├── nas                       # the CLI (setup/status/disks/changes/report/backup/upgrade/…)
+│       ├── nas                       # the CLI dispatcher (/usr/sbin/nas): sources lib.sh + cmd/*.sh at start
+│       ├── lib.sh                    # shared state + helpers for every command (/usr/libexec/mountnas)
+│       ├── cmd/<name>.sh             # one file per command: cmd_<name> + help_<name> (/usr/libexec/mountnas/cmd)
 │       ├── mountnas                  # storage guard + data-service supervisor (init.d)
 │       ├── mountnas-mkdirs, mountnas-net, mountnas-sshkey, mountnas-issue   # boot helpers (init.d)
 │       ├── mountnas-web              # read-only web dashboard service (init.d, OFF by default)

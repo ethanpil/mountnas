@@ -24,7 +24,7 @@ import pytest
 
 from lib import config as C
 from lib import images
-from lib.guest import DiskSpec, assert_container_stable, import_busybox_image
+from lib.guest import DiskSpec, push_nas_tree, assert_container_stable, import_busybox_image
 
 pytestmark = pytest.mark.upgrade
 
@@ -50,16 +50,20 @@ def prev_base(suite_config, prev_image_bundle, golden):
 # When set, the current `nas` CLI source is injected into each upgrade guest,
 # so the suite tests the repo's nas (with local fixes) rather than only the
 # nas baked into the released image.  Unset -> tests the shipped nas as-is.
+# The value is the path of the repo's mountnas-tools/files/nas; the sourced
+# files next to it (lib.sh, cmd/*.sh) are pushed with it as one tree.
 NAS_SRC = os.environ.get("MOUNTNAS_NAS_SRC", "")
-if NAS_SRC and not Path(NAS_SRC).is_file():
+if NAS_SRC and not (Path(NAS_SRC).is_file()
+                    and (Path(NAS_SRC).parent / "lib.sh").is_file()):
     # Set-but-unusable used to be indistinguishable from unset: the guards below
     # silently skipped injection and the whole upgrade tier went green against
     # the SHIPPED nas. That is exactly how the 1.0rc3 loop-mount fix's first
     # verification round fooled itself, so fail loudly at collection instead.
     raise RuntimeError(
-        f"MOUNTNAS_NAS_SRC={NAS_SRC!r} is not a file — upgrade tests would "
-        "silently test the shipped nas instead of your local one. Use an "
-        "absolute path on the machine running the suite, or unset it."
+        f"MOUNTNAS_NAS_SRC={NAS_SRC!r} is not the repo's mountnas-tools/files/nas "
+        "(lib.sh must sit next to it) — upgrade tests would silently test the "
+        "shipped nas instead of your local one. Use an absolute path on the "
+        "machine running the suite, or unset it."
     )
 
 
@@ -71,9 +75,7 @@ def _inject_repo_nas(guest):
     """
     if not NAS_SRC:
         return
-    guest.push(Path(NAS_SRC), "/usr/sbin/nas.new")
-    guest.run("cat /usr/sbin/nas.new > /usr/sbin/nas && rm /usr/sbin/nas.new "
-              "&& chmod +x /usr/sbin/nas", check=True)
+    push_nas_tree(guest, Path(NAS_SRC).parent)
 
 
 @pytest.fixture

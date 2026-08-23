@@ -4,7 +4,8 @@
 # The file list is DISCOVERED, not hand-maintained, so a newly added script can
 # never be silently unlinted: everything under mountnas-tools/files/ with a
 # sh/openrc-run shebang, every profile.d snippet (sourced, so shebang-less, hence
-# the explicit glob), and scripts/*.sh (including this file).
+# the explicit glob), the nas CLI's sourced files (lib.sh + cmd/*.sh, also
+# shebang-less, also explicit), and scripts/*.sh (including this file).
 #
 # -s sh: every script must parse as POSIX sh (busybox ash on the device;
 # CONTEXT.md §6 documents recurring ash-strictness bugs). -S warning: SC2015-style
@@ -26,7 +27,8 @@ done)
 [ -n "$files" ] || { echo "FAIL: shebang discovery found no scripts"; exit 1; }
 # shellcheck disable=SC2086  # $files is a newline list of repo paths (no spaces)
 shellcheck -s sh -S warning -e SC2034,SC3043,SC3045,SC3033 \
-	$files mountnas-tools/files/profile-*.sh scripts/*.sh
+	$files mountnas-tools/files/profile-*.sh scripts/*.sh \
+	mountnas-tools/files/lib.sh mountnas-tools/files/cmd/*.sh
 # bash-only, sourced (no shebang, so discovery skips it): lint as bash. The
 # zsh completion (files/zsh-nas-completion) is zsh syntax — shellcheck cannot
 # lint zsh; it ships as data.
@@ -94,3 +96,15 @@ missing=$(printf '%s\n' "$cmds" | grep -vx help | while read -r c; do
 done)
 [ -z "$missing" ] || { echo "FAIL: nas command(s) missing a _cmd_help_for page: $missing"; exit 1; }
 echo "nas per-command help: every dispatcher command has a page"
+
+# The pages themselves are help_<name> functions in files/cmd/*.sh; the map in
+# _cmd_help_for names them. A map entry whose function does not exist would
+# only fail at run time ('nas <cmd> --help': "help_x: not found").
+helpfns=$(awk 'index($0,"_cmd_help_for() {"){f=1;next} f&&/^}/{f=0} f' mountnas-tools/files/nas \
+	| grep -oE 'help_[a-z_]+' | sort -u)
+defined=$(cat mountnas-tools/files/cmd/*.sh | grep -oE '^help_[a-z_]+\(\)' | tr -d '()' | sort -u)
+undef=$(printf '%s\n' "$helpfns" | while read -r h; do
+	printf '%s\n' "$defined" | grep -qx "$h" || printf '%s ' "$h"
+done)
+[ -z "$undef" ] || { echo "FAIL: _cmd_help_for names help function(s) not defined in files/cmd/*.sh: $undef"; exit 1; }
+echo "nas help functions: every _cmd_help_for entry is defined in files/cmd/"

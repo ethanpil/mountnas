@@ -616,6 +616,33 @@ class Guest:
 # ---------------------------------------------------------------------------
 
 
+# The nas CLI is a dispatcher (/usr/sbin/nas) plus sourced files
+# (/usr/libexec/mountnas/lib.sh and cmd/*.sh). A dev push must move the
+# WHOLE tree: a repo dispatcher over released sourced files (or the reverse)
+# mixes two versions of one program. Paths below mirror the APKBUILD.
+def nas_tree_files(files_dir: Path) -> list[tuple[Path, str, str]]:
+    """(local path, guest path, mode) for every file of the nas CLI."""
+    out = [(files_dir / "nas", "/usr/sbin/nas", "755"),
+           (files_dir / "lib.sh", "/usr/libexec/mountnas/lib.sh", "644")]
+    cmds = sorted((files_dir / "cmd").glob("*.sh"))
+    if not cmds:
+        raise FileNotFoundError(f"no cmd/*.sh under {files_dir}")
+    out += [(c, f"/usr/libexec/mountnas/cmd/{c.name}", "644") for c in cmds]
+    return out
+
+
+def push_nas_tree(guest: "Guest", files_dir: Path) -> None:
+    """Push the repo's nas CLI (dispatcher + lib + cmd files) over the guest's.
+    Each file lands as .new and is renamed, so a running nas never reads a
+    half-written file."""
+    guest.run("mkdir -p /usr/libexec/mountnas/cmd", check=True)
+    for local, dst, mode in nas_tree_files(files_dir):
+        if not local.is_file():
+            raise FileNotFoundError(f"repo file missing: {local}")
+        guest.push(local, f"{dst}.new")
+        guest.run(f"mv {dst}.new {dst} && chmod {mode} {dst}", check=True)
+
+
 def import_busybox_image(guest: "Guest", tag: str = "mnq-busybox") -> None:
     """Registry-free container image built from the guest's own busybox.
 

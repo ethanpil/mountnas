@@ -35,6 +35,12 @@ build() { :; }
 
 package() {
 	install -Dm755 "$startdir"/files/nas           "$pkgdir"/usr/sbin/nas
+	# the CLI's code: lib.sh + one file per command, sourced by /usr/sbin/nas
+	# (mode 644 — these files are read, never executed)
+	install -Dm644 "$startdir"/files/lib.sh        "$pkgdir"/usr/libexec/mountnas/lib.sh
+	for c in "$startdir"/files/cmd/*.sh; do
+		install -Dm644 "$c" "$pkgdir"/usr/libexec/mountnas/cmd/"$(basename "$c")"
+	done
 	install -Dm755 "$startdir"/files/mountnas       "$pkgdir"/etc/init.d/mountnas
 	install -Dm755 "$startdir"/files/mountnas-mkdirs "$pkgdir"/etc/init.d/mountnas-mkdirs
 	install -Dm755 "$startdir"/files/mountnas-net   "$pkgdir"/etc/init.d/mountnas-net

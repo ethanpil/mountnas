@@ -17,13 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from lib.guest import assert_container_stable, import_busybox_image
+from lib.guest import assert_container_stable, import_busybox_image, push_nas_tree
 from lib.smtpsink import configure_guest_msmtp
 
 FILES_DIR = Path(__file__).resolve().parent.parent.parent / "mountnas-tools" / "files"
 
+# the nas CLI tree (nas + lib.sh + cmd/*.sh) is pushed by push_nas_tree
 _DEV_FILES = [
-    ("nas",           "/usr/sbin/nas",                        "755"),
     ("mountnas",      "/etc/init.d/mountnas",                 "755"),
     ("data-watch",    "/usr/libexec/mountnas/data-watch",     "755"),
     ("notify",        "/usr/libexec/mountnas/notify",         "755"),
@@ -50,6 +50,7 @@ def dev_guest(golden_guest):
     instead, or re-push)."""
     g = golden_guest
     g.run("mkdir -p /usr/share/mountnas/web /usr/libexec/mountnas", check=True)
+    push_nas_tree(g, FILES_DIR)
     for src, dst, mode in _DEV_FILES:
         p = FILES_DIR / src
         if not p.is_file():

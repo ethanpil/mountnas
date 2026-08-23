@@ -8,12 +8,15 @@ its own disposable golden_guest.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from lib import config as C
 from lib import images
 from lib.guest import DiskSpec
+
+FILES_DIR = Path(__file__).resolve().parent.parent.parent / "mountnas-tools" / "files"
 
 
 # ---------------------------------------------------------------- read-only
@@ -263,6 +266,11 @@ def test_released_image_ships_expected_files(wired_shared_guest):
     g = wired_shared_guest
     manifest = [
         "/usr/sbin/nas",
+        "/usr/libexec/mountnas/lib.sh",
+        # one cmd/<name>.sh per command, from the repo tree so a new command
+        # file that the APKBUILD forgets is caught here
+        *[f"/usr/libexec/mountnas/cmd/{c.name}"
+          for c in sorted((FILES_DIR / "cmd").glob("*.sh"))],
         "/etc/init.d/mountnas", "/etc/init.d/mountnas-mkdirs",
         "/etc/init.d/mountnas-net", "/etc/init.d/mountnas-sshkey",
         "/etc/init.d/mountnas-issue", "/etc/init.d/mountnas-web",
