@@ -159,7 +159,7 @@ if [ "$srd_up" = 1 ]; then
 	# Report the schedule it ACTUALLY has. A running daemon with no
 	# maintenance_schedule syncs nothing, so claiming otherwise would be the
 	# one way this card could mislead about parity.
-	srd_sched=$(sed -n 's/^[[:space:]]*maintenance_schedule[[:space:]]*=[[:space:]]*//p' 		/etc/snapraidd.conf 2>/dev/null | tail -n1 | esc)
+	srd_sched=$(sed -n 's/^[[:space:]]*maintenance_schedule[[:space:]]*=[[:space:]]*//p' /etc/snapraidd.conf 2>/dev/null | tail -n1 | esc)
 	if [ -n "$srd_sched" ]; then
 		srd_html="<span class=\"pill p-ok\">running &middot; sync + scrub at $srd_sched</span>"
 	else
