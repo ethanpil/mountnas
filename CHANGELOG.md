@@ -9,15 +9,32 @@
   `apk` replaced after it started). Function bodies did not change. (e25c508)
 - **Every function declares its variables with `local`.** The rule and the two
   verified busybox-ash facts behind it are in CONTEXT.md. (25d5abe)
+- `nas upgrade`'s five trap-owned globals are `UPG_*`. A lowercase name means
+  function-local everywhere else, so those five read like locals. (8759fd5)
+
+### Fixed
+- A known `nas help <topic>` returns 0 again. The split made it return the
+  status of the page, so an unwritable stdout printed the whole overview on
+  top of the failure. (6fa27d5)
+- `confirm()` keeps its answer local. It used to leave `a` in the caller.
+  (6fa27d5)
 
 ### Testing
-- **Unit tests for the CLI** under busybox ash: `tests/unit/`, ~70 cases, run
+- **Unit tests for the CLI** under busybox ash: `tests/unit/`, 66 cases, run
   in a throwaway Alpine root (`docker run ... sh /repo/tests/unit/run.sh` or
   `run.sh --chroot`). The Lint workflow runs them on every push. (8b6253c)
-- The QEMU suite pushes the whole CLI tree into dev and upgrade guests; the
-  packaging manifest test lists `lib.sh` and every `cmd/*.sh`. (b5444e1)
-- `ci-lint` lints the sourced files and checks that every help page the
-  dispatcher maps to exists. (b5444e1)
+- The unit chroot binds the host's `/dev`, verifies package signatures,
+  cleans up after a failed build, and accepts podman. Without a real
+  `/dev/null` the tests fed stale stderr back as stdin. (5a3fffb)
+- The unit root is installed by the APKBUILD's own `package()`, so the file
+  list has one source. Three helpers the CLI calls were missing. (93a7a68)
+- The QEMU suite swaps the CLI tree in ONE step, dispatcher last, and clears
+  stale `cmd/*.sh`. The old file-by-file push left the guest with a
+  dispatcher and no tree to source. (feeaa80)
+- The packaging test checks the image against itself, so a checkout ahead of
+  the release no longer fails it. (feeaa80)
+- `ci-lint` fails when a `cmd_*` function is defined but never dispatched.
+  (f22dfd7)
 
 ## [1.0rc7] — 2026-07-27
 
