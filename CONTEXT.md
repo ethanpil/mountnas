@@ -614,14 +614,16 @@ _reltag sed.
   - lowercase = function-local, declared with `local` (bare names — Alpine's
     busybox ash leaves a bare `local x` UNSET, verified; never
     `local x=$(cmd)`, it hides the exit status);
-  - UPPERCASE = global (the lib.sh constants, NAS_CHECKS, UNSAVED_FRESH);
-  - a lowercase variable that must outlive its function is documented at
-    the assignment. Today that is ONE set: cmd_upgrade's raw/m/loop/dlf/
-    upg_committed, read by _cleanup from the EXIT trap — an EXIT trap fires
-    AFTER the function returned, when its locals are gone (verified). A
-    signal trap (INT/HUP/TERM) fires while the function is active and does
-    see its locals, which is why cmd_backup's `out` can be local.
-  tests/unit covers the nested callers (status inside status_json/report).
+  - UPPERCASE = the name outlives its function: the lib.sh constants,
+    NAS_CHECKS, UNSAVED_FRESH, and cmd_upgrade's UPG_RAW/UPG_MNT/UPG_LOOP/
+    UPG_DLF/UPG_COMMITTED. Those five carry the temp files, the loop device
+    and the phase flag to `_cleanup`, which the EXIT trap runs AFTER
+    cmd_upgrade returns — when a local is already gone (verified). Never
+    declare them local: the leak is silent (a multi-GB image and a loop
+    device survive a Ctrl-C). A SIGNAL trap (INT/HUP/TERM) fires while the
+    function is active and DOES see its locals, which is why cmd_backup's
+    `out` can be local. The rule has no lowercase exception.
+  tests/unit covers the nested callers (status inside status_json).
 - Dead mounts are a first-class state: a detached device leaves its mount in
   /proc/mounts (rw!) while all I/O returns EIO — mountpoint(1), findfs, and
   ro-flag checks ALL pass. Detection is a directory read probe (data-watch and

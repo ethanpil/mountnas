@@ -13,12 +13,12 @@ _mount_boot_rw() {
 # the offline-apk bind it released (an aborted upgrade otherwise silently
 # breaks offline 'apk add' until the next reboot) and put BOOT back read-only
 # (the supervisor mounts it ro; _mount_boot_rw flipped it). The rebind is
-# skipped once the phase-2 renames began (upg_committed=1): at that point the
+# skipped once the phase-2 renames began (UPG_COMMITTED=1): at that point the
 # on-USB repo is the NEW release's, and binding it under the still-running OLD
 # system could mix package generations — after a successful upgrade the reboot
 # re-binds it, after a failed one the box needs a restore anyway. Idempotent.
 _boot_restore() {
-	if [ "${upg_committed:-0}" = 0 ] && [ -d "$BOOTMNT/apks" ] \
+	if [ "${UPG_COMMITTED:-0}" = 0 ] && [ -d "$BOOTMNT/apks" ] \
 		&& ! mountpoint -q "$STATE/apks" 2>/dev/null; then
 		mkdir -p "$STATE/apks"
 		mount --bind "$BOOTMNT/apks" "$STATE/apks" 2>/dev/null || true
@@ -97,7 +97,7 @@ _free_modloop() {
 	# detach. The service is the normal path; a direct/lazy umount is the
 	# fallback for a transient holder (a spurious 'target is busy' was seen
 	# once under QEMU) — with -l the mount leaves the namespace now and the
-	# loop device auto-clears when the last reference drops, which frees the
+	# UPG_LOOP device auto-clears when the last reference drops, which frees the
 	# modloop file for the crash-safe rename-overwrite either way.
 	if ! rc-service modloop stop >/dev/null 2>&1; then
 		umount /.modloop 2>/dev/null || umount -l /.modloop 2>/dev/null \
@@ -152,7 +152,7 @@ _upgrade_check() {
 # be rewritten safely. Config (/cfg) and data disks are never touched.
 cmd_upgrade() {
 	local img url assume_yes a lb plb pbe page tmp img_gz need_kb avail_kb sums want got ec f d av cb pw rl svc sdirs sfiles old_wb new_wb old_rc new_rc
-	img=""; url=""; dlf=""; assume_yes=0
+	img=""; url=""; UPG_DLF=""; assume_yes=0
 	for a in "$@"; do
 		case "$a" in
 			--check) _upgrade_check; return $? ;;
@@ -209,17 +209,17 @@ EOF
 	# without a trap an interrupted upgrade leaks them (temp space usually lives
 	# on the data disk). Idempotent: every step is guarded, so running it again
 	# on the EXIT trap after an explicit call is harmless.
-	# raw, m, loop, dlf and upg_committed stay GLOBAL on purpose (not in the
-	# local list above): the EXIT trap below runs _cleanup AFTER this function
-	# has returned, when a local would already be gone — and _boot_restore
-	# reads upg_committed from inside that same trap.
-	raw=""; m=""; loop=""; upg_committed=0
+	# The UPG_ names are GLOBAL, and the prefix says so: the EXIT trap runs
+	# _cleanup AFTER this function returns, when a local would already be gone.
+	# _boot_restore reads UPG_COMMITTED from inside that same trap. Never
+	# declare these local. (UPG_DLF is set with the arguments, further up.)
+	UPG_RAW=""; UPG_MNT=""; UPG_LOOP=""; UPG_COMMITTED=0
 	_cleanup() {
-		[ -n "$m" ] && umount "$m" 2>/dev/null
-		[ -n "$loop" ] && losetup -d "$loop" 2>/dev/null
-		[ -n "$raw" ] && rm -f "$raw"
-		[ -n "$dlf" ] && rm -f "$dlf"
-		[ -n "$m" ] && rmdir "$m" 2>/dev/null
+		[ -n "$UPG_MNT" ] && umount "$UPG_MNT" 2>/dev/null
+		[ -n "$UPG_LOOP" ] && losetup -d "$UPG_LOOP" 2>/dev/null
+		[ -n "$UPG_RAW" ] && rm -f "$UPG_RAW"
+		[ -n "$UPG_DLF" ] && rm -f "$UPG_DLF"
+		[ -n "$UPG_MNT" ] && rmdir "$UPG_MNT" 2>/dev/null
 		# every exit (failure return via the EXIT trap, signal, success) also
 		# restores the running system's state: apks bind + BOOT read-only
 		_boot_restore
@@ -236,7 +236,7 @@ EOF
 	[ -n "$tmp" ] || { mountpoint -q "$DATA" && tmp="$DATA" || { bad "no temp space: data disk not mounted. Mount it or set TMPDIR=<disk dir>."; return 1; }; }
 	# gzip is detected by CONTENT (the 1f 8b magic), never by filename: a
 	# beta-2 tester fed a correctly-gzipped image saved as .img.tgz and the
-	# old *.gz match treated the compressed bytes as a raw disk image
+	# old *.gz match treated the compressed bytes as a UPG_RAW disk image
 	# (losetup garbage, unmountable p1). URLs are assumed compressed until
 	# downloaded (releases ship .img.gz), then re-sniffed.
 	img_gz=0
@@ -246,7 +246,7 @@ EOF
 		img_gz=1
 	fi
 	if [ "$img_gz" = 1 ]; then
-		need_kb=3932160   # ~3.75 GiB: image is 3.5 GiB raw (gzip -l is unreliable >4 GiB)
+		need_kb=3932160   # ~3.75 GiB: image is 3.5 GiB UPG_RAW (gzip -l is unreliable >4 GiB)
 	else
 		need_kb=$(( ( $(stat -c %s "$img" 2>/dev/null || echo 3758096384) / 1024 ) + 262144 ))
 	fi
@@ -260,23 +260,23 @@ EOF
 
 	# ---- URL: download into temp space, verify against SHA256SUMS if published ----
 	if [ -n "$url" ]; then
-		dlf="$tmp/.nas-upgrade.$$.${url##*/}"
+		UPG_DLF="$tmp/.nas-upgrade.$$.${url##*/}"
 		step "Downloading $url ..."
-		if command -v curl >/dev/null 2>&1; then curl -fL -o "$dlf" "$url"
-		else wget -O "$dlf" "$url"; fi \
-			|| { bad "download failed"; rm -f "$dlf"; return 1; }
+		if command -v curl >/dev/null 2>&1; then curl -fL -o "$UPG_DLF" "$url"
+		else wget -O "$UPG_DLF" "$url"; fi \
+			|| { bad "download failed"; rm -f "$UPG_DLF"; return 1; }
 		# a GitHub release publishes SHA256SUMS next to the image — verify when found
 		sums=$( { command -v curl >/dev/null 2>&1 && curl -fsL "${url%/*}/SHA256SUMS" \
 			|| wget -qO- "${url%/*}/SHA256SUMS"; } 2>/dev/null || true)
 		want=$(printf '%s\n' "$sums" | awk -v f="${url##*/}" '$2==f{print $1}')
 		if [ -n "$want" ]; then
-			got=$(sha256sum "$dlf" | awk '{print $1}')
+			got=$(sha256sum "$UPG_DLF" | awk '{print $1}')
 			[ "$got" = "$want" ] && ok "checksum verified against SHA256SUMS" \
-				|| { bad "checksum MISMATCH — refusing this download"; rm -f "$dlf"; return 1; }
+				|| { bad "checksum MISMATCH — refusing this download"; rm -f "$UPG_DLF"; return 1; }
 		else
 			warn "no SHA256SUMS found next to the URL — skipping checksum verification"
 		fi
-		img="$dlf"
+		img="$UPG_DLF"
 		# re-sniff the actual downloaded bytes (a URL could serve either form)
 		if [ "$(od -An -tx1 -N2 "$img" 2>/dev/null | tr -d ' \t\n')" = "1f8b" ]; then
 			img_gz=1
@@ -288,22 +288,22 @@ EOF
 	# ---- unpack + loop-mount the image's BOOT partition (p1) ----
 	# mktemp failing here means the RAM root is full — name that, instead of
 	# letting every later mount fail and blaming the user's image file.
-	raw="$tmp/.nas-upgrade.$$.img"
-	m=$(mktemp -d) || { bad "cannot create a temp directory — RAM root full? check: df -h /"; _cleanup; return 1; }
-	[ -n "$m" ] || { bad "cannot create a temp directory — RAM root full? check: df -h /"; _cleanup; return 1; }
+	UPG_RAW="$tmp/.nas-upgrade.$$.img"
+	UPG_MNT=$(mktemp -d) || { bad "cannot create a temp directory — RAM root full? check: df -h /"; _cleanup; return 1; }
+	[ -n "$UPG_MNT" ] || { bad "cannot create a temp directory — RAM root full? check: df -h /"; _cleanup; return 1; }
 	step "Unpacking image into $tmp ..."
 	if [ "$img_gz" = 1 ]; then
 		# pv shows unpack progress when available; gzip -dc itself still
 		# detects a truncated/corrupt stream, so no extra status capture.
-		if command -v pv >/dev/null 2>&1; then pv "$img" | gzip -dc > "$raw"
-		else gzip -dc "$img" > "$raw"; fi \
+		if command -v pv >/dev/null 2>&1; then pv "$img" | gzip -dc > "$UPG_RAW"
+		else gzip -dc "$img" > "$UPG_RAW"; fi \
 			|| { bad "decompress failed"; _cleanup; return 1; }
 	else
-		cp "$img" "$raw" || { bad "copy failed"; _cleanup; return 1; }
+		cp "$img" "$UPG_RAW" || { bad "copy failed"; _cleanup; return 1; }
 	fi
 	# the downloaded .gz is no longer needed once unpacked — free the space now
-	[ -n "$dlf" ] && { rm -f "$dlf"; dlf=""; }
-	loop=$(losetup -fP --show "$raw") || { bad "losetup failed"; _cleanup; return 1; }
+	[ -n "$UPG_DLF" ] && { rm -f "$UPG_DLF"; UPG_DLF=""; }
+	UPG_LOOP=$(losetup -fP --show "$UPG_RAW") || { bad "losetup failed"; _cleanup; return 1; }
 	# losetup -fP scans the partition table ASYNCHRONOUSLY, and eudev then
 	# re-processes the loop's change events — each rescan DELETES and re-adds
 	# the partition nodes, so "the node exists" is not "the node is stable".
@@ -312,15 +312,15 @@ EOF
 	# docker-survives-upgrade run validating 1.0rc3, with dockerd keeping udev
 	# busy). Settle udev when available, then retry the MOUNT itself (bounded,
 	# ~10s) — existence-then-mount can never be race-free.
-	command -v partprobe >/dev/null 2>&1 && partprobe "$loop" 2>/dev/null
+	command -v partprobe >/dev/null 2>&1 && partprobe "$UPG_LOOP" 2>/dev/null
 	command -v udevadm >/dev/null 2>&1 && udevadm settle -t 5 2>/dev/null
 	pw=0
-	until mount -o ro "${loop}p1" "$m" 2>/dev/null; do
+	until mount -o ro "${UPG_LOOP}p1" "$UPG_MNT" 2>/dev/null; do
 		pw=$((pw+1))
 		if [ "$pw" -ge 50 ]; then
 			# Separate the two causes the retry would otherwise merge: a payload
 			# with no partition table at all vs. a partition we could never mount.
-			if [ ! -b "${loop}p1" ]; then
+			if [ ! -b "${UPG_LOOP}p1" ]; then
 				bad "this file has no BOOT partition — is it really a MountNAS release image (mountnas-<tag>.img.gz)?"
 			else
 				bad "the image's BOOT partition exists but would not mount — corrupt or truncated download?"
@@ -330,7 +330,7 @@ EOF
 		sleep 0.2
 	done
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
-		[ -f "$m/$f" ] || { bad "image is missing $f — not a MountNAS image?"; _cleanup; return 1; }
+		[ -f "$UPG_MNT/$f" ] || { bad "image is missing $f — not a MountNAS image?"; _cleanup; return 1; }
 	done
 
 	# ---- free the live modloop so we can overwrite it in place ----
@@ -362,19 +362,19 @@ EOF
 	# so an older image without them simply skips them.
 	ec=0; sfiles=""; sdirs=""
 	for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts; do
-		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
+		_stage_file "$UPG_MNT/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
 	done
 	# cmdline.base rides along: write-bootcfg (below) reads the ON-MEDIA copy,
 	# so skipping it would pin upgraded sticks to their original kernel cmdline
 	# forever — a release that grows the boot module list would never arrive.
 	for f in world.base alpine.base rc.base cmdline.base ldlinux.c32 boot/amd-ucode.img boot/intel-ucode.img; do
-		[ -f "$m/$f" ] || continue
-		_stage_file "$m/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
+		[ -f "$UPG_MNT/$f" ] || continue
+		_stage_file "$UPG_MNT/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
 	done
-	_stage_dir "$m/apks" "$BOOTMNT/apks" && sdirs="$sdirs apks" || ec=1
+	_stage_dir "$UPG_MNT/apks" "$BOOTMNT/apks" && sdirs="$sdirs apks" || ec=1
 	for d in EFI boot/grub confd.base; do
-		[ -d "$m/$d" ] || continue
-		_stage_dir "$m/$d" "$BOOTMNT/$d" && sdirs="$sdirs $d" || ec=1
+		[ -d "$UPG_MNT/$d" ] || continue
+		_stage_dir "$UPG_MNT/$d" "$BOOTMNT/$d" && sdirs="$sdirs $d" || ec=1
 	done
 	if [ "$ec" != 0 ]; then
 		# remove staged leftovers (a failed cp can leave a partial .new) — the
@@ -390,7 +390,7 @@ EOF
 	# push all staged data to the stick so the rename window carries no
 	# pending writes, then commit with back-to-back renames (phase 2)
 	sync
-	upg_committed=1   # from here the on-USB repo may be the new release's — no apks rebind (see _boot_restore)
+	UPG_COMMITTED=1   # from here the on-USB repo may be the new release's — no apks rebind (see _boot_restore)
 	for f in $sfiles; do _commit_file "$BOOTMNT/$f" || ec=1; done
 	for d in $sdirs; do _commit_dir "$BOOTMNT/$d" || ec=1; done
 	sync
