@@ -436,3 +436,81 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
     assert off.rc == 0
     gone = g.run("curl -fsS --max-time 5 http://127.0.0.1:8080/ >/dev/null 2>&1")
     assert gone.rc != 0, "dashboard still serving after nas web off"
+
+# ------------------------------------------------------- SnapRAID Daemon
+
+def test_snapraid_daemon_enable_disable_and_ui(dev_guest):
+    """`nas snapraid on/off` drives the snapraidd OpenRC service, and the
+    daemon really serves its web UI and REST API.
+
+    snapraid-daemon joins packages.list after 1.0rc7, so this self-skips on an
+    image that predates it (same pattern as the ufw/borgbackup checks in
+    category C) and hard-asserts once shipped."""
+    g = dev_guest
+    if g.run("apk info -e snapraid-daemon").rc != 0:
+        pytest.skip("snapraid-daemon not in this image yet")
+
+    # the package ships the binary, the OpenRC script and the web assets
+    for path in ("/usr/bin/snapraidd", "/etc/init.d/snapraidd",
+                 "/usr/share/snapraidd/commander.zip"):
+        assert g.run(f"test -e {path}").rc == 0, f"{path} missing from the image"
+    # and the seed overlay owns the config (an apk-installed /etc file would be
+    # clobbered by the overlay at every boot)
+    assert g.run("test -f /etc/snapraidd.conf").rc == 0, \
+        "/etc/snapraidd.conf not seeded by genapkovl"
+    conf = g.run("cat /etc/snapraidd.conf", check=True).out
+    assert "net_web_root = commander.zip" in conf, \
+        "without net_web_root the daemon answers the API but 404s every page"
+    assert "/mnt/nasdata" in conf, \
+        "sys_log_directory must be on the data disk: /var/log is RAM here"
+
+    assert "off" in g.run("nas snapraid status", check=True).out
+
+    on = g.run("nas snapraid on", timeout=120)
+    assert on.rc == 0, f"nas snapraid on failed:\n{on.out}"
+    assert "SnapRAID Daemon ON" in on.out, on.out
+    # the read-write/no-password warning must be shown for a LAN bind
+    assert "READ-WRITE" in on.out, f"missing API warning:\n{on.out}"
+
+    assert g.run("rc-service snapraidd status").rc == 0, "service not running"
+    ui = g.run("curl -fsS --max-time 10 -o /dev/null -w '%{http_code}' "
+               "http://127.0.0.1:7627/", timeout=60)
+    assert ui.out.strip() == "200", f"web UI did not serve: {ui.out}"
+    state = g.run("curl -fsS --max-time 10 http://127.0.0.1:7627/snapraid/v1/state",
+                  timeout=60, check=True)
+    assert '"health"' in state.out, f"REST API did not answer:\n{state.out}"
+
+    # the log directory the daemon uses as its task memory is created for it
+    assert g.run("test -d /mnt/nasdata/snapraid/logs").rc == 0, \
+        "start_pre did not create sys_log_directory"
+
+    # reload is the documented way to apply a config edit
+    assert g.run("rc-service snapraidd reload", timeout=60).rc == 0
+    assert g.run("curl -fsS --max-time 10 -o /dev/null "
+                 "http://127.0.0.1:7627/", timeout=60).rc == 0, \
+        "daemon stopped serving after a reload"
+
+    # the dashboard advertises it: header pill plus a footer link
+    g.run("nas web on", timeout=120, check=True)
+    g.run("/usr/libexec/mountnas/gen-webstatus", timeout=120)
+    page = g.run("cat /run/mountnas/web/index.html", check=True).out
+    assert "SnapRAID" in page, "dashboard does not mention the daemon"
+    assert ":7627/" in page, f"dashboard has no link to the daemon UI"
+    assert "running &middot; schedules sync + scrub" in page, \
+        "Protection card does not show the daemon as running"
+    g.run("nas web off", timeout=120)
+
+    off = g.run("nas snapraid off", timeout=120)
+    assert off.rc == 0, off.out
+    assert g.run("rc-service snapraidd status").rc != 0, "still running after off"
+    gone = g.run("curl -fsS --max-time 5 http://127.0.0.1:7627/ >/dev/null 2>&1")
+    assert gone.rc != 0, "daemon still serving after nas snapraid off"
+    # turning the scheduler off must never touch the array
+    assert g.run("command -v snapraid").rc == 0, "snapraid CLI disappeared"
+
+    # NOT covered here: a complete daemon-driven sync. A maintenance run opens
+    # with snapraid's 'up' (spinup), which needs each disk's parent in sysfs —
+    # it fails on loop devices, and this guest has no spare disk to hold parity
+    # on a device separate from the data (snapraid refuses that layout). The
+    # daemon->CLI path itself IS covered: the task logs under sys_log_directory
+    # show the exact argv the daemon runs and the CLI's own output.
