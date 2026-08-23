@@ -291,11 +291,16 @@ def test_released_image_ships_expected_files(wired_shared_guest):
     # AHEAD of the release under test must not fail a packaging test.
     # (tests/unit installs the tree from the same commit it tests, and its
     # help-topic loop covers every command file.)
-    if g.run("test -e /usr/libexec/mountnas/lib.sh").rc == 0:
+    #
+    # Gate on the DISPATCHER, not on lib.sh: gating on lib.sh made this
+    # block skip itself on exactly the input it exists to catch, because
+    # lib.sh is the one tree file with its own explicit APKBUILD install
+    # line.  A pre-split image has no NAS_LIB= line, so it still skips.
+    if g.run("grep -q '^NAS_LIB=' /usr/sbin/nas").rc == 0:
+        assert g.run("test -e /usr/libexec/mountnas/lib.sh").rc == 0, \
+            "the dispatcher sources lib.sh but the image ships none"
         assert g.run("ls /usr/libexec/mountnas/cmd/*.sh").rc == 0, \
             "the nas CLI tree has no cmd/*.sh — the APKBUILD glob is broken"
-        assert g.run("grep -q 'NAS_LIB' /usr/sbin/nas").rc == 0, \
-            "lib.sh ships but /usr/sbin/nas does not source it"
 
     tools = ["btm", "cyme", "ttyd"]
     absent = [t for t in tools if g.run(f"command -v {t}").rc != 0]

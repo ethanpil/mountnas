@@ -124,7 +124,7 @@ sh tests/qemu/run-suite.sh img.gz -- -k samba -x          # one test, stop on fa
 | `MOUNTNAS_TEST_TIME_SCALE` | 1 (KVM) / 6 (TCG) | multiplies every timeout in the suite |
 | `MOUNTNAS_TEST_REPO` | `ethanpil/mountnas` | GitHub repo for release downloads |
 | `MOUNTNAS_OVMF` | auto-discovered | UEFI firmware path; empty = UEFI tests skip |
-| `MOUNTNAS_NAS_SRC` | unset | **Upgrade tier only.** Absolute path to a local `mountnas-tools/files/nas`. The whole CLI tree next to it (`nas`, `lib.sh`, `cmd/*.sh`) is pushed over the guest's copy in every upgrade guest — this is how you verify a `nas` fix before it is in a release. A value that is not that file (with `lib.sh` beside it) is a hard collection error, because silently falling back to the shipped `nas` makes a whole verification run meaningless. Confirm it fired: `grep -c 'mv /usr/sbin/nas.new' <run-dir>/pytest.log` |
+| `MOUNTNAS_NAS_SRC` | unset | **Upgrade tier only.** Absolute path to a local `mountnas-tools/files/nas`. The whole CLI tree next to it (`nas`, `lib.sh`, `cmd/*.sh`) is pushed over the guest's copy in every upgrade guest — this is how you verify a `nas` fix before it is in a release. A value that is not that file (with `lib.sh` beside it) is a hard collection error, because silently falling back to the shipped `nas` makes a whole verification run meaningless. Confirm it fired: `grep -c mountnas-nas-src-injected <run-dir>/pytest.log`. Do NOT grep the push commands themselves: the feature tests push the same tree on every run, so those lines appear even when this variable is unset. |
 
 ### What happens on the first run
 

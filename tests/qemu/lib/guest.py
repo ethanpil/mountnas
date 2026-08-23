@@ -624,12 +624,22 @@ _NAS_STAGE = f"{_NAS_LIB}/.stage"
 def push_nas_tree(guest: "Guest", files_dir: Path) -> None:
     """Push the repo's nas CLI (dispatcher + lib.sh + cmd/*.sh) over the guest's.
 
-    ONE transfer and ONE swap. The dispatcher sources lib.sh and every
+    ONE transfer, then renames.  The dispatcher sources lib.sh and every
     cmd/*.sh at start, so a file-by-file push leaves the guest with a new
     dispatcher and no tree to source -- on a pre-split image lib.sh does not
     exist at all, and any nas started in that window dies.  Everything is
-    staged on the target filesystem first and renamed at the end, with the
-    DISPATCHER LAST, so the guest runs one whole version or the other.
+    staged on the target filesystem first and the DISPATCHER is renamed
+    LAST, so a nas that starts before the swap runs entirely old, and one
+    that starts after runs entirely new.
+
+    The renames are three separate steps, so a sub-second window remains in
+    which the tree is new and the dispatcher is not (and, between two of
+    them, no cmd/ directory at all).  Nothing invokes nas unattended on a
+    golden guest -- data-watch never execs it, health-digest is unscheduled,
+    and gen-webstatus runs only after `nas web on` -- so no caller can
+    observe it.  One atomic swap is not available: /usr/libexec/mountnas
+    also holds notify, write-bootcfg and the other helpers, so the directory
+    cannot be renamed as a unit.
 
     The cmd directory is REPLACED, not merged: a file the repo renamed would
     otherwise stay behind, and the dispatcher's cmd/*.sh glob would source the

@@ -77,6 +77,12 @@ def _inject_repo_nas(guest):
     if not NAS_SRC:
         return
     push_nas_tree(guest, Path(NAS_SRC).parent)
+    # A marker unique to THIS path.  push_nas_tree also runs for every
+    # dev_guest in the feature tests, so its own log lines prove nothing
+    # about MOUNTNAS_NAS_SRC: grepping for them reports success even when
+    # the variable was never set, which is the mistake that invalidated the
+    # 1.0rc3 verification round.  TESTING-QEMU.md documents this string.
+    guest.run("echo mountnas-nas-src-injected", check=True)
 
 
 @pytest.fixture
