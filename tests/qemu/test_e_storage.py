@@ -101,6 +101,96 @@ def test_snapraid_sync_with_parity(golden_with_extras):
     assert g.run("snapraid status", timeout=300).rc == 0
 
 
+@pytest.mark.slow
+def test_snapraid_maint_gate_blocks_and_fix_restores(golden_with_extras):
+    """The snapraid-maint protection, end to end on a real array: a clean
+    `nas snapraid run` syncs and scrubs; a mass delete beyond DEL_THRESHOLD
+    is BLOCKED with parity untouched -- proven by `snapraid fix` restoring a
+    deleted file -- and `--force-sync` then syncs the deletion.  Also:
+    schedule writes/removes the marker cron line, and the status disk table
+    reports roles and mounts without invoking snapraid (SPEC-snapraid-maint,
+    D9/D10)."""
+    import re
+    from pathlib import Path
+    from lib.guest import push_nas_tree
+    files_dir = Path(__file__).resolve().parent.parent.parent \
+        / "mountnas-tools" / "files"
+    g = golden_with_extras(2)
+    push_nas_tree(g, files_dir)
+    g.push(files_dir / "snapraid-maint",
+           "/usr/libexec/mountnas/snapraid-maint")
+    g.run("chmod 755 /usr/libexec/mountnas/snapraid-maint", check=True)
+    # the array: same recipe as test_snapraid_sync_with_parity, plus many
+    # small files so a mass delete crosses DEL_THRESHOLD (100)
+    g.run("mkfs.ext4 -Fq -L disk1 /dev/vdc", timeout=180, check=True)
+    g.run("mkfs.ext4 -Fq -L parity1 /dev/vdd", timeout=180, check=True)
+    g.run("printf '%s\\n' 'LABEL=disk1 /mnt/disk1 ext4 rw,noatime,nofail 0 2'"
+          " >> /etc/fstab", check=True)
+    g.run("printf '%s\\n' 'LABEL=parity1 /mnt/parity1 ext4 rw,noatime,nofail 0 2'"
+          " >> /etc/fstab", check=True)
+    g.run("rc-service mountnas restart", timeout=240, check=True)
+    g.poll_until("mountpoint -q /mnt/parity1", timeout=120, desc="parity mounted")
+    g.run("cat > /etc/snapraid.conf <<'EOF'\n"
+          "parity /mnt/parity1/snapraid.parity\n"
+          "content /mnt/disk1/snapraid.content\n"
+          "content /mnt/parity1/snapraid.content\n"
+          "data d1 /mnt/disk1/\n"
+          "EOF", check=True)
+    # 150 deletable files + one KEEPER: snapraid refuses to sync a fully
+    # emptied disk without --force-empty (its own guard, deliberately NOT
+    # bridged by --force-sync), so the disk must never go empty here
+    g.run("mkdir -p /mnt/disk1/docs && for i in $(seq 1 150); do"
+          " head -c 4096 /dev/urandom > /mnt/disk1/docs/f$i.bin; done"
+          " && head -c 4096 /dev/urandom > /mnt/disk1/keep.bin",
+          timeout=120, check=True)
+
+    # status BEFORE any run: disk table + chain (cheap path)
+    r = g.run("NO_COLOR=1 nas snapraid status", timeout=60, check=True)
+    assert re.search(r"d1\s+data\s+/mnt/disk1/\s+mounted", r.out), r.out
+    assert re.search(r"parity\s+parity\s+/mnt/parity1/", r.out), r.out
+    assert "disks mounted      (2/2)" in r.out, r.out
+    assert "no maintenance run recorded yet" in r.out, r.out
+
+    # clean run: sync + scrub, SYNCED state on the data disk
+    r = g.run("NO_COLOR=1 nas snapraid run", timeout=900)
+    assert r.rc == 0, f"first run rc={r.rc}:\n{r.out[-3000:]}"
+    g.run("test -s /mnt/parity1/snapraid.parity", check=True)
+    st = g.run("cat /mnt/nasdata/snapraid/state/last-run", check=True).out
+    assert "verdict=SYNCED" in st, st
+    assert "scrubbed=7%" in st, st
+
+    # THE protection: delete 150 files (> DEL_THRESHOLD) -> BLOCKED, parity
+    # untouched -- proven by snapraid fix restoring a deleted file
+    g.run("rm -rf /mnt/disk1/docs", check=True)
+    r = g.run("NO_COLOR=1 nas snapraid run", timeout=300)
+    assert r.rc == 1, f"mass delete must block, rc={r.rc}:\n{r.out[-2000:]}"
+    st = g.run("cat /mnt/nasdata/snapraid/state/last-run", check=True).out
+    assert "verdict=BLOCKED" in st, st
+    r = g.run("NO_COLOR=1 nas snapraid status", timeout=60)
+    assert "BLOCKED by the threshold gate" in r.out, r.out
+    g.run("snapraid fix -f docs/f1.bin", timeout=300, check=True)
+    g.run("test -s /mnt/disk1/docs/f1.bin", check=True)   # the payoff
+
+    # intentional after all: --force-sync goes through
+    g.run("rm -rf /mnt/disk1/docs", check=True)
+    r = g.run("NO_COLOR=1 nas snapraid run --force-sync", timeout=900)
+    assert r.rc == 0, f"force-sync rc={r.rc}:\n{r.out[-2000:]}"
+    assert "gate DISABLED" in r.out, r.out
+    st = g.run("cat /mnt/nasdata/snapraid/state/last-run", check=True).out
+    assert "verdict=SYNCED" in st, st
+
+    # schedule surface: marker line in, status shows it, off removes it
+    g.run("NO_COLOR=1 nas snapraid schedule 03:30", timeout=60, check=True)
+    cron = g.run("crontab -l", check=True).out
+    assert re.search(r"^30 3 \* \* \* /usr/libexec/mountnas/snapraid-maint"
+                     r" # mountnas-snapraid$", cron, re.M), cron
+    r = g.run("NO_COLOR=1 nas snapraid status", timeout=60)
+    assert "scheduled" in r.out and "03:30" in r.out, r.out
+    g.run("NO_COLOR=1 nas snapraid schedule off", timeout=60, check=True)
+    cron = g.run("crontab -l 2>/dev/null || true").out
+    assert "mountnas-snapraid" not in cron, cron
+
+
 def test_mkdirs_before_localmount_new_mountpoint(golden_with_extras):
     """A brand-new fstab mountpoint must exist by the time busybox localmount
     runs (mountnas-mkdirs runs `before localmount`) -- fstab has no

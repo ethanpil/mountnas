@@ -20,7 +20,7 @@ assert_match '^nas status \[--deep\|--json\]' "$OUT"
 
 t "every mapped topic has a page (nas help <topic>)"
 for topic in status disks changes changed rollback backup logs log upgrade shutdown \
-	reboot setup version about commit save restart report web ttyd history notify; do
+	reboot setup version about commit save restart report web ttyd snapraid history notify; do
 	run_nas help "$topic"
 	[ "$RC" = 0 ] || fail "help $topic: rc=$RC"
 	case "$topic" in
