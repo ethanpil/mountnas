@@ -51,6 +51,26 @@ stamp=$(date -u -r "$act" +%Y%m%d%H%M%S)
 assert_eq "$stamp	first note two lines" "$(cat /cfg/.mountnas-notes)"
 assert_match '	commit	.*	first note two lines$' "$(tail -n1 /cfg/mountnas-ops.log)"
 
+t "commit prints the DELTA it saves, never the whole archive"
+reset
+printf 'M etc/fstab
+A etc/exports
+' > /tmp/lbu-status
+run_nas commit -m note
+assert_rc 0
+assert_match 'Saving 2 change' "$OUT"
+assert_match 'M etc/fstab' "$OUT"
+assert_nomatch 'etc/passwd|etc/runlevels' "$OUT" "steady-state members must not print"
+assert_match 'full overlay re-packed' "$OUT"
+assert_match 'nas commit -v' "$OUT" "points at the full listing"
+
+t "commit with no pending changes says so and still re-packs"
+reset
+run_nas commit -m note
+assert_rc 0
+assert_match 'No new changes' "$OUT"
+assert_match 'saved to /cfg' "$OUT"
+
 t "non-tty commit without -m never prompts (no note)"
 reset; run_nas save
 assert_rc 0

@@ -5,17 +5,23 @@
 cmd_commit() {
 	# --no-ask: internal callers only (wizard, upgrade, shutdown --save) —
 	# their commits must never stop for the interactive note prompt below
-	local ask note nts keep f sz
-	ask=1
-	[ "${1:-}" = "--no-ask" ] && { ask=0; shift; }
+	local ask note nts keep f sz verbose delta n_delta n_total
+	ask=1; verbose=0
+	while :; do
+		case "${1:-}" in
+			--no-ask) ask=0; shift ;;
+			-v|--verbose) verbose=1; shift ;;
+			*) break ;;
+		esac
+	done
 	note=""
 	if [ "${1:-}" = "-m" ]; then
 		note="${2:-}"
-		[ -n "$note" ] || { usage "nas commit [-m \"what you changed\"]"; return 1; }
+		[ -n "$note" ] || { usage "nas commit [-v] [-m \"what you changed\"]"; return 1; }
 		# notes are one line in a tab-separated file — flatten hostile chars
 		note=$(printf '%s' "$note" | tr '\t\n' '  ')
 	elif [ -n "${1:-}" ]; then
-		usage "nas commit [-m \"what you changed\"]"; return 1
+		usage "nas commit [-v] [-m \"what you changed\"]"; return 1
 	fi
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
 	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
@@ -29,8 +35,30 @@ cmd_commit() {
 		IFS= read -r note || note=""
 		note=$(printf '%s' "$note" | tr '\t\n' '  ')
 	fi
-	step "Saving configuration..."
-	lbu commit -v || { bad "lbu commit failed"; return 1; }
+	# Show what THIS commit saves (the delta), not the whole archive: lbu
+	# rebuilds the complete overlay tarball every time, so its -v listing
+	# prints ~100 steady-state files and tar's "socket ignored" noise — which
+	# reads as "why is it saving everything?!" when the user changed two
+	# files. The full listing stays available behind -v.
+	delta=$(lbu status 2>/dev/null)
+	n_delta=$(printf '%s' "$delta" | grep -c .)
+	if [ "${n_delta:-0}" -gt 0 ]; then
+		step "Saving $n_delta change(s):"
+		printf '%s\n' "$delta" | sed 's/^/    /'
+	else
+		step "No new changes — re-packing the overlay as-is..."
+	fi
+	if [ "$verbose" = 1 ]; then
+		lbu commit -v || { bad "lbu commit failed"; return 1; }
+	else
+		# quiet path: swallow tar's per-member listing and its harmless
+		# "socket ignored" warnings, but a FAILURE still shows its output
+		f=$(lbu commit -v 2>&1) || {
+			printf '%s\n' "$f" | tail -n 6 | sed 's/^/    /'
+			bad "lbu commit failed"; return 1; }
+	fi
+	n_total=$(tar -tzf "$CFG/$(hostname).apkovl.tar.gz" 2>/dev/null | grep -vc '/$')
+	hint "full overlay re-packed: ${n_total:-?} files -> $CFG/$(hostname).apkovl.tar.gz (list: nas commit -v)"
 	if [ -n "$note" ]; then
 		nts=$(date -u -r "$CFG/$(hostname).apkovl.tar.gz" +%Y%m%d%H%M%S 2>/dev/null)
 		[ -n "$nts" ] && printf '%s\t%s\n' "$nts" "$note" >> "$CFG/.mountnas-notes" 2>/dev/null
@@ -55,9 +83,11 @@ cmd_commit() {
 # help page for 'nas commit' / 'nas save --help' / 'nas help commit'
 help_commit() {
 	cat <<EOF
-nas commit [-m "note"]   (alias: nas save)
+nas commit [-v] [-m "note"]   (alias: nas save)
   Save the in-RAM /etc changes to the USB config partition. Review first
   with 'nas changes --diff'. Undo a bad commit with 'nas rollback'.
+  Prints what THIS commit saves; the overlay itself is always re-packed
+  in full (that is how lbu works). -v lists every packed file.
   Run interactively without -m, it asks for a note (Enter skips) — notes
   are shown by 'nas rollback --list', so snapshots stay identifiable
   ("before enabling nfs", "smb share added", ...). -m still works for
