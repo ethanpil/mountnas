@@ -124,7 +124,26 @@ all included with the kernel; it's only these device-firmware blobs that are cur
 * Mount your parity disks in `/etc/fstab` just like any other disk.
 * Configure `/etc/snapraid.conf`
   * Keep `/mnt/nasdata` out of the array
-* Schedule sync/scrub with `crontab -e`, then `nas commit`
+* Run the first sync, then schedule nightly maintenance:
+
+```text
+nas snapraid run          # first sync (hours on a full array; use tmux)
+nas snapraid schedule     # nightly gated sync + scrub at 02:00
+nas commit
+```
+
+`nas snapraid` is more than a cron line. Before each sync it checks that
+every array disk is mounted (an unmounted disk reads as "all files
+deleted") and REFUSES to sync when the diff shows more than 100 deleted
+or 200 updated files — the pattern of ransomware or a fat-fingered `rm`.
+A blocked sync leaves parity holding yesterday's state, so `snapraid fix`
+can still restore the files; if the change was intentional, run
+`nas snapraid run --force-sync` once. After each clean sync it scrubs the
+oldest 7% of parity blocks, so silent bit rot is found early. Blocked or
+failed runs alert through your `nas notify` sinks. Thresholds live in
+`/etc/mountnas/snapraid-maint.conf`; `nas snapraid status` shows the
+array per disk, the schedule and the last run (`--deep` adds snapraid's
+own statistics). Run history: `/mnt/nasdata/snapraid/logs`.
 
 **Unified pool (mergerfs):** [mergerfs](https://github.com/trapexit/mergerfs) IS included (as upstream's static binary). To pool several data disks into one mount, add a line like the following to `/etc/fstab` (after the member disks), then `nas status` and `nas commit`:
 

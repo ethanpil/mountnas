@@ -182,12 +182,13 @@ nas commit                        # persist it</code></pre>
 <ol>
 <li>Mount data + parity disks in fstab like any other disk.</li>
 <li>Configure <code>/etc/snapraid.conf</code> (a commented template ships). Keep <code>/mnt/nasdata</code> out of the array.</li>
-<li>Schedule sync/scrub and pipe the result into a notification:</li>
+<li>First sync, then schedule nightly gated maintenance:</li>
 </ol>
-<pre><code>crontab -e
-0 3 * * *  snapraid sync 2&gt;&amp;1 | nas notify "snapraid sync"
-0 5 * * 0  snapraid scrub -p 8 -o 20 2&gt;&amp;1 | nas notify "snapraid scrub"</code></pre>
-<p>SnapRAID gives parity (recover a failed disk), mergerfs gives one namespace — they compose well. Then <code>nas commit</code>.</p>
+<pre><code>nas snapraid run          # first sync (hours on a full array; use tmux)
+nas snapraid schedule     # nightly sync + scrub at 02:00
+nas commit</code></pre>
+<p><b>Why not a bare cron line?</b> A cron <code>snapraid sync</code> happily writes a mass deletion — ransomware, a fat-fingered <code>rm</code> — INTO parity, destroying the one copy that could recover it. <code>nas snapraid</code> refuses to sync past the thresholds (100 deleted / 200 updated files, tunable in <code>/etc/mountnas/snapraid-maint.conf</code>), refuses to run with an array disk unmounted, scrubs the oldest 7% of blocks after each clean sync, and alerts through your notification sinks when a sync is blocked or fails. A blocked sync leaves parity intact — <code>snapraid fix</code> restores the files, or <code>nas snapraid run --force-sync</code> syncs an intentional change. <code>nas snapraid status</code> shows the array per disk, the schedule and the last run.</p>
+<p>SnapRAID gives parity (recover a failed disk), mergerfs gives one namespace — they compose well.</p>
 <h3>Parity hygiene: sync vs scrub vs check</h3>
 <ul>
 <li><b><code>snapraid sync</code></b> updates parity to match today's data. <i>Files changed since the last sync are not protected</i> — run it nightly, and after any big copy.</li>
@@ -465,7 +466,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td><code>/etc/nut/</code></td><td>UPS: nut.conf, ups.conf, upsd.conf, upsmon.conf.</td></tr>
 <tr><td><code>/etc/ssh/sshd_config</code></td><td>SSH policy; keys in <code>/root/.ssh/authorized_keys</code>.</td></tr>
 <tr><td><code>/etc/network/interfaces</code></td><td>Static IP / bond / bridge / VLAN config.</td></tr>
-<tr><td><code>crontab -e</code></td><td>Scheduled jobs: SnapRAID sync/scrub, health digest, backups.</td></tr>
+<tr><td><code>crontab -e</code></td><td>Scheduled jobs: health digest, backups ('nas snapraid schedule' manages the parity line).</td></tr>
 </table>
 </section>
 

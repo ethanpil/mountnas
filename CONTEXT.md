@@ -748,3 +748,39 @@ Output: a GitHub Release tagged `<release_tag>` with the files in §4.
   backup docs (incl. the one-time alpha-1/2/3 migration). `CHANGELOG.md` —
   per-release history.
 - Build host base: Alpine **latest-stable (v3.24)**, `jirutka/setup-alpine`, `abuild`.
+
+## 11. SnapRAID maintenance — nas snapraid (added 2026-08-25)
+
+**SPEC-snapraid-maint.md is the design record** (decisions D1-D10 with the
+rejected alternatives). The short version:
+
+- `/usr/libexec/mountnas/snapraid-maint` is the runner; `cmd/snapraid.sh`
+  is the surface (`run [--force-sync] | schedule [HH:MM|off] | status
+  [--deep]`). Exit codes: 0 ok, 1 blocked, 2 preflight, 3 lock, 4 snapraid
+  failed.
+- **Step order is diff → gate → touch → sync → scrub (D9).** Reed's script
+  (the design source) touches before diff; touched files change timestamps
+  and would inflate the gated updated count on a box full of zero
+  sub-second files. sync re-scans, so touching after the gate loses
+  nothing.
+- **The gate fails CLOSED (D7):** unparseable diff output reads as
+  BLOCKED, never as "0 changes".
+- **Preflight parses every parity variant (D10):** `parity`,
+  `2-parity`..`6-parity`, `z-parity`, comma-split values. The mount walk
+  requires each path's nearest mountpoint != `/` (RAM root = absent disk =
+  snapraid sees "all files deleted").
+- **Config is person-edited /etc** (`/etc/mountnas/snapraid-maint.conf`,
+  create-if-absent for upgraded boxes); **state and logs are
+  machine-written data-disk** (`/mnt/nasdata/snapraid/`), never the lbu
+  overlay. That split IS the lesson of the removed SnapRAID Daemon
+  (2026-08-23..25): the commit model works for config a person edits at a
+  shell and breaks for config a program rewrites behind the user's back.
+- The design deliberately reimplements Zack Reed's maintenance-script
+  behavior rather than vendoring it: the blog script has no license, no
+  repo, and a month-old rewrite; the battle-tested part is the design.
+- No service quiescing in v1 (D1): `docker pause` from cron survives a
+  crashed run as frozen containers, and Samba/NFS write anyway. If ever
+  added: through the supervisor's hold, opt-in.
+- Do not double-schedule: `nas snapraid schedule` warns when the crontab
+  carries another snapraid line (the docs recommended hand-rolled lines
+  for years).

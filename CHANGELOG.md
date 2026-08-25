@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+- **`nas snapraid` — gated parity maintenance** (SPEC-snapraid-maint.md).
+  `run` refuses to sync past the delete/update thresholds (the ransomware
+  and fat-finger guard; a blocked sync leaves parity able to restore the
+  files) and refuses to run with an array disk unmounted; a clean sync is
+  followed by a rotating scrub. `schedule [HH:MM]` manages the nightly
+  cron line; `status [--deep]` shows the array per disk, the schedule and
+  the last run. Blocked and failed runs alert through the notify sinks;
+  the dashboard Protection row and `nas status` show the verdict.
+  Thresholds: `/etc/mountnas/snapraid-maint.conf`; history:
+  `/mnt/nasdata/snapraid/logs`.
+
 ### Changed
 - **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
   sources `/usr/libexec/mountnas/lib.sh` and one `cmd/<name>.sh` per command
