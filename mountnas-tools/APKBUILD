@@ -53,6 +53,7 @@ package() {
 	install -Dm755 "$startdir"/files/notify         "$pkgdir"/usr/libexec/mountnas/notify
 	install -Dm755 "$startdir"/files/smartd-notify  "$pkgdir"/usr/libexec/mountnas/smartd-notify
 	install -Dm755 "$startdir"/files/health-digest  "$pkgdir"/usr/libexec/mountnas/health-digest
+	install -Dm755 "$startdir"/files/snapraid-maint "$pkgdir"/usr/libexec/mountnas/snapraid-maint
 	# web dashboard: init script + renderer + refresher + static assets
 	install -Dm755 "$startdir"/files/mountnas-web   "$pkgdir"/etc/init.d/mountnas-web
 	install -Dm755 "$startdir"/files/mountnas-ttyd  "$pkgdir"/etc/init.d/mountnas-ttyd

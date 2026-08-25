@@ -213,6 +213,18 @@ mk root:root 0644 "$tmp/etc/snapraid.conf" <<'EOF'
 # exclude /tmp/
 EOF
 
+# ---- snapraid-maint: gated nightly sync + scrub (SPEC-snapraid-maint.md) ----
+# 'nas snapraid schedule' turns it on. The runner also writes this file with
+# these same defaults when it is absent (upgraded boxes never see this seed).
+mk root:root 0644 "$tmp/etc/mountnas/snapraid-maint.conf" <<'EOF'
+# snapraid-maint — you own this file (edit, then: nas commit).
+DEL_THRESHOLD=100       # block sync above this many deleted files (0 = no gate)
+UPD_THRESHOLD=200       # block sync above this many updated files (0 = no gate)
+SCRUB_PERCENT=7         # scrub the oldest N% of blocks after a clean sync (0 = off)
+SCRUB_OLDER_DAYS=10     # scrub only blocks not checked in N days
+NOTIFY=problems         # problems | always | never
+EOF
+
 # ---- smartd: monitor all disks WITHOUT waking spun-down drives ----
 # The stock smartmontools DEVICESCAN polls every 30 min with no power-state
 # check, which keeps NAS data disks spinning 24/7. '-n standby,q' skips the

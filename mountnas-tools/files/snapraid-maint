@@ -1,0 +1,242 @@
+#!/bin/sh
+# snapraid-maint — gated SnapRAID sync + scrub rotation. Cron calls this
+# nightly ('nas snapraid schedule'); 'nas snapraid run' calls it directly.
+# SPEC-snapraid-maint.md is the design record.
+#
+# The point: a bare cron 'snapraid sync' writes a mass deletion INTO parity
+# and destroys the one copy that could recover it. This runner refuses to
+# sync when the diff shows too many deletions or updates, refuses to run at
+# all when a disk is not mounted (snapraid reads an empty mountpoint as
+# "all files deleted"), scrubs a slice of old blocks after a clean sync,
+# and reports through the ops log, the state file and the notify sinks.
+#
+# Exit: 0 synced (or nothing to do) · 1 blocked by threshold ·
+#       2 preflight failure · 3 lock held · 4 a snapraid command failed
+#
+# Env: SNAPRAID_MAINT_FORCE=1  skip the threshold gate for THIS run only
+#      ('nas snapraid run --force-sync' sets it; the cron line never does).
+
+CONF=/etc/mountnas/snapraid-maint.conf
+SRCONF=/etc/snapraid.conf
+LOCK=/run/lock/mountnas-snapraid.lock
+BASE=/mnt/nasdata/snapraid
+NOTIFY=/usr/libexec/mountnas/notify
+SYSLOG=/var/log/mountnas.log
+
+# ---- defaults (the seeded conf carries the same values; a missing conf
+# must run, not abort: upgraded boxes have no seed until 'nas snapraid
+# schedule' writes one) ---------------------------------------------------
+DEL_THRESHOLD=100
+UPD_THRESHOLD=200
+SCRUB_PERCENT=7
+SCRUB_OLDER_DAYS=10
+NOTIFY_POLICY=problems
+
+# re-exec under the lock: flock releases it on ANY exit, including signals
+if [ "${SNAPRAID_MAINT_LOCKED:-}" != 1 ]; then
+	mkdir -p /run/lock
+	exec 9> "$LOCK" || exit 3
+	if ! flock -n 9; then
+		# a held lock is usually yesterday's sync still running — not an
+		# emergency. A held lock PLUS a state file older than 48 h is.
+		age=$(( $(date +%s) - $(date -r "$BASE/state/last-run" +%s 2>/dev/null || date +%s) ))
+		if [ "$age" -gt 172800 ]; then
+			printf 'A snapraid-maint run has held the lock for over 48 hours.\nCheck it:  ps | grep snapraid\n' \
+				| "$NOTIFY" "snapraid: maintenance appears STUCK" 2>/dev/null || :
+		fi
+		echo "snapraid-maint: another run holds $LOCK — exiting" >&2
+		exit 3
+	fi
+	SNAPRAID_MAINT_LOCKED=1 exec "$0" "$@"
+fi
+
+# ---- helpers ------------------------------------------------------------
+log() { printf '%s snapraid-maint: %s\n' "$(date '+%F %T')" "$*" >> "$SYSLOG" 2>/dev/null; }
+say() { printf '%s\n' "$*"; log "$*"; }
+
+# config: validate every value; a bad one falls back to its default (never
+# source a hand-edited file's arbitrary keys into the gate's variables)
+_read_conf() {
+	[ -f "$CONF" ] || return 0
+	# cut the inline comment BEFORE trimming: deleting spaces first would
+	# glue '# block sync...' onto the value (the seeded file has inline
+	# comments on every line, so this is the normal case, not the edge)
+	for k in DEL_THRESHOLD UPD_THRESHOLD SCRUB_PERCENT SCRUB_OLDER_DAYS; do
+		v=$(sed -n "s/^$k=//p" "$CONF" | tail -n1 | sed 's/#.*//' | tr -d ' "')
+		case "$v" in
+			'' ) ;;
+			*[!0-9]*) say "conf: $k='$v' is not a number — using the default" ;;
+			*) eval "$k=$v" ;;
+		esac
+	done
+	v=$(sed -n 's/^NOTIFY=//p' "$CONF" | tail -n1 | sed 's/#.*//' | tr -d ' "')
+	case "$v" in problems|always|never) NOTIFY_POLICY=$v ;;
+		'') ;; *) say "conf: NOTIFY='$v' unknown — using 'problems'" ;; esac
+}
+
+# every data path and EVERY parity variant (parity, 2-..6-parity, z-parity;
+# a value may be a comma-split list of files). Walk each path up to its
+# nearest mountpoint: on a diskless box '/' is RAM, so a path that resolves
+# to '/' means the disk is absent and the directory is an empty shell —
+# exactly what snapraid would read as "all files deleted".
+_array_paths() {
+	awk '$1!~/^#/ {
+		if ($1=="data") print $3
+		else if ($1 ~ /^([2-6]-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) print a[i] }
+	}' "$SRCONF" 2>/dev/null
+}
+_on_mounted_disk() {   # $1=path (file or dir) -> 0 when its mountpoint != /
+	# mountpoint(1) is a busybox applet, so this needs no extra package
+	_p=$1
+	[ -d "$_p" ] || _p=$(dirname "$_p")
+	while [ "$_p" != "/" ]; do
+		if mountpoint -q "$_p" 2>/dev/null; then return 0; fi
+		_p=$(dirname "$_p")
+	done
+	return 1
+}
+
+# state + per-run log live on the DATA disk (survive reboots; never the lbu
+# overlay — machine-written state must not demand a commit per night). When
+# nasdata is absent the run continues and says state could not be saved.
+_state_ok=1
+mkdir -p "$BASE/state" "$BASE/logs" 2>/dev/null || _state_ok=0
+RUNLOG="$BASE/logs/maint-$(date +%Y%m%d-%H%M%S).log"
+[ "$_state_ok" = 1 ] && : > "$RUNLOG" 2>/dev/null || RUNLOG=$SYSLOG
+run() { say "+ $*"; "$@" >> "$RUNLOG" 2>&1; }
+
+_write_state() {   # $1=verdict $2=exitcode
+	[ "$_state_ok" = 1 ] || { log "state not saved ($BASE unwritable)"; return 0; }
+	{
+		printf 'date=%s\nverdict=%s\nexit=%s\n' "$(date '+%F %T')" "$1" "$2"
+		printf 'deleted=%s\nupdated=%s\nadded=%s\nscrubbed=%s\n' \
+			"${D_REM:-0}" "${D_UPD:-0}" "${D_ADD:-0}" "${SCRUBBED:-no}"
+		printf 'log=%s\n' "$RUNLOG"
+	} > "$BASE/state/last-run" 2>/dev/null || :
+	# consecutive-blocked counter: at 3 the subject escalates (a nightly
+	# repeat of the identical warning is what users learn to ignore)
+	if [ "$1" = BLOCKED ]; then
+		n=$(cat "$BASE/state/blocked-count" 2>/dev/null); case "$n" in ''|*[!0-9]*) n=0 ;; esac
+		echo $((n + 1)) > "$BASE/state/blocked-count" 2>/dev/null || :
+	else
+		rm -f "$BASE/state/blocked-count" 2>/dev/null || :
+	fi
+	# retention: newest 60 run logs
+	ls -1t "$BASE/logs"/maint-*.log 2>/dev/null | tail -n +61 | while IFS= read -r f; do
+		rm -f "$f"
+	done
+}
+
+_notify() {   # $1=subject, body on stdin; honors NOTIFY_POLICY ($2=problem|ok)
+	case "$NOTIFY_POLICY" in
+		never) return 0 ;;
+		problems) [ "$2" = problem ] || return 0 ;;
+	esac
+	"$NOTIFY" "snapraid: $1" 2>/dev/null || log "notification failed (some or all sinks)"
+}
+
+_finish() {   # $1=verdict $2=exit $3=subject $4=body $5=problem|ok
+	_write_state "$1" "$2"
+	_ops_log_line "$1 $3"
+	printf '%s\n\nHost: %s\nLog:  %s\n' "$4" "$(hostname)" "$RUNLOG" | _notify "$3" "$5"
+	exit "$2"
+}
+# ops log: same best-effort contract as lib.sh's _ops_log (skip when /cfg
+# is absent), duplicated minimally here so the runner stays standalone
+_ops_log_line() {
+	grep -q ' /cfg ' /proc/mounts 2>/dev/null || return 0
+	printf '%s\tsnapraid\t%s\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		"cron@maint" "$*" >> /cfg/mountnas-ops.log 2>/dev/null || :
+}
+
+# ---- 2. config ----------------------------------------------------------
+_read_conf
+
+# ---- 3. preflight -------------------------------------------------------
+command -v snapraid >/dev/null 2>&1 \
+	|| _finish FAILED 2 "cannot run — snapraid missing" "The snapraid binary is not installed." problem
+grep -qE '^[[:space:]]*data[[:space:]]' "$SRCONF" 2>/dev/null \
+	|| _finish FAILED 2 "cannot run — no array configured" \
+		"No data disks in $SRCONF. 'nas disks' finds your disks; see the README's SnapRAID section." problem
+missing=""
+for p in $(_array_paths); do
+	_on_mounted_disk "$p" || missing="$missing $p"
+done
+[ -z "$missing" ] || _finish FAILED 2 "REFUSED — disk(s) not mounted" \
+"These snapraid.conf paths are not on a mounted disk:$missing
+An unmounted data disk reads as an EMPTY directory, and syncing that would
+erase its parity. Nothing was run. Mount the disk(s), then: nas snapraid run" problem
+
+# ---- 4. diff ------------------------------------------------------------
+say "diff: checking the array for changes"
+DIFFOUT=$(snapraid diff 2>>"$RUNLOG"); diffrc=$?
+printf '%s\n' "$DIFFOUT" >> "$RUNLOG" 2>/dev/null
+# snapraid diff: 0 = nothing to sync, 2 = sync required, 1 = error
+if [ "$diffrc" = 1 ]; then
+	_finish FAILED 4 "diff FAILED" "snapraid diff exited 1 — read the log." problem
+fi
+# summary lines: '  123 removed' etc. Fail CLOSED: counts that cannot be
+# parsed must read as blocked, never as "0 changes" — the gate must not
+# open exactly when snapraid's output format changes.
+_count() { printf '%s\n' "$DIFFOUT" | awk -v k="$1" '$2==k {print $1; f=1} END{if(!f) print "PARSE"}' | tail -n1; }
+D_ADD=$(_count added); D_REM=$(_count removed); D_UPD=$(_count updated)
+if [ "$diffrc" = 2 ]; then
+	case "$D_REM$D_UPD" in *PARSE*|*[!0-9]*)
+		_finish BLOCKED 1 "sync BLOCKED — could not parse the diff" \
+			"snapraid diff output did not match the expected format; refusing to judge it. Read the log." problem ;;
+	esac
+fi
+
+if [ "$diffrc" = 0 ]; then
+	say "no changes to sync"
+else
+	# ---- 5. gate --------------------------------------------------------
+	say "diff: +$D_ADD added, -$D_REM removed, ~$D_UPD updated"
+	if [ "${SNAPRAID_MAINT_FORCE:-0}" != 1 ]; then
+		if [ "$DEL_THRESHOLD" -gt 0 ] && [ "$D_REM" -gt "$DEL_THRESHOLD" ]; then
+			_finish BLOCKED 1 "sync BLOCKED — $D_REM deletions (threshold $DEL_THRESHOLD)" \
+"The diff shows $D_REM deleted files. Parity was NOT touched and still holds
+yesterday's state — 'snapraid fix' can restore the files if this is damage.
+If the change is intentional:  nas snapraid run --force-sync" problem
+		fi
+		if [ "$UPD_THRESHOLD" -gt 0 ] && [ "$D_UPD" -gt "$UPD_THRESHOLD" ]; then
+			_finish BLOCKED 1 "sync BLOCKED — $D_UPD updated files (threshold $UPD_THRESHOLD)" \
+"The diff shows $D_UPD updated files (mass updates are how ransomware looks).
+Parity was NOT touched. If the change is intentional:
+nas snapraid run --force-sync" problem
+		fi
+	else
+		say "gate: skipped (--force-sync)"
+	fi
+	# ---- 6. touch + sync ------------------------------------------------
+	# touch AFTER the gate (D9): touched files change timestamps, and a box
+	# full of zero sub-second files must not inflate the gated updated
+	# count. sync re-scans, so the touched files sync in this same run.
+	run snapraid touch || say "touch: nonzero exit (continuing — sync judges the tree itself)"
+	say "sync: writing parity"
+	run snapraid sync \
+		|| _finish FAILED 4 "sync FAILED" "snapraid sync exited nonzero. Its last words:
+$(tail -n 4 "$RUNLOG" 2>/dev/null)
+(snapraid's own refusals — an emptied disk, missing content copies — are
+protections too; the full log has the details.)" problem
+fi
+
+# ---- 7. scrub -----------------------------------------------------------
+if [ "$SCRUB_PERCENT" -gt 0 ] 2>/dev/null; then
+	say "scrub: oldest $SCRUB_PERCENT% of blocks (older than $SCRUB_OLDER_DAYS days)"
+	if run snapraid scrub -p "$SCRUB_PERCENT" -o "$SCRUB_OLDER_DAYS"; then
+		SCRUBBED="$SCRUB_PERCENT%"
+	else
+		_finish FAILED 4 "scrub found problems" \
+"Parity IS synced, but the scrub exited nonzero — read the log and run
+'snapraid status' for the error count. 'snapraid -e fix' repairs bad blocks." problem
+	fi
+else
+	SCRUBBED=off
+fi
+
+if [ "$diffrc" = 0 ]; then
+	_finish NOTHING 0 "nothing to sync (scrub: $SCRUBBED)" "No changes since the last run." ok
+fi
+_finish SYNCED 0 "synced (+$D_ADD -$D_REM ~$D_UPD, scrub: $SCRUBBED)" \
+	"Sync and scrub completed." ok
