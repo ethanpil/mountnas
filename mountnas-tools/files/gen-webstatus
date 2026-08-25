@@ -135,8 +135,21 @@ if mountpoint -q "$DATA" 2>/dev/null; then
 	fi
 fi
 sr_html='<span class="mut">not configured</span>'
+# Prefer the maintenance runner's verdict (nas snapraid): it knows WHY parity
+# is stale — a gated sync must render as a warning with the reason, not as an
+# unexplained age. Boxes that only run raw 'snapraid sync' have no state file
+# and keep the content-file age fallback below.
+sr_state=/mnt/nasdata/snapraid/state/last-run
 sr_content=$(awk '$1=="content"{print $2; exit}' /etc/snapraid.conf 2>/dev/null)
-if [ -n "$sr_content" ]; then
+if [ -n "$sr_content" ] && [ -f "$sr_state" ]; then
+	sr_v=$(sed -n 's/^verdict=//p' "$sr_state" | esc)
+	sr_d=$(sed -n 's/^date=//p' "$sr_state" | cut -d' ' -f1 | esc)
+	case "$sr_v" in
+		SYNCED|NOTHING) sr_html="<span class=\"pill p-ok\">maintained &middot; last run $sr_d</span>" ;;
+		BLOCKED) sr_html="<span class=\"pill p-warn\">sync BLOCKED by the threshold gate &middot; nas snapraid status</span>" ;;
+		*) sr_html="<span class=\"pill p-warn\">last run $sr_v $sr_d &middot; nas snapraid status</span>" ;;
+	esac
+elif [ -n "$sr_content" ]; then
 	if [ -f "$sr_content" ]; then
 		sr_age=$(( ( $(date +%s) - $(date -r "$sr_content" +%s 2>/dev/null || date +%s) ) / 86400 ))
 		if [ "$sr_age" -ge 8 ]; then

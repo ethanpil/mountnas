@@ -18,6 +18,7 @@ ${C_HD}Everyday${C_NO}
   ${C_B}commit${C_NO}    Save changes to the USB; label: -m "note"     (alias: save)
   ${C_B}logs${C_NO}      View the system log  [-n N | -f | --persist on|off|status]
   ${C_B}web${C_NO} / ${C_B}ttyd${C_NO} Dashboard + guide / browser terminal  [on [port]|off|status]
+  ${C_B}snapraid${C_NO}  Gated parity sync + scrub    [run|schedule [HH:MM|off]|status]
 
 ${C_HD}Recover${C_NO}
   ${C_B}rollback${C_NO}  Revert to a previous committed config        [--list | <n>]
@@ -50,7 +51,7 @@ ${C_HD}Important files & paths${C_NO} (edit, then: nas commit)
   ${C_B}/etc/ssh/sshd_config${C_NO}     SSH;  /root/.ssh/authorized_keys = your keys
   ${C_B}/etc/ufw/${C_NO}                Firewall — OFF by default (README "Firewall")
   ${C_B}/var/lib/zerotier-one${C_NO}    ZeroTier;  /var/lib/tailscale  Tailscale state
-  ${C_B}crontab -e${C_NO}               Scheduled jobs (e.g. SnapRAID sync/scrub)
+  ${C_B}crontab -e${C_NO}               Scheduled jobs ('nas snapraid schedule' adds parity)
 
 ${C_HD}Add a disk${C_NO}  (disk/parity names are a convention; snapraid.conf decides)
   1) nas disks             find the disk + copy its paste-ready fstab line

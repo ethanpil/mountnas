@@ -64,6 +64,18 @@ cmd_status() {
 	lbu_out=$(lbu status 2>/dev/null)
 	n=$(printf '%s' "$lbu_out" | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
+	# snapraid maintenance verdict (state written by snapraid-maint on the
+	# data disk; boxes that never ran it, or run raw 'snapraid sync' by hand,
+	# simply have no line here — the dashboard's parity-age view still works)
+	if [ -f /mnt/nasdata/snapraid/state/last-run ]; then
+		srv=$(sed -n 's/^verdict=//p' /mnt/nasdata/snapraid/state/last-run)
+		srd=$(sed -n 's/^date=//p' /mnt/nasdata/snapraid/state/last-run)
+		case "$srv" in
+			SYNCED|NOTHING) ok "snapraid maintenance: $srv ($srd)" ;;
+			BLOCKED) warn "snapraid maintenance: sync BLOCKED ($srd) — see: nas snapraid status" ;;
+			*) bad "snapraid maintenance: $srv ($srd) — see: nas snapraid status" ;;
+		esac
+	fi
 	# reuse this count for the prompt cache instead of running lbu again on exit
 	mkdir -p "$STATE"; printf '%s\n' "${n:-0}" > "$STATE/unsaved" 2>/dev/null || true; UNSAVED_FRESH=1
 	# persistent logging (line shown only when enabled; the setting itself is
@@ -339,7 +351,7 @@ cmd_status_json() {
 		--arg cfg "$(mountpoint -q "$CFG" && echo ok || echo fail)" \
 		--arg data "$(cat "$STATE/data" 2>/dev/null || echo unknown)" \
 		--argjson unsaved "$un" \
-		--argjson last_backup_epoch "$lb" \
+		--argjson last_backup_epoch "$lb" 		--arg snapraid_last_run "$(sed -n 's/^verdict=//p' /mnt/nasdata/snapraid/state/last-run 2>/dev/null)" \
 		--argjson deep "$([ "$dp" = "--deep" ] && echo true || echo false)" \
 		--argjson memory "$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2}
 			END{printf "{\"total_kb\":%d,\"available_kb\":%d,\"swap_total_kb\":%d,\"swap_used_kb\":%d}", t+0, a+0, st+0, (st-sf)+0}' /proc/meminfo 2>/dev/null || echo '{}')" \
@@ -353,6 +365,7 @@ cmd_status_json() {
 	  firewall: (msgs("FW")[0] // "unknown"),
 	  memory: $memory,
 	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch, deep:$deep,
+	  snapraid_last_run: (if $snapraid_last_run == "" then null else $snapraid_last_run end),
 	  healthy: ($failed|not),
 	  checks: {ok: (msgs("OK")|length), warn: (msgs("WARN")|length), fail: (msgs("FAIL")|length)},
 	  fail_lines: msgs("FAIL"), warn_lines: msgs("WARN")}' < "$NAS_CHECKS"

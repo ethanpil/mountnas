@@ -37,7 +37,7 @@ cmd_report() {
 	# to a healthy one in every other file here
 	cat /proc/swaps > "$rpt_d/swaps.txt" 2>/dev/null || true
 	free -m > "$rpt_d/free.txt" 2>/dev/null || true
-	for f in /etc/snapraid.conf /etc/exports /etc/docker/daemon.json /etc/samba/smb.conf /etc/conf.d/zram-init /etc/conf.d/mountnas; do
+	for f in /etc/snapraid.conf /etc/mountnas/snapraid-maint.conf /mnt/nasdata/snapraid/state/last-run /etc/exports /etc/docker/daemon.json /etc/samba/smb.conf /etc/conf.d/zram-init /etc/conf.d/mountnas; do
 		[ -f "$f" ] && cp "$f" "$rpt_d/$(basename "$f")" 2>/dev/null
 	done
 	if tar -czf "$rpt_f" -C "$rpt_d" .; then
