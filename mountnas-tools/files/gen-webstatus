@@ -162,6 +162,53 @@ elif [ -n "$sr_content" ]; then
 	fi
 fi
 
+# ---- the SnapRAID card -----------------------------------------------------
+# CHEAP BY CONTRACT: this renders every ~2 minutes, and NO snapraid command
+# reads array state without touching the data disks ('status' reads the
+# content files, 'diff' walks every file) — one call per render would keep
+# spun-down disks awake forever. Everything here comes from snapraid.conf,
+# /proc/mounts, df on mounted filesystems, and the maintenance runner's
+# state file. The detail lives in 'nas snapraid status [--deep]'.
+if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
+	srt_rows=$(awk '$1!~/^#/ {
+		if ($1=="data") printf "%s\tdata\t%s\n", $2, $3
+		else if ($1 ~ /^([2-6]-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) printf "%s\tparity\t%s\n", $1, a[i] }
+	}' /etc/snapraid.conf 2>/dev/null | while IFS="$(printf '\t')" read -r srt_n srt_r srt_p; do
+		srt_d=$srt_p; [ -d "$srt_d" ] || srt_d=$(dirname "$srt_p")
+		srt_m='<span class="pill p-warn">MISSING</span>'; srt_s="-"
+		srt_w=$srt_d
+		while [ "$srt_w" != "/" ]; do
+			if mountpoint -q "$srt_w" 2>/dev/null; then
+				srt_m='<span class="pill p-ok">mounted</span>'
+				srt_s=$(df -h "$srt_d" 2>/dev/null | awk 'NR==2{printf "%s / %s", $3, $2}')
+				break
+			fi
+			srt_w=$(dirname "$srt_w")
+		done
+		printf '<tr><td class="mono">%s</td><td>%s</td><td class="mono">%s</td><td>%s</td><td class="num">%s</td></tr>\n' \
+			"$(printf '%s' "$srt_n" | esc)" "$srt_r" "$(printf '%s' "$srt_p" | esc)" "$srt_m" "${srt_s:--}"
+	done)
+	# last run + schedule, from OUR state (never from snapraid itself)
+	if [ -f "$sr_state" ]; then
+		srt_run="$(sed -n 's/^date=//p' "$sr_state" | esc) &middot; $(sed -n 's/^verdict=//p' "$sr_state" | esc) (+$(sed -n 's/^added=//p' "$sr_state" | esc) -$(sed -n 's/^deleted=//p' "$sr_state" | esc) ~$(sed -n 's/^updated=//p' "$sr_state" | esc) &middot; scrub $(sed -n 's/^scrubbed=//p' "$sr_state" | esc))"
+	else
+		srt_run='never — run: <span class="mono">nas snapraid run</span>'
+	fi
+	srt_cron=$(crontab -l 2>/dev/null | grep -F '# mountnas-snapraid' | awk '{printf "%02d:%02d nightly", $2, $1}')
+	[ -n "$srt_cron" ] || srt_cron='not scheduled — <span class="mono">nas snapraid schedule</span>'
+	srt_thr=$(sed -n 's/^DEL_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
+	srt_thr2=$(sed -n 's/^UPD_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
+	snapraid_html="<div style=\"overflow-x:auto\"><table><thead><tr><th>Name</th><th>Role</th><th>Path</th><th>State</th><th>Used</th></tr></thead><tbody>$srt_rows</tbody></table></div>
+      <dl>
+        <dt>Last maintenance</dt><dd class=\"num\">$srt_run</dd>
+        <dt>Schedule</dt><dd class=\"num\">$srt_cron</dd>
+        <dt>Sync gate</dt><dd class=\"num\">blocks &gt;${srt_thr:-100} deletes / &gt;${srt_thr2:-200} updates <span class=\"mut\">(snapraid-maint.conf)</span></dd>
+      </dl>
+      <div class=\"mut\" style=\"margin-top:6px\">Live array statistics (<span class=\"mono\">snapraid status/diff</span>) read the data disks and would wake them on every refresh — run <span class=\"mono\">nas snapraid status --deep</span> instead.</div>"
+else
+	snapraid_html="<div class=\"mut\">SnapRAID is not configured — no parity protection. <span class=\"mono\">nas snapraid status</span> shows the setup steps; the <a href=\"guide.html\">user guide</a> has the walkthrough.</div>"
+fi
+
 # ---- services (core from status --json; off-by-default probed here) --------
 services=$(printf '%s' "$sj" | jq -r '
 	[.services[]? |
@@ -581,6 +628,7 @@ $css
   <img src="logo.png" alt="MountNAS">
   <div><h1>$host</h1><div class="sub">MountNAS $rel &middot; read-only dashboard</div></div>
   <div class="spacer"></div>
+  <a class="termlink" href="guide.html"><span class="pill p-ok"><i></i>User guide</span></a>
   $ttyd_hdr
   <div class="state $state">$state_word</div>
   <div class="upd">updated $gen_at<br>refreshes every 2 min</div>
@@ -628,6 +676,7 @@ $css
         <dt>Alert sinks</dt><dd>$sinks_html</dd>
       </dl>
     </div>
+    <div class="card"><h2>SnapRAID</h2>$snapraid_html</div>
     <div class="card"><h2>Services</h2><div class="svc">$services</div>$svc_extra</div>
     <div class="card"><h2>Checks</h2><ul class="checks">
 $checks
