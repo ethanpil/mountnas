@@ -60,10 +60,8 @@ jobs:
           # abuild runs as the non-root build user but must 'apk add' build deps
           # ('-r' installs both make- and regular depends), which needs root. Give it
           # passwordless doas — abuild's standard elevation (it shells out to doas).
-          # Also pre-install the compile deps of the source-built packages as a
-          # safety net (snapraid: linux-headers; snapraid-daemon: also zip,
-          # whose absence fails its ./configure outright).
-          apk add doas linux-headers zip
+          # Also pre-install snapraid's compile dep (linux-headers) as a safety net.
+          apk add doas linux-headers
           echo "permit nopass keepenv build" > /etc/doas.conf
           chmod 0400 /etc/doas.conf
           cp -r "$GITHUB_WORKSPACE" /home/build/repo; chown -R build:build /home/build
@@ -103,7 +101,7 @@ jobs:
             # actual set of local APKBUILD dirs, so adding/removing a local apk
             # cannot silently skew the preflight (same philosophy as the
             # rc_add drift guard below).
-            LOCAL_PKGS="mountnas-tools|snapraid|snapraid-daemon|mergerfs|zerotier-one"
+            LOCAL_PKGS="mountnas-tools|snapraid|mergerfs|zerotier-one"
             found=$(cd "$HOME"/repo && ls -d ./*/APKBUILD 2>/dev/null | sed -e "s,^\./,," -e "s,/APKBUILD,," | sort | tr "\n" "|" | sed "s/|$//")
             want=$(printf "%s" "$LOCAL_PKGS" | tr "|" "\n" | sort | tr "\n" "|" | sed "s/|$//")
             [ "$want" = "$found" ] || { echo "ERROR: local-apk exclusion list ($LOCAL_PKGS) does not match the APKBUILD dirs ($found) — update LOCAL_PKGS"; exit 1; }
@@ -169,10 +167,6 @@ jobs:
             # APKBUILD are the integrity check. Regenerating at build time would
             # make verification a no-op (hash whatever was just downloaded).
             ( cd "$HOME"/repo/snapraid && abuild -r )
-            # AFTER snapraid: snapraid-daemon declares snapraid>=14.6, and
-            # abuild -r resolves depends from the local repo (order matters).
-            echo "== build snapraid-daemon (compiled from source) =="
-            ( cd "$HOME"/repo/snapraid-daemon && abuild -r )
             echo "== build mergerfs (repackage upstream static binary) =="
             ( cd "$HOME"/repo/mergerfs && abuild -r )
             echo "== build zerotier-one (repackage upstream apk under our key) =="

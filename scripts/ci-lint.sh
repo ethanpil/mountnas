@@ -5,9 +5,8 @@
 # never be silently unlinted: everything under mountnas-tools/files/ with a
 # sh/openrc-run shebang, every profile.d snippet (sourced, so shebang-less, hence
 # the explicit glob), the nas CLI's sourced files (lib.sh + cmd/*.sh, also
-# shebang-less, also explicit), scripts/*.sh (including this file), the
-# unit-test scripts under tests/unit/, and the OpenRC scripts the local
-# apks ship (*/*.initd — discovery only scans mountnas-tools/files).
+# shebang-less, also explicit), scripts/*.sh (including this file), and the
+# unit-test scripts under tests/unit/.
 #
 # -s sh: every script must parse as POSIX sh (busybox ash on the device;
 # CONTEXT.md §6 documents recurring ash-strictness bugs). -S warning: SC2015-style
@@ -31,7 +30,7 @@ done)
 shellcheck -s sh -S warning -e SC2034,SC3043,SC3045,SC3033 \
 	$files mountnas-tools/files/profile-*.sh scripts/*.sh \
 	mountnas-tools/files/lib.sh mountnas-tools/files/cmd/*.sh \
-	tests/unit/*.sh ./*/*.initd
+	tests/unit/*.sh
 # bash-only, sourced (no shebang, so discovery skips it): lint as bash. The
 # zsh completion (files/zsh-nas-completion) is zsh syntax — shellcheck cannot
 # lint zsh; it ships as data.

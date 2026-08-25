@@ -38,7 +38,7 @@ that will silently regress if "cleaned up" without understanding it.
   drill is automated now: `test_backup_restore_drill` backs up a configured
   box, writes the image to a fresh virtual stick, boots it, and asserts the
   OS + committed config came back.)
-- **Self-hosted QEMU suite** (`tests/qemu/`, 88 tests, see `TESTING-QEMU.md`):
+- **Self-hosted QEMU suite** (`tests/qemu/`, 84 tests, see `TESTING-QEMU.md`):
   boots the real image under KVM and covers everything the CI smoke tests
   don't — per-command CLI behavior, fault injection (hot-unplug, EIO, power
   cuts mid-upgrade), lbu persistence, mail, the restore drill, and the
@@ -82,19 +82,18 @@ mountnas/
 │       ├── zsh-nas-completion        # /usr/share/zsh/site-functions/_nas (data, unlintable)
 │       └── logo
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
-├── snapraid-daemon/ APKBUILD + snapraidd.{initd,confd}   # LOCAL apk: compiled from source (see §11)
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
 ├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
 ├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
-├── tests/qemu/                       # self-hosted QEMU suite (88 tests; TESTING-QEMU.md)
+├── tests/qemu/                       # self-hosted QEMU suite (85 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh + the tests/unit suite, on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
 ```
 
-There are **five locally-built apks**, all signed by the per-build key and served
-from the on-media local repo: `mountnas-tools`, `snapraid`, `snapraid-daemon`,
-`mergerfs`, `zerotier-one`. They are excluded from the upstream preflight resolve and are
+There are **four locally-built apks**, all signed by the per-build key and served
+from the on-media local repo: `mountnas-tools`, `snapraid`, `mergerfs`,
+`zerotier-one`. They are excluded from the upstream preflight resolve and are
 why several CI steps exist. (`cmkfs` and `duf` were also local apks through
 beta-5; both were removed at the maintainer's direction in the 2026-07-27
 over-engineering review — cmkfs additionally carried the pipeline's only
@@ -277,8 +276,8 @@ latest-stable. Corrected:
   (libstdc++ ABI). Upstream ships **fully-static** binaries → repackaged into a
   local apk (`mergerfs/APKBUILD`).
 
-The CI **preflight** (`apk add --simulate`) excludes all five local packages
-(`mountnas-tools|snapraid|snapraid-daemon|mergerfs|zerotier-one`) since they aren't
+The CI **preflight** (`apk add --simulate`) excludes all four local packages
+(`mountnas-tools|snapraid|mergerfs|zerotier-one`) since they aren't
 upstream.
 
 Package additions after the plan (alpha-3…: zsh/mosh, curated firmware set,
@@ -749,96 +748,3 @@ Output: a GitHub Release tagged `<release_tag>` with the files in §4.
   backup docs (incl. the one-time alpha-1/2/3 migration). `CHANGELOG.md` —
   per-release history.
 - Build host base: Alpine **latest-stable (v3.24)**, `jirutka/setup-alpine`, `abuild`.
-
----
-
-## 11. SnapRAID Daemon (added 2026-08-23)
-
-**It is a SEPARATE upstream project**, not a feature of snapraid 14.x.
-`github.com/amadvance/snapraid-daemon`, by SnapRAID's own author. SnapRAID 14
-only added the logging and `--gui-*` hooks the daemon drives, which is why the
-14.x release notes keep mentioning it ("required by SnapRAID Daemon 1.8", …).
-So MountNAS builds a second local apk; the daemon needs `snapraid>=14.6`, and
-the APKBUILD declares that rather than trusting packages.list ordering. CI must
-build it AFTER snapraid — `abuild -r` resolves a package's depends from the
-local repo, so the reverse order fails the build.
-
-**Build note:** `./configure` FAILS without `zip` (it packs the web UI into
-`/usr/share/snapraidd/commander.zip`). build.yml pre-installs it beside
-linux-headers.
-
-**What it replaces:** the hand-written `snapraid sync`/`scrub` cron lines the
-README used to be the only answer. It runs the SAME snapraid binary, so the
-array format, parity and recovery story are untouched, and `snapraid` on the
-command line keeps working. MountNAS therefore does NOT reimplement scheduling
-— `nas snapraid` is only an on/off/status switch, the same shape as `nas web`
-and `nas ttyd`.
-
-**One canonical config, three places.** `snapraid-daemon/snapraidd.conf.default`
-is the single source: the apk installs it to
-`/usr/share/snapraidd/snapraidd.conf.default`, genapkovl seeds
-`/etc/snapraidd.conf` from that same file, and BOTH the init script and `nas
-snapraid on` copy it into place when `/etc/snapraidd.conf` is missing. That
-copy-if-absent is the upgrade path: `nas upgrade` never replaces the apkovl,
-so a box that upgraded INTO this package never saw the seed and would
-otherwise start the daemon on upstream defaults (loopback, 404 pages, no
-schedule). Do NOT ship a `/etc/conf.d/snapraidd` — the daemon reads no
-environment, and an unused conf.d file would be the one thing `nas upgrade`
-DOES overwrite (§3).
-
-**Four settings are MountNAS defaults, not upstream's**, all verified
-necessary on a live box:
-- `sys_log_directory = /mnt/nasdata/snapraid/logs` — upstream defaults to
-  /var/log/snapraid, which is RAM here. Those logs are the daemon's memory of
-  past tasks, so a reboot would erase its history. The init script's
-  `start_pre` creates the directory (and refuses if the path resolves to `/`).
-- `net_port = 7627` (all interfaces) — upstream binds 127.0.0.1 only, which
-  would make the dashboard link and the LAN UI dead.
-- `net_web_root = commander.zip` — **without this the daemon answers the REST
-  API but returns 404 for every web page.** Confirmed by testing; it is not
-  optional.
-- `maintenance_schedule = 02:00` — **upstream ships no schedule, and a daemon
-  with no schedule syncs NOTHING.** It runs, the UI works, the dashboard says
-  "running", and parity silently never updates. The value is `HH:MM`, not a
-  cron expression. `nas snapraid status` and the dashboard both report the
-  real schedule, or say out loud that nothing is scheduled.
-
-The rest of the file carries upstream's own defaults, written out ACTIVE
-rather than commented, so `nas snapraid` and the dashboard can read the values
-the daemon is actually using: `sync_threshold_deletes = 50`,
-`sync_threshold_updates = 100` (the daemon refuses a sync that would delete or
-change more than that — the anti-ransomware guard), `scrub_percentage = 0.7`,
-`probe_interval_minutes = 3`, `spindown_idle_minutes = 15`,
-`notify_syslog_enabled = 1`. Upstream's full commented reference ships beside
-the default as `/usr/share/snapraidd/snapraidd.conf.example`.
-
-**`net_acl` must keep `+127.0.0.1`.** The ACL is a whitelist; `nas snapraid on`
-probes the daemon over loopback to prove it is answering, so an ACL naming only
-the LAN makes a perfectly healthy daemon look broken. The probe uses the
-address the daemon actually BINDS (not a hardcoded 127.0.0.1), which is the
-other half of that bug: a daemon bound to one LAN address never answers on
-loopback at all.
-
-**Security posture, and it is wider than the rest of the box:** the REST API
-is READ-WRITE and has NO password — only an optional IP `net_acl`. Anyone who
-can reach the port can start a sync or a scrub and change daemon settings.
-That is a bigger door than the read-only `nas web` dashboard, so `nas snapraid
-on` prints the warning every time on a LAN bind, and README/guide both repeat
-it. The service ships OFF.
-
-**The daemon rewrites `/etc/snapraidd.conf` itself** through the API, so a
-change made in the web UI is RAM-only until `nas commit` — the usual MountNAS
-rule, but easy to miss because the change was not made in a shell.
-
-**Not verified end to end:** a complete daemon-driven sync. A maintenance run
-opens with snapraid's `up` (spinup), which resolves each disk's parent in
-sysfs and therefore fails on loop devices; the QEMU golden guest has no spare
-disk to hold parity on a device separate from the data, which snapraid
-refuses. Everything either side of that IS verified on a live Alpine box:
-package contents, the full OpenRC lifecycle (start/stop/restart/reload/status,
-nice 19 + ionice idle, start_pre creating the log dir), `nas snapraid
-on/off/status` including the port rewrite and the loopback case, the web UI and
-REST API answering, the dashboard pill/link/Protection row, and the daemon
-invoking the real CLI (`snapraid --gui --log >&2 <cmd>`) and reporting its
-output faithfully — including snapraid's own refusals (two content files
-required; parity must not share a device with data).

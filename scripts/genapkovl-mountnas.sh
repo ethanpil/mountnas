@@ -213,14 +213,6 @@ mk root:root 0644 "$tmp/etc/snapraid.conf" <<'EOF'
 # exclude /tmp/
 EOF
 
-# ---- SnapRAID Daemon: scheduler + REST API + web UI (service OFF by default) ----
-# ONE source of truth: the same file the apk installs at
-# /usr/share/snapraidd/snapraidd.conf.default, which the init script also
-# copies when a box that UPGRADED into the package has no config yet. Seeding
-# it here as well means a freshly flashed box has it before first boot.
-# Its own comments carry the rationale for the MountNAS-specific settings.
-mk root:root 0644 "$tmp/etc/snapraidd.conf" < "$(dirname "$0")/../snapraid-daemon/snapraidd.conf.default"
-
 # ---- smartd: monitor all disks WITHOUT waking spun-down drives ----
 # The stock smartmontools DEVICESCAN polls every 30 min with no power-state
 # check, which keeps NAS data disks spinning 24/7. '-n standby,q' skips the

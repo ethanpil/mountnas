@@ -124,56 +124,7 @@ all included with the kernel; it's only these device-firmware blobs that are cur
 * Mount your parity disks in `/etc/fstab` just like any other disk.
 * Configure `/etc/snapraid.conf`
   * Keep `/mnt/nasdata` out of the array
-* Schedule sync/scrub — either with the **SnapRAID Daemon** (below) or with `crontab -e`, then `nas commit`
-
-### SnapRAID Daemon (scheduling, web UI, REST API)
-
-Scheduling parity work with cron is the traditional route and still works. The
-[SnapRAID Daemon](https://github.com/amadvance/snapraid-daemon) is the other
-option: it is a separate upstream project by SnapRAID's own author that runs
-**the same `snapraid` binary** and adds the parts cron does not give you —
-scheduled sync and scrub with safety thresholds, SMART monitoring, disk
-spindown, notifications, and a web UI. Your array, parity files and recovery
-procedure are unchanged, and `snapraid` on the command line keeps working
-whether the daemon runs or not.
-
-It is baked in and **off by default**:
-
-```sh
-nas snapraid on        # default port 7627; or: nas snapraid on 9000
-```
-
-```sh
-nas commit             # REQUIRED to keep it across reboots (RAM-only until committed)
-```
-
-Then browse to `http://mountnas.local:7627/`. `nas snapraid status` shows
-whether it is enabled, running and saved; `nas snapraid off` stops and disables
-it without touching the array.
-
-> ⚠️ **The REST API is read-write and has no password.** Anyone who can reach
-> the port can start a sync or a scrub and change the daemon's settings — a
-> wider door than the read-only `nas web` dashboard. That is the same
-> trusted-LAN assumption Samba and `nas ttyd` make, but if your LAN is not
-> that, either keep the daemon off, bind it to loopback and reach it over SSH
-> or Tailscale (`net_port = 127.0.0.1:7627`), or restrict `net_acl` — keep
-> `+127.0.0.1` in the list, because `nas snapraid on` probes the daemon from
-> loopback (e.g. `net_acl = +192.168.1.0/24,+127.0.0.1`). Edit
-> `/etc/snapraidd.conf`, then `nas commit`.
-
-Configure it in `/etc/snapraidd.conf` or through the web UI. Four settings are
-MountNAS defaults rather than upstream's: the command logs go to
-`/mnt/nasdata/snapraid/logs` (on a diskless box `/var/log` is RAM, and those
-logs are the daemon's memory of past tasks), the port is bound on all
-interfaces so the LAN can reach it, `net_web_root = commander.zip` — without
-which the API answers but every page is a 404 — and `maintenance_schedule =
-02:00`, because a daemon with no schedule runs and syncs nothing. The packaged
-copy of these defaults stays at `/usr/share/snapraidd/snapraidd.conf.default`,
-and the full option reference is next to it as `snapraidd.conf.example`.
-
-**The daemon writes that config file itself** when you change settings in the
-web UI. Like every other `/etc` file it lives in RAM until you `nas commit`, so
-save after making changes or they are gone at the next reboot.
+* Schedule sync/scrub with `crontab -e`, then `nas commit`
 
 **Unified pool (mergerfs):** [mergerfs](https://github.com/trapexit/mergerfs) IS included (as upstream's static binary). To pool several data disks into one mount, add a line like the following to `/etc/fstab` (after the member disks), then `nas status` and `nas commit`:
 
@@ -202,7 +153,6 @@ The `nas` tool has been designed to help you manage the system.
 | `nas rollback` | The config time machine: `--list` shows the previous committed overlays lbu keeps on `/cfg` (with the notes from `nas commit -m`); `nas rollback <n>` restores one (crash-safe swap, applies at the next boot, the replaced config stays available for rolling forward). |
 | `nas logs` | View the system log (`-f` follows). `nas logs --persist on` moves syslog onto `/mnt/nasdata/logs` so a crash or power cut leaves history behind; rotation is automatic (1 MB × 10 files via syslogd — nothing to manage). Opt-in because periodic writes keep that disk awake. |
 | `nas web` | The read-only LAN status dashboard + built-in user guide (off by default). `on [port]` enables it (default 8080), `off` disables, `status` reports the URL and whether the setting is saved. **Run `nas commit` after `on`/`off`** — like every setting it lives in RAM until committed, and the command warns when the current state wouldn't survive a reboot. Static files only — a background job re-renders the page into RAM every ~2 minutes and busybox httpd (as `nobody`) serves it: no request-time code, no disk writes. `/guide.html` is the full user guide baked into the release; `/status.json` feeds integrations. |
-| `nas snapraid` | SnapRAID Daemon on/off/status (scheduler + web UI) |
 | `nas ttyd` | Browser-based terminal (off by default). `on [port]` enables it (default 22222), `off` disables, `status` reports the URL — same `nas commit` rule and warnings as `nas web`. Serves a **real login prompt** (never a bare shell) over plain HTTP on your trusted LAN — the password transits in cleartext, so treat it like Samba. Root login works: `on` adds `pts/*` entries to `/etc/securetty` once (busybox `login` refuses root on unlisted ttys otherwise). The dashboard links to it when running. |
 | `nas notify` | Notification sinks: with no arguments lists what's configured in `/etc/mountnas/notify.conf` (email, ntfy, webhook, Slack, Discord, gotify — one `type:target` per line); `--test` sends a test message to every sink; `nas notify "subject" [body]` sends ad-hoc messages from scripts/cron (body can be piped in). Disk-loss alerts, SMART trouble, and health digests fan out to all sinks. |
 | `nas backup` | Images the **whole boot USB** (OS + saved config) to a gzip file for upgrade/dead-USB recovery — default `/mnt/nasdata/backups`, or `--to <dir\|file>`. Copy it OFF this box. Does **not** include your data disks. |
@@ -225,7 +175,6 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Docker** (started once `/mnt/nasdata` is up): data-root is `/mnt/nasdata/docker`. Put compose files and appdata under `/mnt/nasdata` so they survive a dead USB and travel with the data.
 - **Samba** (started once `/mnt/nasdata` is up): edit `/etc/samba/smb.conf`, `smbpasswd -a <user>`, `rc-service samba restart`, `nas commit`.
 - **NFS** (started once `/mnt/nasdata` is up): edit `/etc/exports`, `rc-service nfs restart`, `nas commit`.
-- **SnapRAID Daemon** (`snapraidd`, off by default): `nas snapraid on && nas commit` — scheduled sync/scrub, SMART monitoring, spindown and notifications for your parity array, with a web UI at `http://<box>:7627/`. Runs the same `snapraid` binary; see [Parity](#parity) for the read-write API warning.
 - **Browser terminal (ttyd)** (off by default): `nas ttyd on && nas commit` — a real login prompt at `http://<box>:22222/` (root works; `on` whitelists ptys in `/etc/securetty` once). Handy when SSH is awkward — a tablet, a borrowed machine, a quick look from the couch.
 - **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`.
 - **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
@@ -444,7 +393,7 @@ __Shipped config that differs from stock__
 * `/etc/smartd.conf`: `-n standby,q` (never wakes spun-down disks) and SMART trouble routed through the notification sinks via `-M exec`
 * `/etc/avahi/avahi-daemon.conf`: mDNS on by default with `deny-interfaces=docker0` so `.local` resolves to the LAN address
 * `/etc/docker/daemon.json`: data-root on `/mnt/nasdata/docker`, `live-restore`, capped json-file logs
-* Pre-seeded templates you own: `/etc/fstab` (config partition + commented data-disk guidance), `/etc/samba/smb.conf`, `/etc/snapraid.conf`, `/etc/snapraidd.conf`, `/etc/msmtprc`, `/etc/mail.rc` (wires `mail(1)` to msmtp), `/etc/mountnas/notify.conf`
+* Pre-seeded templates you own: `/etc/fstab` (config partition + commented data-disk guidance), `/etc/samba/smb.conf`, `/etc/snapraid.conf`, `/etc/msmtprc`, `/etc/mail.rc` (wires `mail(1)` to msmtp), `/etc/mountnas/notify.conf`
 * `/etc/modules` preloads `fuse`, `ntfs3` (in-kernel NTFS), and `drivetemp` (disk temps without waking drives)
 * Compressed zram swap on by default (`zram-init` in the boot runlevel; `/etc/conf.d/zram-init` sizes it to half of RAM, zstd) — cold pages of the RAM-resident OS compress well, so a box keeps headroom under load
 * Upgrades reconcile more than packages: releases ship an `rc.base` runlevel table and `confd.base` defaults next to `world.base`, so a newly enabled service or config default reaches boxes that upgrade — via a three-way merge that never undoes a service you disabled, and never overwrites a `conf.d` file you own
@@ -504,7 +453,6 @@ __Disk Partitioning__
 __Parity / Volume Management__
 
 * snapraid (Built from source, not Alpine repo)
-* snapraid-daemon (`snapraidd` — scheduler, REST API and web UI for SnapRAID; also built from source. Service off by default: `nas snapraid on`)
 * mergerfs (Download static binary from GitHub release page)
 * mdadm
 * lvm2
