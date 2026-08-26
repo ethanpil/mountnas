@@ -505,7 +505,9 @@ def test_runlevel_and_confd_reconciliation(upgrade_guest, golden):
 
     # --- user drift: disable a shipped service, enable an off-by-default one ---
     guest.run("rc-service smartd stop; rc-update del smartd default", check=True)
-    guest.run("rc-update add tailscale default", check=True)
+    # nut-upsd: baked-in and off by default — "a service the user enabled"
+    # without depending on a mesh VPN being in the image (they no longer are)
+    guest.run("rc-update add nut-upsd default", check=True)
 
     # --- make zram-init look NEWLY SHIPPED by this release ---
     # This is a self-upgrade, so both rc.base copies are identical and nothing
@@ -540,6 +542,6 @@ def test_runlevel_and_confd_reconciliation(upgrade_guest, golden):
     # here, silently undoing the only documented way to disable a service.
     assert not re.search(r"^\s*smartd\s", rc, re.M), \
         f"upgrade re-enabled a service the user deliberately disabled:\n{rc}"
-    assert re.search(r"^\s*tailscale\s", rc, re.M), \
+    assert re.search(r"^\s*nut-upsd\s", rc, re.M), \
         f"upgrade dropped a service the user enabled:\n{rc}"
     guest.screenshot("runlevel-reconciliation")

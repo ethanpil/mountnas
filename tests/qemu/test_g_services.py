@@ -7,6 +7,8 @@ access is needed inside the guest.
 
 from __future__ import annotations
 
+import pytest
+
 from lib import config as C
 from lib.guest import assert_container_stable, import_busybox_image
 
@@ -63,16 +65,19 @@ def test_data_services_absent_from_runlevels(golden_guest):
                 f"{svc} found in runlevel {runlevel}:\n{r.out}"
 
 
+@pytest.mark.network
 def test_zerotier_identity_persists_reboot(golden_guest):
-    """zerotier-one is off by default but its node identity (/var/lib/
-    zerotier-one) is an lbu include -- once generated + committed it must
-    survive a reboot (identity loss = new node ID = re-auth everywhere)."""
+    """Mesh VPNs are NOT baked in -- users install them (docs: apk add +
+    rc-update + commit).  The lbu include for /var/lib/zerotier-one still
+    ships, so a user-installed zerotier's node identity must survive commit
+    + reboot (identity loss = new node ID = re-auth everywhere).  Installs
+    from the CDN (Alpine community carries zerotier-one), hence the marker."""
     g = golden_guest
+    r = g.run("apk add zerotier-one", timeout=300)
+    if r.rc != 0:
+        pytest.skip(f"apk add zerotier-one failed (offline?): {r.out[-300:]}")
     r = g.run("rc-service zerotier-one start", timeout=120)
     if r.rc != 0:
-        # service present? (local apk) -- a missing initd is a packaging bug
-        assert g.run("test -x /etc/init.d/zerotier-one").rc == 0, \
-            "zerotier-one init script missing entirely"
         raise AssertionError(f"zerotier-one failed to start: {r.out}")
     ident = g.poll_until("cat /var/lib/zerotier-one/identity.public",
                          timeout=120, desc="identity generated")

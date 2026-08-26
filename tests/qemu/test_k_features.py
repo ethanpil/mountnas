@@ -288,9 +288,12 @@ def test_ttyd_browser_terminal(dev_guest):
     g.run("/usr/libexec/mountnas/gen-webstatus", timeout=180, check=True)
     idx2 = g.run("cat /run/mountnas/web/index.html", check=True).out
     assert "Web terminal off" in idx2, "header off-indicator missing"
-    # no anchor anywhere ('termlink' alone would false-positive: the CSS
-    # class definition ships in every render)
-    assert ":22222/" not in idx2 and 'class="termlink"' not in idx2, \
+    # no anchor may TARGET the terminal. The old blanket checks (':22222/'
+    # / 'termlink' substrings) now false-positive by design: the header
+    # carries a User-guide termlink always, the off-pill links to the
+    # guide's #ttyd section, and the page embeds a syslog tail where a
+    # logged URL is legitimate content.
+    assert not re.search(r'href="[^"]*:22222/"', idx2), \
         "terminal still linked after nas ttyd off"
 
 
@@ -436,3 +439,49 @@ def test_web_dashboard_guide_and_json(dev_guest, artifacts):
     assert off.rc == 0
     gone = g.run("curl -fsS --max-time 5 http://127.0.0.1:8080/ >/dev/null 2>&1")
     assert gone.rc != 0, "dashboard still serving after nas web off"
+
+# ------------------------------------------------- user-service boot heal
+
+@pytest.mark.network
+def test_user_service_starts_after_world_sync_heal(dev_guest):
+    """A user-installed service ('apk add X && rc-update add X && nas commit')
+    installs its init script MID-boot -- the supervisor's world re-sync runs
+    after /cfg mounts, but openrc walked the runlevels earlier and skipped
+    the then-dangling symlink.  The supervisor heal records the dangling
+    links before the sync and starts exactly the ones the sync resolves.
+
+    Validated via `nas restart` (runs the in-RAM repo supervisor), with the
+    boot race manufactured for real: package absent + world entry present +
+    runlevel symlink dangling is byte-for-byte the state a diskless boot
+    hands the supervisor.  The boot-path half lands automatically once this
+    supervisor is baked into an image (same caveat as the rpcbind test)."""
+    g = dev_guest
+    r = g.run("apk add rsync-openrc", timeout=300)   # tiny; caches to /cfg
+    if r.rc != 0:
+        pytest.skip(f"apk add rsync-openrc failed (offline?): {r.out[-300:]}")
+    g.run("rc-update add rsyncd default", check=True)
+    # a minimal daemon config so the started service stays up (the rsync
+    # package's sample may not ship on every branch); /etc survives apk del
+    g.run("printf 'pid file = /run/rsyncd.pid\\n' > /etc/rsyncd.conf",
+          check=True)
+    # manufacture the boot state: world wants it, filesystem lacks it
+    g.run("apk del rsync-openrc && grep -qx rsync-openrc /etc/apk/world"
+          " || echo rsync-openrc >> /etc/apk/world", check=True)
+    g.run("test ! -e /etc/init.d/rsyncd", check=True)   # dangling confirmed
+    # the surgical control: an enabled service that is merely STOPPED (its
+    # link resolves) must NOT be touched by the heal
+    g.run("rc-service crond stop", check=True)
+
+    g.run("rc-service mountnas restart", timeout=240, check=True)
+
+    g.poll_until("test -e /etc/init.d/rsyncd", timeout=120,
+                 desc="world sync reinstalled the package")
+    g.poll_until("rc-service rsyncd status | grep -q started", timeout=120,
+                 desc="heal started the skipped service")
+    r = g.run("grep 'starting rsyncd' /var/log/mountnas.log", check=True)
+    assert "after the runlevel walk" in r.out
+    # the control did NOT get started
+    r = g.run("rc-service crond status")
+    assert r.rc != 0, f"heal must not start merely-stopped services:\n{r.out}"
+    g.run("rc-service crond start && rc-update del rsyncd default"
+          " && rc-service rsyncd stop", check=True)

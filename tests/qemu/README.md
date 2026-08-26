@@ -107,7 +107,7 @@ test_c_cli.py       C: nas subcommands (status/disks/report/commit/rollback/...)
 test_d_upgrade.py   D: in-place upgrades incl. power cuts (marker: upgrade)
 test_e_storage.py   E: add-disk, mergerfs, snapraid, fstab guards
 test_f_faults.py    F: unplug/replug, EIO, netfs, power cuts (marker: faults)
-test_g_services.py  G: docker/samba/zerotier persistence
+test_g_services.py  G: docker/samba persistence + user-installed VPN identity
 test_h_lbu.py       H: lbu include/exclude/migration persistence
 test_i_mail.py      I: msmtp/mailx/smartd/alert pipeline
 test_j_network.py   J: issue banner, mDNS
