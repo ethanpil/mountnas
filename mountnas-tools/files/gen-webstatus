@@ -321,7 +321,11 @@ services=$(printf '%s' "$sj" | jq -r '
 [ -n "$services" ] || services='<span class="mut">no service data</span>'
 # a stopped optional service is a neutral "off", never a warning — exactly why
 # these cannot join the cmd_status service loop, which warns on stopped entries
-for s in tailscale zerotier-one nut-upsd nut-upsmon; do
+for s in tailscale zerotier-one netbird nut-upsd nut-upsmon; do
+	# mesh VPNs are user-installed, not baked in: a pill for an ABSENT one
+	# would read as "installed but off". Show it only once its package exists.
+	case "$s" in tailscale|zerotier-one|netbird)
+		[ -e "/etc/init.d/$s" ] || continue ;; esac
 	if rc-service "$s" status >/dev/null 2>&1; then
 		services="$services <span class=\"pill p-ok\"><i></i>$s</span>"
 	else

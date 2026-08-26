@@ -50,7 +50,7 @@ ${C_HD}Important files & paths${C_NO} (edit, then: nas commit)
   ${C_B}/etc/smartd.conf${C_NO}         SMART alerts;  /etc/chrony/chrony.conf time sync
   ${C_B}/etc/ssh/sshd_config${C_NO}     SSH;  /root/.ssh/authorized_keys = your keys
   ${C_B}/etc/ufw/${C_NO}                Firewall — OFF by default (README "Firewall")
-  ${C_B}/var/lib/zerotier-one${C_NO}    ZeroTier;  /var/lib/tailscale  Tailscale state
+  ${C_B}apk add tailscale${C_NO}        Mesh VPNs install normally + persist (guide)
   ${C_B}crontab -e${C_NO}               Scheduled jobs ('nas snapraid schedule' adds parity)
 
 ${C_HD}Add a disk${C_NO}  (disk/parity names are a convention; snapraid.conf decides)

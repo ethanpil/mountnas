@@ -55,12 +55,6 @@ openssh-sftp-server
 ttyd
 
 # --- mesh VPN (services OFF by default) ---
-tailscale
-# zerotier-one is built locally (see the /zerotier-one APKBUILD): it repackages
-# the upstream prebuilt apk under our signing key, since it is not in Alpine.
-zerotier-one
-# plain kernel WireGuard (wg + wg-quick) for point-to-point/site-to-site
-# links — the module already ships in linux-lts; no service, bring up per use
 wireguard-tools
 
 # --- host firewall (ufw — shipped DISABLED, the image is fully open) ---
@@ -278,4 +272,3 @@ nfs-utils-openrc
 # optional services (enable per host; their script subpackage is here so it works):
 lvm2-openrc
 mdadm-openrc
-tailscale-openrc

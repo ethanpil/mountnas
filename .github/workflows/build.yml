@@ -101,7 +101,7 @@ jobs:
             # actual set of local APKBUILD dirs, so adding/removing a local apk
             # cannot silently skew the preflight (same philosophy as the
             # rc_add drift guard below).
-            LOCAL_PKGS="mountnas-tools|snapraid|mergerfs|zerotier-one"
+            LOCAL_PKGS="mountnas-tools|snapraid|mergerfs"
             found=$(cd "$HOME"/repo && ls -d ./*/APKBUILD 2>/dev/null | sed -e "s,^\./,," -e "s,/APKBUILD,," | sort | tr "\n" "|" | sed "s/|$//")
             want=$(printf "%s" "$LOCAL_PKGS" | tr "|" "\n" | sort | tr "\n" "|" | sed "s/|$//")
             [ "$want" = "$found" ] || { echo "ERROR: local-apk exclusion list ($LOCAL_PKGS) does not match the APKBUILD dirs ($found) — update LOCAL_PKGS"; exit 1; }
@@ -169,8 +169,6 @@ jobs:
             ( cd "$HOME"/repo/snapraid && abuild -r )
             echo "== build mergerfs (repackage upstream static binary) =="
             ( cd "$HOME"/repo/mergerfs && abuild -r )
-            echo "== build zerotier-one (repackage upstream apk under our key) =="
-            ( cd "$HOME"/repo/zerotier-one && abuild -r )
             echo "== ISO =="
             cp "$HOME"/repo/scripts/* aports/scripts/
             mkdir -p "$HOME/iso" "$HOME/tmp"; export TMPDIR="$HOME/tmp"

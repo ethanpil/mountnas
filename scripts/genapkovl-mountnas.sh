@@ -444,6 +444,7 @@ mk root:root 0644 "$tmp/etc/apk/protected_paths.d/lbu.list" <<'EOF'
 +var/lib/samba
 +var/lib/zerotier-one
 +var/lib/tailscale
++var/lib/netbird
 +var/spool/cron/crontabs
 -etc/profile.d/nas-welcome.sh
 -etc/profile.d/nas-aliases.sh
@@ -493,8 +494,11 @@ rc_add mountnas-issue default    # console /etc/issue banner with the live IP
 rc_add mountnas default         # storage guard + starts docker/samba/nfs when ready
 # Data services are NOT in any runlevel — 'mountnas' starts them when storage is up.
 # OFF by default (enable per host, then nas commit):
-# rc_add tailscale default
-# rc_add zerotier-one default
+# Mesh VPNs are NOT baked in (prerelease decision, CONTEXT §12): install
+# the one you use, then commit — it persists and now auto-starts at boot:
+#   apk add tailscale tailscale-openrc   (or zerotier-one, or netbird netbird-openrc)
+#   rc-update add tailscale default && rc-service tailscale start
+#   tailscale up && nas commit
 # rc_add nut-upsd default
 # rc_add nut-upsmon default
 
