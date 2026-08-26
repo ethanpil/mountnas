@@ -9,11 +9,11 @@ that will silently regress if "cleaned up" without understanding it.
 
 ---
 
-## 1. Status at a glance (as of 1.0rc5 + the 2026-07-27 review fixes)
+## 1. Status at a glance (as of 1.0rc9, 2026-08-26)
 
-- **Build: GREEN, releases through 1.0rc5 published.** The workflow assembles
-  everything end-to-end: 4 local apks, `mkimage` ISO, single-slot 3.5 GiB
-  `.img.gz` (~1 GB compressed). Signing key is a fixed secret since alpha-7
+- **Build: GREEN, releases through 1.0rc9 published.** The workflow assembles
+  everything end-to-end: 3 local apks (mountnas-tools, snapraid, mergerfs),
+  `mkimage` ISO, single-slot 3.5 GiB `.img.gz` (~1 GB compressed). Signing key is a fixed secret since alpha-7
   (§6) — the published `.rsa.pub` is a stable trust anchor now.
 - **2026-07-27 over-engineering review** (five adversarial subsystem audits):
   verdict was "earned, not spaghetti" — the cuts it did produce are the cmkfs
@@ -38,7 +38,7 @@ that will silently regress if "cleaned up" without understanding it.
   drill is automated now: `test_backup_restore_drill` backs up a configured
   box, writes the image to a fresh virtual stick, boots it, and asserts the
   OS + committed config came back.)
-- **Self-hosted QEMU suite** (`tests/qemu/`, 84 tests, see `TESTING-QEMU.md`):
+- **Self-hosted QEMU suite** (`tests/qemu/`, 89 tests, see `TESTING-QEMU.md`):
   boots the real image under KVM and covers everything the CI smoke tests
   don't — per-command CLI behavior, fault injection (hot-unplug, EIO, power
   cuts mid-upgrade), lbu persistence, mail, the restore drill, and the
@@ -83,17 +83,17 @@ mountnas/
 │       └── logo
 ├── snapraid/        APKBUILD          # LOCAL apk: compiled from source
 ├── mergerfs/        APKBUILD          # LOCAL apk: repackaged upstream static binary
-├── zerotier-one/    APKBUILD + zerotier-one.initd   # LOCAL apk: repackaged + init script
 ├── tests/unit/                       # nas CLI unit tests: busybox ash in a throwaway Alpine root (tests/unit/README.md)
-├── tests/qemu/                       # self-hosted QEMU suite (85 tests; TESTING-QEMU.md)
+├── tests/qemu/                       # self-hosted QEMU suite (89 tests; TESTING-QEMU.md)
 ├── .github/workflows/build.yml       # the whole build pipeline (heavily iterated)
 ├── .github/workflows/lint.yml        # ci-lint.sh + the tests/unit suite, on every push/PR
 ├── README.md  UPGRADE.md  CHANGELOG.md  CONTEXT.md  TESTING-QEMU.md  LICENSE
 ```
 
-There are **four locally-built apks**, all signed by the per-build key and served
-from the on-media local repo: `mountnas-tools`, `snapraid`, `mergerfs`,
-`zerotier-one`. They are excluded from the upstream preflight resolve and are
+There are **three locally-built apks**, all signed by the per-build key and served
+from the on-media local repo: `mountnas-tools`, `snapraid`, `mergerfs`.
+(`zerotier-one` was a fourth through 1.0rc8; mesh VPNs are user-installed
+since rc9 — §12.) They are excluded from the upstream preflight resolve and are
 why several CI steps exist. (`cmkfs` and `duf` were also local apks through
 beta-5; both were removed at the maintainer's direction in the 2026-07-27
 over-engineering review — cmkfs additionally carried the pipeline's only
@@ -264,7 +264,8 @@ latest-stable. Corrected:
   admin convenience isn't wanted.
 - `gddrescue` → **`ddrescue`**; `ntfs-progs` → **`ntfs-3g-progs`**.
 - `nvtop`, `sdparm`, `curlftpfs` — **removed** (not in v3.24).
-- `zerotier-one` — not in Alpine at all → built locally (§7).
+- Mesh VPNs (tailscale, zerotier-one, netbird) — NOT baked in since rc9;
+  users install them from the CDN (§12).
 - `-openrc` name fixes: `openssh-server-openrc` → **`openssh-server-common-openrc`**;
   `samba-openrc` → **`samba-server-openrc`**.
 - `sysstat-openrc` — **removed**: sysstat has **no OpenRC service** on Alpine (no
@@ -276,8 +277,8 @@ latest-stable. Corrected:
   (libstdc++ ABI). Upstream ships **fully-static** binaries → repackaged into a
   local apk (`mergerfs/APKBUILD`).
 
-The CI **preflight** (`apk add --simulate`) excludes all four local packages
-(`mountnas-tools|snapraid|mergerfs|zerotier-one`) since they aren't
+The CI **preflight** (`apk add --simulate`) excludes all three local packages
+(`mountnas-tools|snapraid|mergerfs`) since they aren't
 upstream.
 
 Package additions after the plan (alpha-3…: zsh/mosh, curated firmware set,
@@ -486,22 +487,15 @@ For individually-downloadable, standalone files we publish a **GitHub Release**
 
 ---
 
-## 7. ZeroTier specifics
+## 7. ZeroTier specifics (HISTORICAL — removed in rc9)
 
-- Source: `ethanpil/ZeroTierOne-AlpineLinux-Binaries` (the maintainer's own repo of
-  prebuilt Alpine apks). Pinned to a release tag in `zerotier-one/APKBUILD`; **bump
-  `pkgver`** to update.
-- We **repackage** that apk's payload (`tar -xzf` the apk, copy `usr/`) into a fresh
-  apk **signed by our build key**, because:
-  1. The upstream apk is signed with a per-build key (`.SIGN.RSA.builder-XXXX`) that
-     neither `mkimage`'s `$APKROOT` keystore nor the booted image trusts. Trusting a
-     foreign key in both places is fragile; signing under our key is the same trust
-     path as the other local packages.
-  2. **The upstream apk ships only the binaries — no init script.** We add
-     `zerotier-one.initd` so `rc-service zerotier-one` works (it's off by default;
-     `var/lib/zerotier-one` is in the lbu include so node identity persists).
-- It IS dynamically linked (depends `libstdc++`, `libssl`, `libcrypto`, `libgcc`,
-  musl); abuild re-traces these automatically on repackage.
+Through 1.0rc8 zerotier-one was a locally repackaged apk (upstream binaries
+re-signed under the build key, plus our own init script, because Alpine did
+not carry the package when MountNAS started). Alpine community carries
+`zerotier-one` now, so the removal of the baked-in mesh VPNs (§12) deleted
+the local APKBUILD and its build step outright. The lbu include for
+`var/lib/zerotier-one` still ships, so a user-installed zerotier keeps its
+node identity across reboots.
 
 ---
 
