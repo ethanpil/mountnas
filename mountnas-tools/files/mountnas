@@ -186,6 +186,16 @@ start() {
 	# stick across reboots. A no-op solver run when nothing is missing.
 	if mountpoint -q /cfg; then
 		mkdir -p /cfg/cache 2>>"$LOG" || true
+		# Record the DANGLING runlevel symlinks before the sync: a service the
+		# user enabled ('rc-update add X && nas commit') whose init script is
+		# missing right now, because the package it belongs to installs HERE —
+		# after /cfg mounts — while openrc walked the runlevels earlier and
+		# skipped the dangling link. Without the heal below, every user-
+		# installed service needs a manual start after every boot.
+		heal=""
+		for l in /etc/runlevels/*/*; do
+			[ -L "$l" ] && [ ! -e "$l" ] && heal="$heal $l"
+		done
 		# Offline-first: on every normal boot the on-media repo + /cfg/cache
 		# satisfy the whole world, and --no-network skips fetching APKINDEXes
 		# from the CDN repos (a diskless RAM root has no cached index, so the
@@ -197,6 +207,16 @@ start() {
 		apk add --quiet --no-network $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
 			|| apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
 			|| log "world sync (apk add) reported errors — a package may be missing until network/cache provides it"
+		# Start exactly the services the sync just made startable. Surgical by
+		# construction: a service the user stopped, or one that crashed, has a
+		# RESOLVABLE link and is never on the list. Backgrounded so one wedged
+		# user service cannot stall the data-disk mounts below; openrc's
+		# per-service state marks make a concurrent start attempt safe.
+		for l in $heal; do
+			[ -e "$l" ] || continue    # its package is still absent
+			log "starting ${l##*/} (its package installed after the runlevel walk)"
+			rc-service "${l##*/}" start >>"$LOG" 2>&1 &
+		done
 	fi
 
 	# Give slow disks a moment to appear before judging them missing: drives in
