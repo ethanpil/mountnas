@@ -195,8 +195,10 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Samba** (started once `/mnt/nasdata` is up): edit `/etc/samba/smb.conf`, `smbpasswd -a <user>`, `rc-service samba restart`, `nas commit`.
 - **NFS** (started once `/mnt/nasdata` is up): edit `/etc/exports`, `rc-service nfs restart`, `nas commit`.
 - **Browser terminal (ttyd)** (off by default): `nas ttyd on && nas commit` — a real login prompt at `http://<box>:22222/` (root works; `on` whitelists ptys in `/etc/securetty` once). Handy when SSH is awkward — a tablet, a borrowed machine, a quick look from the couch.
-- **Tailscale** (off by default): e.g. `rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`.
-- **ZeroTier** (off by default): baked in as a static build from [ethanpil/ZeroTierOne-AlpineLinux-Binaries](https://github.com/ethanpil/ZeroTierOne-AlpineLinux-Binaries). Enable with `rc-update add zerotier-one default && rc-service zerotier-one start`, then `zerotier-cli join <network-id>` and `nas commit` (node identity in `/var/lib/zerotier-one` is saved).
+- **Mesh VPNs are not baked in** — install the one you use like any package; it persists across reboots and upgrades, and starts at every boot:
+  - **Tailscale**: `apk add tailscale tailscale-openrc && rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`
+  - **ZeroTier**: `apk add zerotier-one && rc-update add zerotier-one default && rc-service zerotier-one start && zerotier-cli join <network-id> && nas commit` (node identity in `/var/lib/zerotier-one` is saved)
+  - **NetBird**: `apk add netbird netbird-openrc && rc-update add netbird default && rc-service netbird start && netbird up && nas commit`
 - **Firewall (ufw)** (off by default): the image ships fully open. `ufw allow SSH && ufw enable && nas commit` to turn it on — see [Firewall](#firewall) first.
 - **New admin user**: `adduser -s /bin/bash <name>`, then `adduser <name> wheel` (so `doas` works), then `nas commit`. (bash is the MountNAS default shell — root gets it automatically.)
 
@@ -258,7 +260,7 @@ What each one costs you if disabled:
 | `zram-init` (**boot** runlevel — use `rc-update del zram-init boot`) | you have RAM to spare and prefer zero swap | compressed-RAM swap — you lose the headroom that keeps the OS + Docker comfortable |
 | `sshd` | ⚠️ console-only administration | **all remote access — be sure you have a monitor/keyboard** |
 
-**Optional services** (Tailscale, ZeroTier, NUT, the web dashboard, the browser terminal, the ufw firewall) ship off. If you enabled one and want it gone: the same stop + `rc-update del` + commit (`nas web off` / `nas ttyd off` + `nas commit` for the web pair; `ufw disable` + `nas commit` for the firewall — its service stays in the boot runlevel as a no-op by design; WireGuard has no service — `wg-quick down <iface>` and remove your local.d/cron hook).
+**Optional services** (NUT, the web dashboard, the browser terminal, the ufw firewall) ship off. If you enabled one and want it gone: the same stop + `rc-update del` + commit (`nas web off` / `nas ttyd off` + `nas commit` for the web pair; `ufw disable` + `nas commit` for the firewall — its service stays in the boot runlevel as a no-op by design; WireGuard has no service — `wg-quick down <iface>` and remove your local.d/cron hook).
 
 **Don't `apk del` baked-in packages to disable a service** — the base package set is restored by `nas upgrade`'s world reconciliation, so the binaries come back (deliberately). Disabling the *service* is the supported, upgrade-proof way; the idle binaries on disk cost nothing since the whole OS lives in RAM anyway.
 
@@ -395,7 +397,7 @@ __Custom tooling & services (shipped by the `mountnas-tools` apk)__
 
 __Additional packages baked in__
 
-* The curated NAS package set — Docker, Samba, NFS, SnapRAID, mergerfs, smartmontools, NUT, restic/rclone, Tailscale/ZeroTier/WireGuard, filesystem tools, diagnostics, consumer-x86 firmware, and more. See the full list in [Baked in Packages](#baked-in-packages).
+* The curated NAS package set — Docker, Samba, NFS, SnapRAID, mergerfs, smartmontools, NUT, restic/rclone, WireGuard, filesystem tools, diagnostics, consumer-x86 firmware, and more. See the full list in [Baked in Packages](#baked-in-packages).
 
 __Run-from-RAM model & persistence__
 
@@ -516,8 +518,6 @@ __Networking / Transfer__
 
 __Overlay / Mesh VPN (services OFF by default)__
 
-* tailscale
-* zerotier-one
 * wireguard-tools (plain kernel WireGuard: wg + wg-quick)
 
 __Host Firewall (OFF by default — see [Firewall](#firewall))__

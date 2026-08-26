@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- **User-installed services start at every boot.** Their packages install
+  mid-boot (after /cfg mounts), so openrc's runlevel walk used to skip
+  their not-yet-present init scripts and the service stayed down until a
+  manual start. The supervisor now starts exactly the services its world
+  re-sync makes startable.
+
+### Removed
+- **Mesh VPNs are no longer baked in** (tailscale, zerotier-one — and the
+  local zerotier APKBUILD). Install the one you use instead; it persists
+  and now starts at every boot: e.g. 'apk add tailscale tailscale-openrc
+  && rc-update add tailscale default && rc-service tailscale start &&
+  tailscale up && nas commit'. The docs cover Tailscale, ZeroTier and
+  NetBird. WireGuard stays baked in.
+
+### Added
 - **`nas snapraid` — gated parity maintenance** (SPEC-snapraid-maint.md).
   `run` refuses to sync past the delete/update thresholds (the ransomware
   and fat-finger guard; a blocked sync leaves parity able to restore the

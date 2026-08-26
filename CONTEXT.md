@@ -784,3 +784,37 @@ rejected alternatives). The short version:
 - Do not double-schedule: `nas snapraid schedule` warns when the crontab
   carries another snapraid line (the docs recommended hand-rolled lines
   for years).
+
+## 12. User-installed services + the mesh-VPN removal (2026-08-26)
+
+**The boot heal.** User packages install MID-boot (the supervisor's world
+re-sync, after /cfg mounts), but openrc walks the runlevels earlier — a
+user-enabled service's runlevel symlink dangles at walk time and openrc
+skips it, permanently. The supervisor now records the dangling symlinks
+BEFORE the re-sync and starts exactly the ones the sync resolves.
+Surgical by construction: a service the user stopped, or one that
+crashed, has a resolvable link and is never touched. Starts are
+backgrounded (one wedged user service must not stall the data-disk
+mounts). Validated via 'nas restart' in the k-tier heal test; the boot
+half is exercised automatically once the supervisor is baked.
+
+**Mesh VPNs are NOT baked in** (prerelease decision — no installed base
+to migrate). tailscale, tailscale-openrc and zerotier-one left
+packages.list; the zerotier-one local APKBUILD and its build.yml step are
+gone. wireguard-tools STAYS (~100 KB; the module ships in the kernel).
+The lbu includes for /var/lib/{tailscale,zerotier-one,netbird} STAY —
+harmless when absent, required the day a user installs one. The
+dashboard shows a VPN service pill only when /etc/init.d/<svc> exists
+(absent must not read as "installed but off"). Docs teach one apk-add
+line per VPN (tailscale, zerotier-one, netbird — Alpine community
+carries all three). The upgrade world-reconciliation removes the baked
+copies from old test boxes by design ("base-dropped packages never
+masquerade as user extras"); anything a user apk-adds lands in extras
+and survives upgrades.
+
+**Test fallout handled here:** the runlevel-reconciliation test's
+"user-enabled service" marker is nut-upsd now (baked, off by default);
+the zerotier identity-persistence test installs from the CDN (network
+marker); the ttyd dashboard test asserts "no anchor TARGETS the
+terminal" instead of blanket substring checks (the header carries a
+User-guide termlink always, and the off-pill links to the guide).
