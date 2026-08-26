@@ -104,9 +104,17 @@ lastcommit=$(date -r "$CFG/$(hostname).apkovl.tar.gz" '+%Y-%m-%d %H:%M' 2>/dev/n
 # line on the no-match exit-1 path and make $sinks non-numeric)
 sinks=$(/usr/libexec/mountnas/notify --list 2>/dev/null | grep -c .)
 if [ "${sinks:-0}" -gt 0 ] 2>/dev/null; then
-	sinks_html="<span class=\"pill p-ok\">$sinks sink(s)</span>"
+	sinks_html="<span class=\"pill p-ok\">$sinks destination(s) configured</span>"
 else
-	sinks_html="<span class=\"pill p-off\">off</span>"
+	sinks_html="<span class=\"pill p-off\">none &mdash; set up: nas notify</span>"
+fi
+# rollback points: the dated overlay snapshots next to the active one — each
+# is a config state 'nas rollback' can return to (metadata reads on /cfg only)
+rbk_n=$(find "$CFG" -maxdepth 1 -name '*.tar.gz' ! -name '*.apkovl.tar.gz' 2>/dev/null | wc -l | tr -d ' ')
+if [ "${rbk_n:-0}" -gt 0 ] 2>/dev/null; then
+	rbk_html="<span class=\"num\">$rbk_n snapshot(s) <span class=\"mut\">&middot; nas rollback</span></span>"
+else
+	rbk_html='<span class="mut">none yet — each commit adds one</span>'
 fi
 pkgcount=$(apk info 2>/dev/null | wc -l | tr -d ' ')
 : "${pkgcount:=?}"
@@ -202,9 +210,8 @@ if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
       <div class=\"srmeta\">
         <div><h3>Last maintenance</h3><div class=\"num\">$srt_run</div></div>
         <div><h3>Schedule</h3><div class=\"num\">$srt_cron</div></div>
-        <div><h3>Sync gate</h3><div class=\"num\">blocks &gt;${srt_thr:-100} deletes / &gt;${srt_thr2:-200} updates <span class=\"mut\">(snapraid-maint.conf)</span></div></div>
-      </div>
-      <div class=\"mut\" style=\"margin-top:10px;font-size:12px\">Live array statistics (<span class=\"mono\">snapraid status/diff</span>) read the data disks and would wake them on every refresh — run <span class=\"mono\">nas snapraid status --deep</span> instead.</div>"
+        <div><h3>Safety limits</h3><div class=\"num\">a sync stops if &gt;${srt_thr:-100} files were deleted or &gt;${srt_thr2:-200} changed <span class=\"mut\">(ransomware guard)</span></div></div>
+      </div>"
 else
 	snapraid_html="<div class=\"mut\">SnapRAID is not configured — no parity protection. <span class=\"mono\">nas snapraid status</span> shows the setup steps; the <a href=\"guide.html\">user guide</a> has the walkthrough.</div>"
 fi
@@ -237,9 +244,11 @@ if iptables -nL ufw-user-input >/dev/null 2>&1; then
 	fw_out=$(timeout 10 ufw status verbose 2>/dev/null | esc)
 	[ -n "$fw_out" ] || fw_out="(ufw active — no report; run 'ufw status verbose' over SSH)"
 	fw_sum="active &middot; $fw_n rule(s)"
+	fw_prot="<span class=\"pill p-ok\">active &middot; $fw_n rule(s)</span>"
 else
 	services="$services <span class=\"pill p-off\"><i></i>ufw</span>"
 	fw_sum="disabled &mdash; all ports open (shipped default)"
+	fw_prot='<span class="pill p-off">off &mdash; LAN-open (shipped default)</span>'
 	fw_out="The firewall is disabled: the box accepts every connection (the shipped
 default — MountNAS trusts its LAN and your router's perimeter).
 
@@ -599,9 +608,9 @@ ul.ops li:last-child{border-bottom:none}
 .bar i{display:block;height:100%;background:var(--ok)}
 .bar.b-warn i{background:var(--warn)}.bar.b-fail i{background:var(--fail)}
 .srmeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:12px}
-.srmeta>div{background:var(--offbg);border:1px solid var(--line);border-radius:8px;padding:9px 12px}
+.srmeta>div{background:var(--offbg);border:1px solid var(--line);border-radius:8px;padding:9px 12px;min-width:0}
 .srmeta h3{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:4px}
-.srmeta .num{font-size:13px}
+.srmeta .num{font-size:13px;overflow-wrap:anywhere}
 .tablecard{padding:0;overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
@@ -700,7 +709,9 @@ $checks
         <dt>Last backup</dt><dd class="num">$lastbk</dd>
         <dt>Backups</dt><dd>$bk_html</dd>
         <dt>SnapRAID parity</dt><dd>$sr_html</dd>
-        <dt>Alert sinks</dt><dd>$sinks_html</dd>
+        <dt>Config rollback</dt><dd>$rbk_html</dd>
+        <dt>Firewall</dt><dd>$fw_prot</dd>
+        <dt>Notifications</dt><dd>$sinks_html</dd>
       </dl>
     </div>
   </div>
