@@ -116,6 +116,74 @@ if [ "${rbk_n:-0}" -gt 0 ] 2>/dev/null; then
 else
 	rbk_html='<span class="mut">none yet — each commit adds one</span>'
 fi
+# UPS battery via NUT (upsd answers on loopback; bounded so a wedged upsd
+# cannot stall the render). No UPS configured is the common case — say so.
+ups_html='<span class="mut">no UPS configured (NUT ships; see the guide)</span>'
+ups_name=$(sed -n 's/^\[\(.*\)\]$/\1/p' /etc/nut/ups.conf 2>/dev/null | head -n1)
+if [ -n "$ups_name" ]; then
+	ups_chg=$(timeout 3 upsc "$ups_name" battery.charge 2>/dev/null)
+	ups_st=$(timeout 3 upsc "$ups_name" ups.status 2>/dev/null)
+	case "$ups_chg" in
+		''|*[!0-9]*) ups_html='<span class="pill p-warn">configured, not answering</span>' ;;
+		*) if [ "$ups_chg" -ge 50 ]; then ups_html="<span class=\"pill p-ok\">${ups_chg}% &middot; $(printf '%s' "${ups_st:-?}" | esc)</span>"
+		   else ups_html="<span class=\"pill p-warn\">${ups_chg}% &middot; $(printf '%s' "${ups_st:-?}" | esc)</span>"; fi ;;
+	esac
+fi
+# last console/SSH login: wtmp history when it exists (persistent-log boxes),
+# else the newest CURRENT session from utmp (who) — on a RAM-log box there is
+# no login history, but whoever is logged in right now is still an answer.
+lastlog_line=$(last 2>/dev/null | awk 'NF>=7 && $1!="wtmp" {print; exit}')
+if [ -n "$lastlog_line" ]; then
+	lu_u=$(printf '%s' "$lastlog_line" | awk '{print $1}' | esc)
+	lu_t=$(printf '%s' "$lastlog_line" | awk '{for(i=4;i<=NF;i++) printf "%s%s", (i>4?" ":""), $i}' | esc)
+	lastuser_html="$lu_u <span class=\"mut\">$lu_t</span>"
+elif [ -n "$(who 2>/dev/null)" ]; then
+	lu_u=$(who 2>/dev/null | tail -n1 | awk '{print $1}' | esc)
+	lu_t=$(who 2>/dev/null | tail -n1 | awk '{for(i=3;i<=NF;i++) printf "%s%s", (i>3?" ":""), $i}' | esc)
+	lastuser_html="$lu_u <span class=\"mut\">on now &middot; since $lu_t</span>"
+else
+	lastuser_html='<span class="mut">none recorded</span>'
+fi
+# root password age (shadow field 3 = days-since-epoch of the last change)
+pw_hash=$(awk -F: '$1=="root"{print $2}' /etc/shadow 2>/dev/null)
+pw_day=$(awk -F: '$1=="root"{print $3}' /etc/shadow 2>/dev/null)
+case "$pw_hash" in
+	''|'!'|'*') pwage_html='<span class="pill p-warn">NO password set — run: nas setup</span>' ;;
+	*)	if [ -n "$pw_day" ] && [ "$pw_day" -gt 0 ] 2>/dev/null; then
+			pw_age=$(( $(date +%s) / 86400 - pw_day ))
+			pwage_html="<span class=\"num\">changed $pw_age day(s) ago</span>"
+		else
+			pwage_html='<span class="mut">unknown</span>'
+		fi ;;
+esac
+# SSH posture, from the EFFECTIVE config (sshd -T resolves defaults and
+# Match blocks; falls back to "?" rather than guessing from the file)
+if rc-service sshd status >/dev/null 2>&1; then
+	ssh_html='<span class="pill p-ok">enabled</span>'
+	sshd_eff=$(timeout 3 sshd -T 2>/dev/null)
+	ssh_root=$(printf '%s' "$sshd_eff" | awk '$1=="permitrootlogin"{print $2}')
+	ssh_pass=$(printf '%s' "$sshd_eff" | awk '$1=="passwordauthentication"{print $2}')
+	case "$ssh_root" in
+		yes) sshroot_html='<span class="pill p-ok">enabled</span>' ;;
+		without-password|prohibit-password) sshroot_html='<span class="pill p-ok">keys only</span>' ;;
+		no) sshroot_html='<span class="pill p-off">disabled</span>' ;;
+		*) sshroot_html='<span class="mut">?</span>' ;;
+	esac
+	case "$ssh_pass" in
+		yes) sshpass_html='<span class="pill p-ok">enabled</span>' ;;
+		no) sshpass_html='<span class="pill p-off">disabled (keys only)</span>' ;;
+		*) sshpass_html='<span class="mut">?</span>' ;;
+	esac
+else
+	ssh_html='<span class="pill p-off">disabled</span>'
+	sshroot_html='<span class="mut">-</span>'
+	sshpass_html='<span class="mut">-</span>'
+fi
+if rc-service mountnas-ttyd status >/dev/null 2>&1; then
+	webterm_html='<span class="pill p-ok">enabled</span>'
+else
+	webterm_html='<span class="pill p-off">disabled</span>'
+fi
 pkgcount=$(apk info 2>/dev/null | wc -l | tr -d ' ')
 : "${pkgcount:=?}"
 # DMI/cpuinfo strings are hardware-authored free text — escape them like every
@@ -198,19 +266,27 @@ if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
 	done)
 	# last run + schedule, from OUR state (never from snapraid itself)
 	if [ -f "$sr_state" ]; then
-		srt_run="$(sed -n 's/^date=//p' "$sr_state" | esc) &middot; $(sed -n 's/^verdict=//p' "$sr_state" | esc) (+$(sed -n 's/^added=//p' "$sr_state" | esc) -$(sed -n 's/^deleted=//p' "$sr_state" | esc) ~$(sed -n 's/^updated=//p' "$sr_state" | esc) &middot; scrub $(sed -n 's/^scrubbed=//p' "$sr_state" | esc))"
+		srt_when=$(sed -n 's/^date=//p' "$sr_state" | esc)
+		srt_result="$(sed -n 's/^verdict=//p' "$sr_state" | esc) (+$(sed -n 's/^added=//p' "$sr_state" | esc) added, $(sed -n 's/^deleted=//p' "$sr_state" | esc) deleted, $(sed -n 's/^updated=//p' "$sr_state" | esc) changed &middot; scrub $(sed -n 's/^scrubbed=//p' "$sr_state" | esc))"
 	else
-		srt_run='never — run: <span class="mono">nas snapraid run</span>'
+		srt_when="never"
+		srt_result='run it: <span class="mono">nas snapraid run</span>'
 	fi
 	srt_cron=$(crontab -l 2>/dev/null | grep -F '# mountnas-snapraid' | awk '{printf "%02d:%02d nightly", $2, $1}')
 	[ -n "$srt_cron" ] || srt_cron='not scheduled — <span class="mono">nas snapraid schedule</span>'
 	srt_thr=$(sed -n 's/^DEL_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
 	srt_thr2=$(sed -n 's/^UPD_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
 	snapraid_html="<div style=\"overflow-x:auto\"><table><thead><tr><th>Name</th><th>Role</th><th>Path</th><th>State</th><th>Used</th></tr></thead><tbody>$srt_rows</tbody></table></div>
-      <div class=\"srmeta\">
-        <div><h3>Last maintenance</h3><div class=\"num\">$srt_run</div></div>
-        <div><h3>Schedule</h3><div class=\"num\">$srt_cron</div></div>
-        <div><h3>Safety limits</h3><div class=\"num\">a sync stops if &gt;${srt_thr:-100} files were deleted or &gt;${srt_thr2:-200} changed <span class=\"mut\">(ransomware guard)</span></div></div>
+      <div class=\"srmeta srmeta2\">
+        <div><h3>Maintenance</h3><div class=\"num\">
+          Runs: $srt_cron<br>
+          Last run:<br>
+          $srt_when<br>
+          $srt_result</div></div>
+        <div><h3>Maintenance safety</h3><div class=\"num\">
+          Abort conditions <span class=\"mut\">(ransomware guard)</span>:<br>
+          &gt;${srt_thr:-100} files deleted<br>
+          &gt;${srt_thr2:-200} files changed</div></div>
       </div>"
 else
 	snapraid_html="<div class=\"mut\">SnapRAID is not configured — no parity protection. <span class=\"mono\">nas snapraid status</span> shows the setup steps; the <a href=\"guide.html\">user guide</a> has the walkthrough.</div>"
@@ -575,10 +651,6 @@ header img{width:44px;height:44px;border-radius:9px}
 header h1{font-size:20px;line-height:1.2}
 header .sub{color:#a8c4dc;font-size:12.5px}
 header .spacer{flex:1}
-.state{font-weight:700;padding:7px 16px;border-radius:22px;font-size:14px}
-a.state{text-decoration:none}
-.state.ok{background:#1d9d55;color:#fff}.state.warn{background:#e0a93a;color:#3a2b00}
-.state.fail{background:#e04b40;color:#fff}.state.unknown{background:#5c6b7a;color:#fff}
 header .upd{color:#a8c4dc;font-size:11.5px;text-align:right}
 .wrap{max-width:1080px;margin:0 auto;padding:18px 20px 40px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:14px}
@@ -608,6 +680,8 @@ ul.ops li:last-child{border-bottom:none}
 .bar i{display:block;height:100%;background:var(--ok)}
 .bar.b-warn i{background:var(--warn)}.bar.b-fail i{background:var(--fail)}
 .srmeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:12px}
+.srmeta2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));max-width:760px}
+.srmeta .num{line-height:1.7}
 .srmeta>div{background:var(--offbg);border:1px solid var(--line);border-radius:8px;padding:9px 12px;min-width:0}
 .srmeta h3{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:4px}
 .srmeta .num{font-size:13px;overflow-wrap:anywhere}
@@ -657,7 +731,6 @@ $css
   <a class="termlink" href="guide.html"><span class="pill p-ok"><i></i>User guide</span></a>
   <div class="spacer"></div>
   $ttyd_hdr
-  <a class="state $state" href="#checks" title="click for the checks behind this verdict">$state_word</a>
   <div class="upd">updated $gen_at<br>refreshes every 2 min</div>
 </header>
 <main class="wrap">
@@ -712,6 +785,13 @@ $checks
         <dt>Config rollback</dt><dd>$rbk_html</dd>
         <dt>Firewall</dt><dd>$fw_prot</dd>
         <dt>Notifications</dt><dd>$sinks_html</dd>
+        <dt>UPS battery</dt><dd>$ups_html</dd>
+        <dt>Last console user</dt><dd class="num">$lastuser_html</dd>
+        <dt>Root password age</dt><dd>$pwage_html</dd>
+        <dt>SSH login</dt><dd>$ssh_html</dd>
+        <dt>SSH root login</dt><dd>$sshroot_html</dd>
+        <dt>SSH password login</dt><dd>$sshpass_html</dd>
+        <dt>Web terminal</dt><dd>$webterm_html</dd>
       </dl>
     </div>
   </div>
