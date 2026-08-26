@@ -287,7 +287,7 @@ if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
 	[ -n "$srt_cron" ] || srt_cron='not scheduled — <span class="mono">nas snapraid schedule</span>'
 	srt_thr=$(sed -n 's/^DEL_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
 	srt_thr2=$(sed -n 's/^UPD_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
-	snapraid_html="<div style=\"overflow-x:auto\"><table><thead><tr><th>Name</th><th>Role</th><th>Path</th><th>State</th><th>Used</th></tr></thead><tbody>$srt_rows</tbody></table></div>
+	snapraid_html="<div class=\"srtable\"><table><thead><tr><th>Name</th><th>Role</th><th>Path</th><th>State</th><th>Used</th></tr></thead><tbody>$srt_rows</tbody></table></div>
       <div class=\"srmeta srmeta2\">
         <div><h3>Maintenance</h3><div class=\"num\">
           $srt_cron<br>
@@ -423,7 +423,13 @@ if rc-service docker status >/dev/null 2>&1; then
 		[ "$d_res" -gt 0 ] && d_res_pill=" <span class=\"pill p-warn\"><i></i>$d_res restarting</span>"
 		# per-container RAM in one bounded sample; joined to the rows by name
 		d_mem=$(timeout 10 docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' 2>/dev/null | esc)
-		d_rows=$( { printf '%s\n' "$d_mem"; echo "MEMEND"; printf '%s\n' "$d_ps"; } | awk -F'\t' '
+		# per-container IPs: docker inspect is daemon METADATA (no layer walk,
+		# no sampling) — one bounded round-trip for all running containers
+		d_ips=$(timeout 10 docker ps -q 2>/dev/null | xargs -r timeout 10 docker inspect \
+			--format '{{.Name}}{{"\t"}}{{range $n, $c := .NetworkSettings.Networks}}{{$c.IPAddress}} {{end}}' 2>/dev/null \
+			| sed 's|^/||' | esc)
+		d_rows=$( { printf '%s\n' "$d_ips"; echo "IPEND"; printf '%s\n' "$d_mem"; echo "MEMEND"; printf '%s\n' "$d_ps"; } | awk -F'\t' '
+			!ipdone { if ($0 == "IPEND") { ipdone=1 } else if (NF >= 2) { ip[$1]=$2 } ; next }
 			!body { if ($0 == "MEMEND") { body=1 } else if (NF >= 2) { mem[$1]=$2 } ; next }
 			{
 			state=$3; cls="p-off"
@@ -433,13 +439,15 @@ if rc-service docker status >/dev/null 2>&1; then
 			ports=$6; if (ports == "") ports="<span class=\"mut\">&mdash;</span>"
 			m=mem[$1]; sub(/ \/.*/, "", m)   # "82MiB / 3.8GiB" -> used part
 			if (m == "") m="<span class=\"mut\">&mdash;</span>"
+			a=ip[$1]; sub(/ +$/, "", a)
+			if (a == "") a="<span class=\"mut\">&mdash;</span>"
 			printf "<tr><td><b>%s</b><br><span class=\"mono mut\" style=\"font-size:11px\">%s</span></td>", $1, $2
 			printf "<td><span class=\"pill %s\"><i></i>%s</span><br><span class=\"mut\" style=\"font-size:11.5px\">%s</span></td>", cls, state, $4
-			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, m, $7
+			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, a, m, $7
 		}')
 		# ONE collapsible card: the state pills live in the summary line, so
 		# the counts are always visible and one click opens the table
-		docker_card="<details class=\"card\"><summary>Docker <span class=\"svc\" style=\"display:inline-flex\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span>$d_res_pill <span class=\"pill p-off\"><i></i>$d_oth stopped</span></span> <span class=\"mut\">($d_all container(s) &mdash; click for detail)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>RAM</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
+		docker_card="<details class=\"card\"><summary>Docker <span class=\"svc\" style=\"display:inline-flex\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span>$d_res_pill <span class=\"pill p-off\"><i></i>$d_oth stopped</span></span> <span class=\"mut\">($d_all container(s) &mdash; click for detail)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>IP</th><th>RAM</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
 	else
 		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers yet</span>'
 	fi
@@ -697,6 +705,7 @@ ul.ops li:last-child{border-bottom:none}
 .bar{display:inline-block;width:64px;height:6px;background:var(--offbg);border-radius:3px;overflow:hidden;vertical-align:middle}
 .bar i{display:block;height:100%;background:var(--ok)}
 .bar.b-warn i{background:var(--warn)}.bar.b-fail i{background:var(--fail)}
+.srtable{overflow-x:auto;margin:0 -16px;border-bottom:1px solid var(--line)}
 .srmeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:12px}
 .srmeta2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));max-width:760px}
 .srmeta .num{line-height:1.7}
