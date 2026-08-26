@@ -224,7 +224,7 @@ rc-service nfs restart &amp;&amp; nas commit</code></pre>
 <p>Runs with <code>data-root = /mnt/nasdata/docker</code>. Keep compose files and appdata under <code>/mnt/nasdata</code> so they survive a dead USB and travel with the data. <a href="https://docs.docker.com/compose/"><code>docker compose</code></a> is included.</p>
 <h3>Remote access (all off by default)</h3>
 <ul>
-<li><b>Browser terminal (<a href="https://github.com/tsl0922/ttyd">ttyd</a>):</b> <code>nas ttyd on &amp;&amp; nas commit</code> — a real login prompt at <code>http://&lt;box&gt;:22222/</code> (the dashboard links to it when running). Root login works: <code>on</code> whitelists ptys in <code>/etc/securetty</code> once. Plain HTTP on the trusted LAN, so the password transits in cleartext.</li>
+<li id="ttyd"><b>Browser terminal (<a href="https://github.com/tsl0922/ttyd">ttyd</a>):</b> <code>nas ttyd on &amp;&amp; nas commit</code> — a real login prompt at <code>http://&lt;box&gt;:22222/</code> (the dashboard links to it when running). Root login works: <code>on</code> whitelists ptys in <code>/etc/securetty</code> once. Plain HTTP on the trusted LAN, so the password transits in cleartext.</li>
 <li><b><a href="https://tailscale.com/">Tailscale</a>:</b> <code>rc-update add tailscale default &amp;&amp; rc-service tailscale start &amp;&amp; tailscale up &amp;&amp; nas commit</code></li>
 <li><b><a href="https://www.zerotier.com/">ZeroTier</a>:</b> <code>rc-update add zerotier-one default &amp;&amp; rc-service zerotier-one start &amp;&amp; zerotier-cli join &lt;net&gt; &amp;&amp; nas commit</code></li>
 <li><b><a href="https://www.wireguard.com/">WireGuard</a>:</b> plain kernel WireGuard, <code>wg</code>/<code>wg-quick</code> included.</li>

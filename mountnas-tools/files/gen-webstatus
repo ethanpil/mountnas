@@ -199,12 +199,12 @@ if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
 	srt_thr=$(sed -n 's/^DEL_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
 	srt_thr2=$(sed -n 's/^UPD_THRESHOLD=\([0-9]*\).*/\1/p' /etc/mountnas/snapraid-maint.conf 2>/dev/null | tail -n1)
 	snapraid_html="<div style=\"overflow-x:auto\"><table><thead><tr><th>Name</th><th>Role</th><th>Path</th><th>State</th><th>Used</th></tr></thead><tbody>$srt_rows</tbody></table></div>
-      <dl>
-        <dt>Last maintenance</dt><dd class=\"num\">$srt_run</dd>
-        <dt>Schedule</dt><dd class=\"num\">$srt_cron</dd>
-        <dt>Sync gate</dt><dd class=\"num\">blocks &gt;${srt_thr:-100} deletes / &gt;${srt_thr2:-200} updates <span class=\"mut\">(snapraid-maint.conf)</span></dd>
-      </dl>
-      <div class=\"mut\" style=\"margin-top:6px\">Live array statistics (<span class=\"mono\">snapraid status/diff</span>) read the data disks and would wake them on every refresh — run <span class=\"mono\">nas snapraid status --deep</span> instead.</div>"
+      <div class=\"srmeta\">
+        <div><h3>Last maintenance</h3><div class=\"num\">$srt_run</div></div>
+        <div><h3>Schedule</h3><div class=\"num\">$srt_cron</div></div>
+        <div><h3>Sync gate</h3><div class=\"num\">blocks &gt;${srt_thr:-100} deletes / &gt;${srt_thr2:-200} updates <span class=\"mut\">(snapraid-maint.conf)</span></div></div>
+      </div>
+      <div class=\"mut\" style=\"margin-top:10px;font-size:12px\">Live array statistics (<span class=\"mono\">snapraid status/diff</span>) read the data disks and would wake them on every refresh — run <span class=\"mono\">nas snapraid status --deep</span> instead.</div>"
 else
 	snapraid_html="<div class=\"mut\">SnapRAID is not configured — no parity protection. <span class=\"mono\">nas snapraid status</span> shows the setup steps; the <a href=\"guide.html\">user guide</a> has the walkthrough.</div>"
 fi
@@ -360,10 +360,19 @@ for n in /sys/class/net/*; do
 	net_rows="$net_rows<dt class=\"mono\">$i</dt><dd>$op ${spd:+<span class=\"num\">$spd Mb/s</span> &middot;} <span class=\"num mut\">&darr;$rx_h &uarr;$tx_h</span></dd>"
 done
 [ -n "$net_rows" ] || net_rows='<dt>-</dt><dd class="mut">no interfaces</dd>'
+# the card has room: the three answers people otherwise SSH in for
+gw=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
+[ -n "$gw" ] && net_rows="$net_rows<dt>Gateway</dt><dd class=\"num\">$gw</dd>"
+dns=$(awk '/^nameserver/{printf "%s%s", s, $2; s=" &middot; "}' /etc/resolv.conf 2>/dev/null)
+[ -n "$dns" ] && net_rows="$net_rows<dt>DNS</dt><dd class=\"num\">$dns</dd>"
+net_rows="$net_rows<dt>mDNS name</dt><dd class=\"num\">$(hostname).local</dd>"
 
+# every check, verdict-first: fails, then warnings, then the passing set —
+# so the header pill's "Warnings" always has its reason one click away (#checks)
 checks=$(printf '%s' "$sj" | jq -r '
 	([.fail_lines[]? | "<li class=\"c-fail\">\(@html)</li>"] +
-	 [.warn_lines[]? | "<li class=\"c-warn\">\(@html)</li>"]) | join("\n")')
+	 [.warn_lines[]? | "<li class=\"c-warn\">\(@html)</li>"] +
+	 [.ok_lines[]?   | "<li class=\"c-ok\">\(@html)</li>"]) | join("\n")')
 if [ -z "$checks" ]; then
 	if [ "$state" = ok ]; then checks='<li class="c-ok">All checks passed</li>'
 	else checks='<li class="mut">no check data</li>'; fi
@@ -389,11 +398,12 @@ if rc-service mountnas-ttyd status >/dev/null 2>&1; then
 		ttyd_hdr="<span class=\"pill p-ok\"><i></i>Web terminal</span>"
 	fi
 else
-	ttyd_hdr="<span class=\"pill p-off\"><i></i>Web terminal off</span>"
+	ttyd_hdr="<a class=\"termlink\" href=\"guide.html#ttyd\" title=\"how to enable it\"><span class=\"pill p-off\"><i></i>Web terminal off</span></a>"
 fi
 
 recent_ops=$(tail -n 4 "$CFG/mountnas-ops.log" 2>/dev/null | esc \
-	| awk -F'\t' '{ printf "<li><span class=\"num mut\">%s</span> <b>%s</b> <span class=\"mut\">%s</span></li>\n", substr($1,1,16), $2, $4 }')
+	| awk -F'\t' '{ ts=substr($1,1,19); gsub(/T/," ",ts);
+		printf "<li><span class=\"num mut\">%s</span> <b>%s</b> <span class=\"mut\">%s</span></li>\n", ts, $2, $4 }')
 [ -n "$recent_ops" ] || recent_ops='<li class="mut">none yet — commits, backups and upgrades land here</li>'
 
 # ---- SMART overall health, STANDBY-SAFE and cached (15 min) ------------------
@@ -557,6 +567,7 @@ header h1{font-size:20px;line-height:1.2}
 header .sub{color:#a8c4dc;font-size:12.5px}
 header .spacer{flex:1}
 .state{font-weight:700;padding:7px 16px;border-radius:22px;font-size:14px}
+a.state{text-decoration:none}
 .state.ok{background:#1d9d55;color:#fff}.state.warn{background:#e0a93a;color:#3a2b00}
 .state.fail{background:#e04b40;color:#fff}.state.unknown{background:#5c6b7a;color:#fff}
 header .upd{color:#a8c4dc;font-size:11.5px;text-align:right}
@@ -573,17 +584,24 @@ dt{color:var(--mut);white-space:nowrap}dd{text-align:right;overflow-wrap:anywher
 .p-boot{color:var(--acc);background:var(--offbg);font-size:10.5px}
 .svc{display:flex;flex-wrap:wrap;gap:7px}
 .svcx{font-size:12.5px;margin-top:7px}
-ul.checks,ul.ops{list-style:none;font-size:13px}
-ul.checks li{padding:4px 0 4px 20px;position:relative}
-ul.checks li::before{content:"";position:absolute;left:4px;top:11px;width:8px;height:8px;border-radius:50%}
-.c-ok::before{background:var(--ok)}.c-warn::before{background:var(--warn)}.c-fail::before{background:var(--fail)}
-.c-off::before{background:var(--off)}
+ul.checks,ul.ops{list-style:none;font-size:13px;margin:0;padding:0}
+ul.checks{max-height:340px;overflow-y:auto}
+ul.checks li{padding:3px 0 3px 22px;position:relative}
+ul.checks li::before{position:absolute;left:2px;top:3px;font-weight:700}
+.c-ok::before{content:"\2713";color:var(--ok)}
+.c-warn::before{content:"\26A0";color:var(--warn)}
+.c-fail::before{content:"\2715";color:var(--fail)}
+.c-off::before{content:"\2013";color:var(--off)}
 .c-fail{color:var(--fail);font-weight:600}.c-warn{color:var(--warn)}
 ul.ops li{padding:4px 0;border-bottom:1px dashed var(--line)}
 ul.ops li:last-child{border-bottom:none}
 .bar{display:inline-block;width:64px;height:6px;background:var(--offbg);border-radius:3px;overflow:hidden;vertical-align:middle}
 .bar i{display:block;height:100%;background:var(--ok)}
 .bar.b-warn i{background:var(--warn)}.bar.b-fail i{background:var(--fail)}
+.srmeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:12px}
+.srmeta>div{background:var(--offbg);border:1px solid var(--line);border-radius:8px;padding:9px 12px}
+.srmeta h3{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-bottom:4px}
+.srmeta .num{font-size:13px}
 .tablecard{padding:0;overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
@@ -627,10 +645,10 @@ $css
 <header>
   <img src="logo.png" alt="MountNAS">
   <div><h1>$host</h1><div class="sub">MountNAS $rel &middot; read-only dashboard</div></div>
-  <div class="spacer"></div>
   <a class="termlink" href="guide.html"><span class="pill p-ok"><i></i>User guide</span></a>
+  <div class="spacer"></div>
   $ttyd_hdr
-  <div class="state $state">$state_word</div>
+  <a class="state $state" href="#checks" title="click for the checks behind this verdict">$state_word</a>
   <div class="upd">updated $gen_at<br>refreshes every 2 min</div>
 </header>
 <main class="wrap">
@@ -674,7 +692,7 @@ $css
     <div class="card"><h2>Services</h2><div class="svc">$services</div>$svc_extra</div>
   </div>
   <div class="grid">
-    <div class="card"><h2>Checks</h2><ul class="checks">
+    <div class="card" id="checks"><h2>Checks</h2><ul class="checks">
 $checks
     </ul></div>
     <div class="card"><h2>Protection</h2>

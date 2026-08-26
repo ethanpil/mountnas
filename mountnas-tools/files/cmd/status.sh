@@ -368,7 +368,7 @@ cmd_status_json() {
 	  snapraid_last_run: (if $snapraid_last_run == "" then null else $snapraid_last_run end),
 	  healthy: ($failed|not),
 	  checks: {ok: (msgs("OK")|length), warn: (msgs("WARN")|length), fail: (msgs("FAIL")|length)},
-	  fail_lines: msgs("FAIL"), warn_lines: msgs("WARN")}' < "$NAS_CHECKS"
+	  fail_lines: msgs("FAIL"), warn_lines: msgs("WARN"), ok_lines: msgs("OK")}' < "$NAS_CHECKS"
 	rm -f "$NAS_CHECKS"; NAS_CHECKS=""
 	return "$jrc"
 }
