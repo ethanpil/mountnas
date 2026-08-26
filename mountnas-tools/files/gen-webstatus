@@ -668,6 +668,15 @@ $css
         <dt>Overlay size</dt><dd class="num">$ovl_sz <span class="mut">&middot; cache $cache_sz</span></dd>
       </dl>
     </div>
+  </div>
+  <div class="grid">
+    <div class="card"><h2>Network</h2><dl>$net_rows</dl></div>
+    <div class="card"><h2>Services</h2><div class="svc">$services</div>$svc_extra</div>
+  </div>
+  <div class="grid">
+    <div class="card"><h2>Checks</h2><ul class="checks">
+$checks
+    </ul></div>
     <div class="card"><h2>Protection</h2>
       <dl>
         <dt>Last backup</dt><dd class="num">$lastbk</dd>
@@ -676,16 +685,6 @@ $css
         <dt>Alert sinks</dt><dd>$sinks_html</dd>
       </dl>
     </div>
-    <div class="card"><h2>SnapRAID</h2>$snapraid_html</div>
-    <div class="card"><h2>Services</h2><div class="svc">$services</div>$svc_extra</div>
-    <div class="card"><h2>Checks</h2><ul class="checks">
-$checks
-    </ul></div>
-    <div class="card"><h2>Docker</h2>$docker_html</div>
-    <div class="card"><h2>Network</h2><dl>$net_rows</dl></div>
-    <div class="card"><h2>Recent operations</h2><ul class="ops">
-$recent_ops
-    </ul></div>
   </div>
   <div class="card tablecard" style="margin-bottom:14px">
     <table>
@@ -695,6 +694,8 @@ $disk_rows
       </tbody>
     </table>
   </div>
+  <div class="card" style="margin-bottom:14px"><h2>SnapRAID</h2>$snapraid_html</div>
+  <div class="card" style="margin-bottom:14px"><h2>Docker</h2>$docker_html</div>
   $docker_table
   $fw_card
   <details class="card">
@@ -717,10 +718,15 @@ $dimms</pre>
       <pre style="background:none;border:none;padding:0;font:12px/1.6 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word">$cron_html</pre>
     </div>
   </div>
-  <details class="card">
-    <summary>Unsaved changes <span class="mut">($unsaved file(s) &mdash; what <span class="mono">nas commit</span> would save)</span></summary>
-    <pre class="log">$unsaved_list</pre>
-  </details>
+  <div class="grid" style="align-items:start">
+    <div class="card"><h2>Recent operations</h2><ul class="ops">
+$recent_ops
+    </ul></div>
+    <details class="card" style="margin-bottom:0">
+      <summary>Unsaved changes <span class="mut">($unsaved file(s) &mdash; what <span class="mono">nas commit</span> would save)</span></summary>
+      <pre class="log">$unsaved_list</pre>
+    </details>
+  </div>
   <details class="card">
     <summary>Syslog &mdash; last 100 lines <span class="mut">(newest at the bottom; RAM-only unless <span class="mono">nas logs --persist on</span>)</span></summary>
     <pre class="log">$syslog_html</pre>
