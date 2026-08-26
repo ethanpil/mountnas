@@ -61,6 +61,24 @@ cmd_status() {
 	done
 	[ -n "$svc_up" ] && ok "services:$svc_up"
 	[ -n "$ds_off" ] && hint "disabled by /etc/conf.d/mountnas:$ds_off (re-enable: edit DATA_SERVICES, nas restart)"
+	# clock offset (chronyc tracking = local socket, cheap). Drift silently
+	# breaks SnapRAID timestamps, TLS and log order, and until now only
+	# --deep looked. Emitted only when chronyd ANSWERS: a stopped chronyd is
+	# already a warning from the service loop above, and a box without
+	# chrony must not grow a bogus warning.
+	local coff cmag cdir
+	if command -v chronyc >/dev/null 2>&1; then
+		coff=$(chronyc tracking 2>/dev/null \
+			| sed -n 's/^System time *: *\([0-9.]*\) seconds \(fast\|slow\).*/\1 \2/p')
+		if [ -n "$coff" ]; then
+			cmag=${coff% *}; cdir=${coff#* }
+			if awk -v m="$cmag" 'BEGIN{exit !(m < 0.5)}'; then
+				ok "clock synced ($(awk -v m="$cmag" 'BEGIN{printf "%.1f", m*1000}') ms $cdir)"
+			else
+				warn "clock offset ${cmag}s $cdir — SnapRAID timestamps and TLS suffer; check chronyd"
+			fi
+		fi
+	fi
 	lbu_out=$(lbu status 2>/dev/null)
 	n=$(printf '%s' "$lbu_out" | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"

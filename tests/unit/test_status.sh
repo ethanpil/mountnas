@@ -148,6 +148,18 @@ run_nas status
 assert_rc 1
 assert_match '\[FAIL\] config partition NOT mounted' "$OUT"
 
+t "clock offset: synced is ok, drift warns, silent when chronyc is absent"
+baseline
+stub chronyc 'echo "System time     : 0.000012345 seconds fast of NTP time"'
+run_nas status
+assert_match '\[ OK \] clock synced \(0\.0 ms fast\)' "$OUT"
+stub chronyc 'echo "System time     : 2.500000000 seconds slow of NTP time"'
+run_nas status
+assert_match '\[WARN\] clock offset 2\.500000000s slow' "$OUT"
+rm -f "$STUBS/chronyc"
+run_nas status
+assert_nomatch 'clock' "$OUT" "no chronyc = no clock line at all"
+
 t "unsaved changes and backup age"
 baseline; stub lbu 'printf "M etc/fstab\nA etc/x\n"'
 run_nas status
