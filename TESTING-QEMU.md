@@ -334,7 +334,7 @@ image always has something to test the upgrade against.
 | `test_docker_container_survives_reboot` | A `--restart unless-stopped` container (built network-free from the guest's own busybox **plus the musl loader** — without it the container crash-loops and a bare `Up` grep can't tell) is running again after a reboot. Stability = Up **and** `RestartCount` 0, asserted pre-reboot. |
 | `test_samba_password_survives_reboot` | THE beta-3 lbu.list regression: an `smbpasswd -a` user still exists after commit + reboot. This was silently broken from alpha-1 to beta-2 (`/etc/lbu/include` was never an lbu interface). |
 | `test_data_services_absent_from_runlevels` | docker/samba/nfs are in NO runlevel — the mountnas supervisor is their only starter. |
-| `test_zerotier_identity_persists_reboot` **[network]** | Mesh VPNs are user-installed now: installs zerotier-one from the CDN, then proves the node identity (`/var/lib/zerotier-one`, still an lbu include) survives commit + reboot — identity loss would mean a new node ID and re-authorizing everywhere. |
+| `test_vpn_identity_persists_reboot` **[network]** | Mesh VPNs are user-installed now: installs tailscale from the CDN (the one Alpine v3.24 actually carries), then proves the node state (`/var/lib/tailscale`, an lbu include) survives commit + reboot — identity loss would mean a new node ID and re-authorizing everywhere. |
 
 ### H — Config persistence / lbu (`test_h_lbu.py`, 5 tests)
 

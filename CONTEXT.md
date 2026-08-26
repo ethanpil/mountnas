@@ -800,15 +800,16 @@ The lbu includes for /var/lib/{tailscale,zerotier-one,netbird} STAY —
 harmless when absent, required the day a user installs one. The
 dashboard shows a VPN service pill only when /etc/init.d/<svc> exists
 (absent must not read as "installed but off"). Docs teach one apk-add
-line per VPN (tailscale, zerotier-one, netbird — Alpine community
-carries all three). The upgrade world-reconciliation removes the baked
+line per VPN. Alpine v3.24 community carries tailscale and netbird;
+zerotier-one is NOT in the stable repos (the docs point it at
+edge/testing — verified during the rc9 validation). The upgrade world-reconciliation removes the baked
 copies from old test boxes by design ("base-dropped packages never
 masquerade as user extras"); anything a user apk-adds lands in extras
 and survives upgrades.
 
 **Test fallout handled here:** the runlevel-reconciliation test's
 "user-enabled service" marker is nut-upsd now (baked, off by default);
-the zerotier identity-persistence test installs from the CDN (network
-marker); the ttyd dashboard test asserts "no anchor TARGETS the
+the VPN identity-persistence test installs tailscale from the CDN
+(network marker; zerotier-one is not in v3.24 to install); the ttyd dashboard test asserts "no anchor TARGETS the
 terminal" instead of blanket substring checks (the header carries a
 User-guide termlink always, and the off-pill links to the guide).

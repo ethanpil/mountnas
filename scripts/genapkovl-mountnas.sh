@@ -496,7 +496,8 @@ rc_add mountnas default         # storage guard + starts docker/samba/nfs when r
 # OFF by default (enable per host, then nas commit):
 # Mesh VPNs are NOT baked in (prerelease decision, CONTEXT §12): install
 # the one you use, then commit — it persists and now auto-starts at boot:
-#   apk add tailscale tailscale-openrc   (or zerotier-one, or netbird netbird-openrc)
+#   apk add tailscale tailscale-openrc   (or netbird netbird-openrc; zerotier
+#   needs --repository=.../edge/testing — see the guide)
 #   rc-update add tailscale default && rc-service tailscale start
 #   tailscale up && nas commit
 # rc_add nut-upsd default

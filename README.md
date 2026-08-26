@@ -198,7 +198,7 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Browser terminal (ttyd)** (off by default): `nas ttyd on && nas commit` — a real login prompt at `http://<box>:22222/` (root works; `on` whitelists ptys in `/etc/securetty` once). Handy when SSH is awkward — a tablet, a borrowed machine, a quick look from the couch.
 - **Mesh VPNs are not baked in** — install the one you use like any package; it persists across reboots and upgrades, and starts at every boot:
   - **Tailscale**: `apk add tailscale tailscale-openrc && rc-update add tailscale default && rc-service tailscale start && tailscale up && nas commit`
-  - **ZeroTier**: `apk add zerotier-one && rc-update add zerotier-one default && rc-service zerotier-one start && zerotier-cli join <network-id> && nas commit` (node identity in `/var/lib/zerotier-one` is saved)
+  - **ZeroTier**: not in Alpine's v3.24 repos — install from the testing repository: `apk add zerotier-one --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing`, then `rc-update add zerotier-one default && rc-service zerotier-one start && zerotier-cli join <network-id> && nas commit` (node identity in `/var/lib/zerotier-one` is saved)
   - **NetBird**: `apk add netbird netbird-openrc && rc-update add netbird default && rc-service netbird start && netbird up && nas commit`
 - **Firewall (ufw)** (off by default): the image ships fully open. `ufw allow SSH && ufw enable && nas commit` to turn it on — see [Firewall](#firewall) first.
 - **New admin user**: `adduser -s /bin/bash <name>`, then `adduser <name> wheel` (so `doas` works), then `nas commit`. (bash is the MountNAS default shell — root gets it automatically.)

@@ -66,26 +66,29 @@ def test_data_services_absent_from_runlevels(golden_guest):
 
 
 @pytest.mark.network
-def test_zerotier_identity_persists_reboot(golden_guest):
+def test_vpn_identity_persists_reboot(golden_guest):
     """Mesh VPNs are NOT baked in -- users install them (docs: apk add +
-    rc-update + commit).  The lbu include for /var/lib/zerotier-one still
-    ships, so a user-installed zerotier's node identity must survive commit
-    + reboot (identity loss = new node ID = re-auth everywhere).  Installs
-    from the CDN (Alpine community carries zerotier-one), hence the marker."""
+    rc-update + commit).  The lbu includes for /var/lib/{tailscale,
+    zerotier-one,netbird} still ship, so a user-installed VPN's node
+    identity must survive commit + reboot (identity loss = new node ID =
+    re-auth everywhere).  Proven with tailscale, the one Alpine community
+    actually carries (zerotier-one is NOT in the v3.24 repos -- the docs
+    point it at edge/testing); installs from the CDN, hence the marker."""
     g = golden_guest
-    r = g.run("apk add zerotier-one", timeout=300)
+    r = g.run("apk add tailscale tailscale-openrc", timeout=300)
     if r.rc != 0:
-        pytest.skip(f"apk add zerotier-one failed (offline?): {r.out[-300:]}")
-    r = g.run("rc-service zerotier-one start", timeout=120)
+        pytest.skip(f"apk add tailscale failed (offline?): {r.out[-300:]}")
+    r = g.run("rc-service tailscale start", timeout=120)
     if r.rc != 0:
-        raise AssertionError(f"zerotier-one failed to start: {r.out}")
-    ident = g.poll_until("cat /var/lib/zerotier-one/identity.public",
-                         timeout=120, desc="identity generated")
-    node_id = ident.out.strip()
-    assert node_id, "empty zerotier identity"
-    g.run("rc-service zerotier-one stop", timeout=60)
-    g.run("nas commit -m 'zerotier identity probe'", timeout=120, check=True)
+        raise AssertionError(f"tailscale failed to start: {r.out}")
+    # tailscaled writes its node state (keys) at first start, logged in or not
+    ident = g.poll_until("sha256sum /var/lib/tailscale/tailscaled.state",
+                         timeout=120, desc="node state generated")
+    state_hash = ident.out.split()[0]
+    assert state_hash, "empty tailscale state"
+    g.run("rc-service tailscale stop", timeout=60)
+    g.run("nas commit -m 'vpn identity probe'", timeout=120, check=True)
     g.reboot()
-    after = g.run("cat /var/lib/zerotier-one/identity.public", check=True)
-    assert after.out.strip() == node_id, \
-        "zerotier identity changed across reboot -- lbu include broken"
+    after = g.run("sha256sum /var/lib/tailscale/tailscaled.state", check=True)
+    assert after.out.split()[0] == state_hash, \
+        "tailscale node state changed across reboot -- lbu include broken"

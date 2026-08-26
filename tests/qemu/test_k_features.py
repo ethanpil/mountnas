@@ -464,10 +464,15 @@ def test_user_service_starts_after_world_sync_heal(dev_guest):
     # package's sample may not ship on every branch); /etc survives apk del
     g.run("printf 'pid file = /run/rsyncd.pid\\n' > /etc/rsyncd.conf",
           check=True)
-    # manufacture the boot state: world wants it, filesystem lacks it
-    g.run("apk del rsync-openrc && grep -qx rsync-openrc /etc/apk/world"
-          " || echo rsync-openrc >> /etc/apk/world", check=True)
+    # manufacture the boot state: world wants it, filesystem lacks it.
+    # BOTH packages must go: rsync-openrc is an install_if subpackage, so
+    # deleting it alone while rsync stays installed re-selects it in the
+    # SAME transaction and the init script never leaves (the rc9 validation
+    # caught exactly that). World gets both names back by hand.
+    g.run("apk del rsync-openrc rsync", check=True)
     g.run("test ! -e /etc/init.d/rsyncd", check=True)   # dangling confirmed
+    g.run("printf 'rsync\\nrsync-openrc\\n' >> /etc/apk/world"
+          " && sort -u -o /etc/apk/world /etc/apk/world", check=True)
     # the surgical control: an enabled service that is merely STOPPED (its
     # link resolves) must NOT be touched by the heal
     g.run("rc-service crond stop", check=True)
