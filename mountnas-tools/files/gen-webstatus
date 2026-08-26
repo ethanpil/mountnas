@@ -195,6 +195,15 @@ hw_product=$(cat /sys/class/dmi/id/product_name 2>/dev/null | esc || true)
 hw="${hw_vendor:+$hw_vendor }${hw_product:-?}"
 now_tz=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
+# ---- mergerfs pools: the namespace users actually mount (df = statfs, free) --
+pool_rows=""
+while IFS=' ' read -r _dev _mnt _typ _rest; do
+	[ "$_typ" = "fuse.mergerfs" ] || continue
+	_pu=$(df -k "$_mnt" 2>/dev/null | awk 'NR==2{printf "%.0f%% of ", $3*100/$2}')
+	_pt=$(df -k "$_mnt" 2>/dev/null | awk 'NR==2{print $2}')
+	pool_rows="$pool_rows<dt>Pool $(printf '%s' "$_mnt" | esc)</dt><dd class=\"num\">$_pu$(hum_kb "${_pt:-0}")</dd>"
+done < /proc/mounts
+
 # ---- config-partition footprint (always-awake USB, metadata reads only) ----
 ovl_kb=$(du -k "$CFG/$(hostname).apkovl.tar.gz" 2>/dev/null | cut -f1)
 cache_kb=$(du -sk "$CFG/cache" 2>/dev/null | cut -f1)
@@ -355,16 +364,59 @@ if [ -n "${wg_ifs% }" ]; then
 else
 	services="$services <span class=\"pill p-off\"><i></i>wireguard</span>"
 fi
-# context lines under the pills: VPN addresses + UPS state, only when up
+# context lines under the pills: connection state, only when up. Every probe
+# is a local socket / kernel query — nothing here touches the network itself.
 svc_extra=""
+# who is USING the box right now — the question a NAS dashboard exists for.
+# smbstatus reads the locking tdbs on /var/lib (RAM-side), no disk spin.
+if rc-service samba status >/dev/null 2>&1; then
+	smb_who=$(timeout 5 smbstatus -b 2>/dev/null | awk 'NR>3 && NF>=4 {print $4}' | sort -u)
+	smb_n=$(printf '%s' "$smb_who" | grep -c .)
+	if [ "${smb_n:-0}" -gt 0 ] 2>/dev/null; then
+		svc_extra="$svc_extra<div class=\"mut svcx\">SMB sessions: <span class=\"num\">$smb_n &middot; $(printf '%s' "$smb_who" | tr '\n' ' ' | esc)</span></div>"
+	else
+		svc_extra="$svc_extra<div class=\"mut svcx\">SMB sessions: <span class=\"num\">none</span></div>"
+	fi
+fi
+if rc-service nfs status >/dev/null 2>&1; then
+	nfs_n=$(find /proc/fs/nfsd/clients -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+	svc_extra="$svc_extra<div class=\"mut svcx\">NFS clients: <span class=\"num\">${nfs_n:-0}</span> <span class=\"mut\">(NFSv4)</span></div>"
+fi
 if rc-service tailscale status >/dev/null 2>&1; then
+	# connected means the backend says Running, not merely that the daemon
+	# is up — a logged-out tailscale looks identical on the service pill
+	ts_state=$(timeout 5 tailscale status --json 2>/dev/null | jq -r '.BackendState // empty' 2>/dev/null)
 	ts_ip=$(tailscale ip -4 2>/dev/null | head -n1)
-	[ -n "$ts_ip" ] && svc_extra="$svc_extra<div class=\"mut svcx\">tailscale: <span class=\"num\">$ts_ip</span></div>"
+	case "$ts_state" in
+		Running) svc_extra="$svc_extra<div class=\"mut svcx\">tailscale: <span class=\"pill p-ok\">connected</span> <span class=\"num\">$ts_ip</span></div>" ;;
+		'') [ -n "$ts_ip" ] && svc_extra="$svc_extra<div class=\"mut svcx\">tailscale: <span class=\"num\">$ts_ip</span></div>" ;;
+		*) svc_extra="$svc_extra<div class=\"mut svcx\">tailscale: <span class=\"pill p-warn\">$(printf '%s' "$ts_state" | esc)</span> <span class=\"mut\">(tailscale up)</span></div>" ;;
+	esac
 fi
 if rc-service zerotier-one status >/dev/null 2>&1; then
-	zt=$(zerotier-cli listnetworks 2>/dev/null | awk 'NR>1 && $NF ~ /\// {printf "%s%s", (c++?", ":""), $NF}')
-	[ -n "$zt" ] && svc_extra="$svc_extra<div class=\"mut svcx\">zerotier: <span class=\"num\">$(printf '%s' "$zt" | esc)</span></div>"
+	# columns: 200 listnetworks <nwid> <name> <mac> <status> <type> <dev> <ips>
+	zt_line=$(timeout 5 zerotier-cli listnetworks 2>/dev/null | awk 'NR>1 {print $6"\t"$NF; exit}')
+	zt_st=${zt_line%%	*}; zt_ips=${zt_line#*	}
+	if [ -n "$zt_line" ]; then
+		case "$zt_st" in
+			OK) zt_pill='<span class="pill p-ok">connected</span>' ;;
+			*)  zt_pill="<span class=\"pill p-warn\">$(printf '%s' "$zt_st" | esc)</span>" ;;
+		esac
+		svc_extra="$svc_extra<div class=\"mut svcx\">zerotier: $zt_pill <span class=\"num\">$(printf '%s' "$zt_ips" | esc)</span></div>"
+	fi
 fi
+# wireguard connected = a peer with a handshake in the last 3 minutes (the
+# protocol re-handshakes about every 2) — a kernel query, not a probe
+for wgi in ${wg_ifs% }; do
+	wg_tot=$(wg show "$wgi" latest-handshakes 2>/dev/null | grep -c .)
+	wg_live=$(wg show "$wgi" latest-handshakes 2>/dev/null | awk -v now="$(date +%s)" '$2 > 0 && now - $2 < 180' | grep -c .)
+	[ "${wg_tot:-0}" -gt 0 ] 2>/dev/null || continue
+	if [ "$wg_live" -gt 0 ]; then
+		svc_extra="$svc_extra<div class=\"mut svcx\">wireguard $wgi: <span class=\"pill p-ok\">$wg_live/$wg_tot peer(s) active</span></div>"
+	else
+		svc_extra="$svc_extra<div class=\"mut svcx\">wireguard $wgi: <span class=\"pill p-off\">no recent handshake ($wg_tot peer(s))</span></div>"
+	fi
+done
 if rc-service nut-upsd status >/dev/null 2>&1; then
 	ups_name=$(upsc -l 2>/dev/null | head -n1)
 	if [ -n "$ups_name" ]; then
@@ -421,16 +473,23 @@ if rc-service docker status >/dev/null 2>&1; then
 		# shown only when nonzero; it must never hide inside "stopped"
 		d_res_pill=""
 		[ "$d_res" -gt 0 ] && d_res_pill=" <span class=\"pill p-warn\"><i></i>$d_res restarting</span>"
-		# per-container RAM in one bounded sample; joined to the rows by name
-		d_mem=$(timeout 10 docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' 2>/dev/null | esc)
-		# per-container IPs: docker inspect is daemon METADATA (no layer walk,
-		# no sampling) — one bounded round-trip for all running containers
+		# failing HEALTHCHECKs: already in the Status string, so counting them
+		# is free — and an unhealthy container is invisible otherwise
+		d_unh=$(printf '%s\n' "$d_ps" | awk -F'\t' '$4 ~ /unhealthy/' | grep -c .)
+		[ "$d_unh" -gt 0 ] && d_res_pill="$d_res_pill <span class=\"pill p-fail\"><i></i>$d_unh unhealthy</span>"
+		# per-container RAM + CPU in the ONE bounded sample (CPU rides free —
+		# it is in the same output); joined to the rows by name
+		d_mem=$(timeout 10 docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' 2>/dev/null | esc)
+		# per-container IPs + restart count: docker inspect is daemon METADATA
+		# (no layer walk, no sampling) — one bounded round-trip. RestartCount
+		# is the crash-loop detector: a looping container reads "Up 2 minutes"
+		# in every other column.
 		d_ips=$(timeout 10 docker ps -q 2>/dev/null | xargs -r timeout 10 docker inspect \
-			--format '{{.Name}}{{"\t"}}{{range $n, $c := .NetworkSettings.Networks}}{{$c.IPAddress}} {{end}}' 2>/dev/null \
+			--format '{{.Name}}{{"\t"}}{{range $n, $c := .NetworkSettings.Networks}}{{$c.IPAddress}} {{end}}{{"\t"}}{{.RestartCount}}' 2>/dev/null \
 			| sed 's|^/||' | esc)
 		d_rows=$( { printf '%s\n' "$d_ips"; echo "IPEND"; printf '%s\n' "$d_mem"; echo "MEMEND"; printf '%s\n' "$d_ps"; } | awk -F'\t' '
-			!ipdone { if ($0 == "IPEND") { ipdone=1 } else if (NF >= 2) { ip[$1]=$2 } ; next }
-			!body { if ($0 == "MEMEND") { body=1 } else if (NF >= 2) { mem[$1]=$2 } ; next }
+			!ipdone { if ($0 == "IPEND") { ipdone=1 } else if (NF >= 2) { ip[$1]=$2; rst[$1]=$3 } ; next }
+			!body { if ($0 == "MEMEND") { body=1 } else if (NF >= 2) { mem[$1]=$2; cpu[$1]=$3 } ; next }
 			{
 			state=$3; cls="p-off"
 			if (state == "running") cls="p-ok"
@@ -439,15 +498,20 @@ if rc-service docker status >/dev/null 2>&1; then
 			ports=$6; if (ports == "") ports="<span class=\"mut\">&mdash;</span>"
 			m=mem[$1]; sub(/ \/.*/, "", m)   # "82MiB / 3.8GiB" -> used part
 			if (m == "") m="<span class=\"mut\">&mdash;</span>"
+			c=cpu[$1]
+			if (c == "") c="<span class=\"mut\">&mdash;</span>"
 			a=ip[$1]; sub(/ +$/, "", a)
 			if (a == "") a="<span class=\"mut\">&mdash;</span>"
+			r=""
+			if (rst[$1] != "" && rst[$1] != "0")
+				r=sprintf("<br><span class=\"pill p-warn\" style=\"font-size:10.5px\">%s restart(s)</span>", rst[$1])
 			printf "<tr><td><b>%s</b><br><span class=\"mono mut\" style=\"font-size:11px\">%s</span></td>", $1, $2
-			printf "<td><span class=\"pill %s\"><i></i>%s</span><br><span class=\"mut\" style=\"font-size:11.5px\">%s</span></td>", cls, state, $4
-			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, a, m, $7
+			printf "<td><span class=\"pill %s\"><i></i>%s</span><br><span class=\"mut\" style=\"font-size:11.5px\">%s</span>%s</td>", cls, state, $4, r
+			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num\">%s</td><td class=\"num\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, a, c, m, $7
 		}')
 		# ONE collapsible card: the state pills live in the summary line, so
 		# the counts are always visible and one click opens the table
-		docker_card="<details class=\"card\"><summary>Docker <span class=\"svc\" style=\"display:inline-flex\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span>$d_res_pill <span class=\"pill p-off\"><i></i>$d_oth stopped</span></span> <span class=\"mut\">($d_all container(s) &mdash; click for detail)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>IP</th><th>RAM</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
+		docker_card="<details class=\"card\"><summary>Docker <span class=\"svc\" style=\"display:inline-flex\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span>$d_res_pill <span class=\"pill p-off\"><i></i>$d_oth stopped</span></span> <span class=\"mut\">($d_all container(s) &mdash; click for detail)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>IP</th><th>CPU</th><th>RAM</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
 	else
 		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers yet</span>'
 	fi
@@ -793,6 +857,7 @@ $css
         <dt>Unsaved changes</dt><dd>$unsaved_html</dd>
         <dt>Last commit</dt><dd class="num">$lastcommit</dd>
         <dt>Overlay size</dt><dd class="num">$ovl_sz <span class="mut">&middot; cache $cache_sz</span></dd>
+        $pool_rows
       </dl>
     </div>
   </div>
