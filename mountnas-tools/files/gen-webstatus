@@ -267,9 +267,20 @@ if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
 	# last run + schedule, from OUR state (never from snapraid itself)
 	if [ -f "$sr_state" ]; then
 		srt_when=$(sed -n 's/^date=//p' "$sr_state" | esc)
+		# relative age next to the timestamp ("18 hours ago" beats mental math)
+		srt_ago=""
+		srt_ep=$(date -d "$srt_when" +%s 2>/dev/null)
+		if [ -n "$srt_ep" ] 2>/dev/null; then
+			srt_ago=$(awk -v s=$(( $(date +%s) - srt_ep )) 'BEGIN{
+				if (s < 0) s = 0
+				d = int(s/86400); h = int(s%86400/3600); m = int(s%3600/60)
+				if (d > 0) printf " <span class=\"mut\">(%dd %dh ago)</span>", d, h
+				else if (h > 0) printf " <span class=\"mut\">(%dh %dm ago)</span>", h, m
+				else printf " <span class=\"mut\">(%dm ago)</span>", m }')
+		fi
 		srt_result="$(sed -n 's/^verdict=//p' "$sr_state" | esc) (+$(sed -n 's/^added=//p' "$sr_state" | esc) added, $(sed -n 's/^deleted=//p' "$sr_state" | esc) deleted, $(sed -n 's/^updated=//p' "$sr_state" | esc) changed &middot; scrub $(sed -n 's/^scrubbed=//p' "$sr_state" | esc))"
 	else
-		srt_when="never"
+		srt_when="never"; srt_ago=""
 		srt_result='run it: <span class="mono">nas snapraid run</span>'
 	fi
 	srt_cron=$(crontab -l 2>/dev/null | grep -F '# mountnas-snapraid' | awk '{printf "%02d:%02d nightly", $2, $1}')
@@ -279,12 +290,12 @@ if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
 	snapraid_html="<div style=\"overflow-x:auto\"><table><thead><tr><th>Name</th><th>Role</th><th>Path</th><th>State</th><th>Used</th></tr></thead><tbody>$srt_rows</tbody></table></div>
       <div class=\"srmeta srmeta2\">
         <div><h3>Maintenance</h3><div class=\"num\">
-          Runs: $srt_cron<br>
+          $srt_cron<br>
           Last run:<br>
-          $srt_when<br>
+          $srt_when$srt_ago<br>
           $srt_result</div></div>
         <div><h3>Maintenance safety</h3><div class=\"num\">
-          Abort conditions <span class=\"mut\">(ransomware guard)</span>:<br>
+          Abort conditions:<br>
           &gt;${srt_thr:-100} files deleted<br>
           &gt;${srt_thr2:-200} files changed</div></div>
       </div>"
@@ -373,12 +384,13 @@ if rc-service nut-upsd status >/dev/null 2>&1; then
 fi
 
 # ---- docker containers (guarded on the daemon) -------------------------------
-# ONE time-bounded `docker ps -a` feeds both the summary card and the full
-# containers table (a wedged dockerd — e.g. the data disk died underneath it —
-# would otherwise block this renderer forever). Deliberately NOT requested:
-# {{.Size}} (docker walks the rw layers to compute it — the one genuinely
-# expensive field) and `docker stats` (samples for a full second per call).
-# Everything shown is daemon metadata the CLI returns in one round-trip.
+# ONE time-bounded `docker ps -a` builds the containers card (a wedged
+# dockerd — e.g. the data disk died underneath it — would otherwise block
+# this renderer forever), plus ONE bounded `docker stats --no-stream` for
+# per-container RAM (a ~1 s cgroup sample; fine once per 2-minute render).
+# Deliberately NOT requested: {{.Size}} — docker walks each container's rw
+# layer to compute it, the one genuinely expensive field, and it grows with
+# container size. Disk use stays a CLI question (docker system df).
 # a deliberately disabled docker (DATA_SERVICES= in /etc/conf.d/mountnas)
 # must not read as "held waiting for the disk" — same override-awareness as
 # nas status. The '=' sentinel separates an explicitly empty list (no data
@@ -394,7 +406,7 @@ case " $ds_on " in
 	*" docker "*) docker_html='<span class="mut">docker not running (held until the data disk is up)</span>' ;;
 	*) docker_html='<span class="mut">docker disabled via /etc/conf.d/mountnas</span>' ;;
 esac
-docker_table=""
+docker_card=""
 if rc-service docker status >/dev/null 2>&1; then
 	d_ps=$(timeout 10 docker ps -a --no-trunc=false --format \
 		'{{.Names}}\t{{.ID}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}\t{{.RunningFor}}' \
@@ -409,25 +421,31 @@ if rc-service docker status >/dev/null 2>&1; then
 		# shown only when nonzero; it must never hide inside "stopped"
 		d_res_pill=""
 		[ "$d_res" -gt 0 ] && d_res_pill=" <span class=\"pill p-warn\"><i></i>$d_res restarting</span>"
-		docker_html="<div class=\"svc\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span>$d_res_pill <span class=\"pill p-off\"><i></i>$d_oth stopped</span></div><p class=\"mut\" style=\"margin-top:9px;font-size:12.5px\">$d_all container(s) &mdash; expand the Docker containers section below for detail.</p>"
-		d_rows=$(printf '%s\n' "$d_ps" | awk -F'\t' '{
+		# per-container RAM in one bounded sample; joined to the rows by name
+		d_mem=$(timeout 10 docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' 2>/dev/null | esc)
+		d_rows=$( { printf '%s\n' "$d_mem"; echo "MEMEND"; printf '%s\n' "$d_ps"; } | awk -F'\t' '
+			!body { if ($0 == "MEMEND") { body=1 } else if (NF >= 2) { mem[$1]=$2 } ; next }
+			{
 			state=$3; cls="p-off"
 			if (state == "running") cls="p-ok"
 			else if (state == "paused" || state == "restarting") cls="p-warn"
 			else if ($4 ~ /^Exited \([1-9]/) cls="p-fail"
 			ports=$6; if (ports == "") ports="<span class=\"mut\">&mdash;</span>"
+			m=mem[$1]; sub(/ \/.*/, "", m)   # "82MiB / 3.8GiB" -> used part
+			if (m == "") m="<span class=\"mut\">&mdash;</span>"
 			printf "<tr><td><b>%s</b><br><span class=\"mono mut\" style=\"font-size:11px\">%s</span></td>", $1, $2
 			printf "<td><span class=\"pill %s\"><i></i>%s</span><br><span class=\"mut\" style=\"font-size:11.5px\">%s</span></td>", cls, state, $4
-			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, $7
+			printf "<td class=\"mono\" style=\"font-size:12.5px\">%s</td><td class=\"mono\" style=\"font-size:12px\">%s</td><td class=\"num\">%s</td><td class=\"num mut\">%s</td></tr>\n", $5, ports, m, $7
 		}')
-		# collapsible like the hardware inventory / syslog: a compose stack
-		# makes this table LONG, and the summary line still carries the counts
-		d_res_sum=""; [ "$d_res" -gt 0 ] && d_res_sum=" &middot; $d_res restarting"
-		docker_table="<details class=\"card\"><summary>Docker containers <span class=\"mut\">($d_run running &middot; $d_pau paused$d_res_sum &middot; $d_oth stopped)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
+		# ONE collapsible card: the state pills live in the summary line, so
+		# the counts are always visible and one click opens the table
+		docker_card="<details class=\"card\"><summary>Docker <span class=\"svc\" style=\"display:inline-flex\"><span class=\"pill p-ok\"><i></i>$d_run running</span> <span class=\"pill p-warn\"><i></i>$d_pau paused</span>$d_res_pill <span class=\"pill p-off\"><i></i>$d_oth stopped</span></span> <span class=\"mut\">($d_all container(s) &mdash; click for detail)</span></summary><div style=\"overflow-x:auto;border-top:1px solid var(--line)\"><table><thead><tr><th>Container</th><th>State</th><th>Image</th><th>Ports</th><th>RAM</th><th>Created</th></tr></thead><tbody>$d_rows</tbody></table></div></details>"
 	else
 		docker_html='<span class="mut">daemon up &middot; unresponsive or no containers yet</span>'
 	fi
 fi
+# daemon down / disabled / no containers: a plain card carrying the reason
+[ -n "$docker_card" ] || docker_card="<div class=\"card\" style=\"margin-bottom:14px\"><h2>Docker</h2>$docker_html</div>"
 
 # ---- network interfaces (pure /sys reads) ------------------------------------
 net_rows=""
@@ -804,8 +822,7 @@ $disk_rows
     </table>
   </div>
   <div class="card" style="margin-bottom:14px"><h2>SnapRAID</h2>$snapraid_html</div>
-  <div class="card" style="margin-bottom:14px"><h2>Docker</h2>$docker_html</div>
-  $docker_table
+  $docker_card
   $fw_card
   <details class="card">
     <summary>Hardware inventory <span class="mut">(USB tree &middot; PCI devices &middot; memory modules)</span></summary>
