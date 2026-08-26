@@ -14,6 +14,13 @@
   Thresholds: `/etc/mountnas/snapraid-maint.conf`; history:
   `/mnt/nasdata/snapraid/logs`.
 
+### Fixed
+- smartd no longer crash-loops on a box with no SMART-capable device (USB
+  enclosures, VMs): the seeded /etc/conf.d/smartd sets '-q never', so the
+  daemon stays up and idle instead of exiting. Boxes that upgraded keep
+  their existing conf.d; add the line by hand if the syslog shows
+  "smartd ... status: crashed".
+
 ### Changed
 - **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
   sources `/usr/libexec/mountnas/lib.sh` and one `cmd/<name>.sh` per command

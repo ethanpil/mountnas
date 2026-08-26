@@ -248,6 +248,16 @@ mk root:root 0644 "$tmp/etc/smartd.conf" <<'EOF'
 DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify
 EOF
 
+# smartd's DEFAULT is to EXIT when DEVICESCAN finds no SMART-capable device —
+# OpenRC then reports "crashed", and every status check logs a daemon.err
+# line. A box on USB enclosures (or a VM) has exactly zero such devices, so
+# ship '-q never': smartd stays up, idle, and picks devices up on reload.
+mk root:root 0644 "$tmp/etc/conf.d/smartd" <<'EOF'
+# MountNAS: keep smartd RUNNING when no SMART-capable device exists (USB
+# enclosures, VMs). Without this smartd exits and OpenRC reports "crashed".
+command_args="-q never"
+EOF
+
 # ---- outbound mail: mail(1) -> msmtp -> your SMTP relay ----
 # smartd's warning script (and anything else) calls mail(1); /etc/mail.rc
 # points it at msmtp. Both spellings are set because mailx flavors differ on
