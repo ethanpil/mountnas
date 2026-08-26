@@ -245,6 +245,14 @@ mk root:root 0644 "$tmp/etc/smartd.conf" <<'EOF'
 # For classic direct email instead: configure /etc/msmtprc (README "Email
 # alerts"), then replace the line with:
 #   DEVICESCAN -n standby,q -m you@example.com
+#
+# Scheduled self-tests (optional): -s runs the drives' own surface scans on
+# a schedule — the deepest early-failure signal SMART offers. WARNING: a
+# self-test SPINS UP every disk when it fires (that is the point: it reads
+# the platters), so only add this if you accept the wake-ups. The example
+# runs a short test nightly at 02:00 and a long test every Saturday at
+# 03:00 (regex fields: T/MM/DD/d/HH; d: 1=Monday..7=Sunday):
+#   DEVICESCAN -n standby,q -s (S/../.././02|L/../../6/03) -m root -M exec /usr/libexec/mountnas/smartd-notify
 DEVICESCAN -n standby,q -m root -M exec /usr/libexec/mountnas/smartd-notify
 EOF
 
