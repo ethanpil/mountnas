@@ -509,8 +509,10 @@ def test_share_end_to_end_with_real_samba(dev_guest):
           check=True)
     g.run("printf 'pw1\npw1\n' | nas share user add alice", timeout=120,
           check=True)
-    g.run("mkdir -p /mnt/nasdata/teamdocs", check=True)
-    r = g.run("printf '1\nalice\n1\n' | nas share add teamdocs /mnt/nasdata/teamdocs",
+    # let 'share add' CREATE the directory (answer y) — the chown to the
+    # force-user account only runs on directories the command creates, so
+    # a pre-made root-owned dir would give smbd ACCESS_DENIED by design
+    r = g.run("printf 'y\n1\nalice\n1\n' | nas share add teamdocs /mnt/nasdata/teamdocs",
               timeout=120)
     assert r.rc == 0, f"share add rc={r.rc}:\n{r.out}"
     # the include must be in [global] scope or smbd ignores it silently

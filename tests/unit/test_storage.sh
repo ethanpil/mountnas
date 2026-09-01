@@ -10,9 +10,19 @@ stub rc-service 'exit 0'
 stub partprobe ':'
 stub mountpoint 'case "$2" in /not-mounted*) exit 1 ;; *) exit 0 ;; esac'
 # blkid values come from per-device files: /tmp/blk.<base>.<TAG>
-stub blkid 'dev=""; tag=""
-while [ $# -gt 0 ]; do case "$1" in -s) tag=$2; shift 2 ;; -o) shift 2 ;; *) dev=$1; shift ;; esac; done
-cat "/tmp/blk.$(basename "$dev").$tag" 2>/dev/null'
+stub blkid 'dev=""; tag=""; exp=0
+while [ $# -gt 0 ]; do case "$1" in
+	-s) tag=$2; shift 2 ;;
+	-o) [ "$2" = export ] && exp=1; shift 2 ;;
+	*) dev=$1; shift ;; esac; done
+b=$(basename "$dev")
+if [ "$exp" = 1 ]; then
+	for k in UUID TYPE LABEL; do
+		[ -f "/tmp/blk.$b.$k" ] && printf "%s=%s\n" "$k" "$(cat /tmp/blk.$b.$k)"
+	done
+else
+	cat "/tmp/blk.$b.$tag" 2>/dev/null
+fi'
 stub findfs 'case "$1" in
 	LABEL=BOOT) echo /dev/sda1 ;;
 	UUID=cafe-1234) echo /dev/sdb1 ;;
@@ -23,8 +33,8 @@ esac'
 stub lsblk 'case "$*" in
 	*pkname*/dev/sda*) echo sda ;;          # boot USB partitions
 	*pkname*/dev/sdb1*) echo sdb ;;
+	*pkname*/dev/sdc1*) echo sdc ;;         # ORDER: sdc1 before the sdc glob
 	*pkname*/dev/sdc*) echo "" ;;           # sdc = whole disk (no parent)
-	*pkname*/dev/sdc1*) echo sdc ;;
 	*-Jbo*) cat /tmp/lsblk-blank.json 2>/dev/null || echo "{\"blockdevices\":[]}" ;;
 	*-Jo*NAME,TYPE,SERIAL*) cat /tmp/lsblk-serial.json 2>/dev/null || echo "{\"blockdevices\":[]}" ;;
 	*-Jo*) cat /tmp/lsblk-cand.json 2>/dev/null || echo "{\"blockdevices\":[]}" ;;
@@ -133,9 +143,10 @@ grep -q 'parted' "$CALLS" 2>/dev/null && fail "parted ran despite a failed confi
 
 t "init: data role formats large-file ext4 with -i 1048576 -m 0 and chains"
 seed
-# answers: role=2(data) fs=(ext4 default) contents=1(large) serial=9876 ... then
-# the mount flow: role=1(data mountpoint) snapraid=n
-OUT=$(printf '2\n\n1\n9876\n1\nn\n' | /usr/sbin/nas disk init /dev/sdc 2>&1); RC=$?
+# answers: role=2(data) fs=(ext4 default) contents=1(large) serial=9876,
+# then the CHAINED mount flow (role preset — no second role question):
+# snapraid offer = n
+OUT=$(printf '2\n\n1\n9876\nn\n' | /usr/sbin/nas disk init /dev/sdc 2>&1); RC=$?
 assert_rc 0
 assert_match 'mkfs.ext4 .*-L disk1 .*-i 1048576 -m 0 /dev/sdc1' "$(cat $CALLS)"
 assert_match 'parted -s /dev/sdc mklabel gpt' "$(cat $CALLS)"
@@ -145,14 +156,14 @@ t "init: nasdata role keeps -m 1; xfs skips the inode question"
 seed
 # a box with NO nasdata yet — the role-1 duplicate guard must not fire
 printf 'LABEL=MNASCFG  /cfg  ext4  rw,noatime,nofail  0 0\n' > /etc/fstab
-# answers: role=1(nasdata) fs=(ext4) contents=2(mixed) serial, then the
-# chained mount flow's role=3(nasdata) — no snapraid offer for that role
-OUT=$(printf '1\n\n2\n9876\n3\n' | /usr/sbin/nas disk init /dev/sdc 2>&1); RC=$?
+# answers: role=1(nasdata) fs=(ext4) contents=2(mixed) serial — the role
+# is preset through the chain and nasdata gets no snapraid offer
+OUT=$(printf '1\n\n2\n9876\n' | /usr/sbin/nas disk init /dev/sdc 2>&1); RC=$?
 assert_rc 0
 assert_match 'mkfs.ext4 .*-m 1 /dev/sdc1' "$(cat $CALLS)"
 assert_nomatch '\-i 1048576' "$(cat $CALLS)" "mixed-files answer keeps default inodes"
 seed
-OUT=$(printf '2\nxfs\n9876\n1\nn\n' | /usr/sbin/nas disk init /dev/sdc 2>&1); RC=$?
+OUT=$(printf '2\nxfs\n9876\nn\n' | /usr/sbin/nas disk init /dev/sdc 2>&1); RC=$?
 assert_rc 0
 assert_match 'mkfs.xfs .*-L disk1' "$(cat $CALLS)"
 assert_nomatch 'Contents\?' "$OUT" "xfs must not ask the ext4 inode question"

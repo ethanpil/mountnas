@@ -270,9 +270,10 @@ def test_disk_init_mount_snapraid_chain(golden_with_extras):
     # the extra disks carry serials EXTRA0/EXTRA1 (DiskSpec) — the confirm
     # token is the last 4 characters
     # init vdc as a DATA disk: role=2, fs=default, contents=1 (large),
-    # serial suffix, then the chained mount flow: role=1, snapraid=y,
-    # second-content offer=y (nasdata is mounted on the golden guest)
-    r = g.run("printf '2\n\n1\nTRA0\n1\ny\ny\n' | nas disk init /dev/vdc",
+    # serial suffix, then the chained mount flow (role preset — no second
+    # role question): snapraid=y, second-content offer=y (nasdata is
+    # mounted on the golden guest)
+    r = g.run("printf '2\n\n1\nTRA0\ny\ny\n' | nas disk init /dev/vdc",
               timeout=600)
     assert r.rc == 0, f"disk init rc={r.rc}:\n{r.out[-3000:]}"
     g.poll_until("mountpoint -q /mnt/disk1", timeout=180, desc="disk1 mounted")
@@ -292,9 +293,9 @@ def test_disk_init_mount_snapraid_chain(golden_with_extras):
     assert r.rc != 0 and "NOT blank" in r.out, r.out
     assert "nas mount" in r.out, r.out
 
-    # parity disk via init role=3 (no contents question), chained mount
-    # role=2(parity), snapraid=y
-    r = g.run("printf '3\n\nTRA1\n2\ny\n' | nas disk init /dev/vdd",
+    # parity disk via init role=3 (no contents question), the chained
+    # mount flow keeps the preset parity role: snapraid=y
+    r = g.run("printf '3\n\nTRA1\ny\n' | nas disk init /dev/vdd",
               timeout=600)
     assert r.rc == 0, f"parity init rc={r.rc}:\n{r.out[-3000:]}"
     g.poll_until("mountpoint -q /mnt/parity1", timeout=180,
