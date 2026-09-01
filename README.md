@@ -14,7 +14,7 @@ Get your system running by following these steps:
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
 * Complete the automatic `nas setup` wizard (it starts by itself at your first login) to set the hostname, root password, timezone, and network.
 * Identify your attached storage volumes and their respective identifiers by running `nas disks`.
-* Prepare your disks: `nas disk init` guides you through formatting a BLANK disk (role, filesystem, ext4 inode density, fstab, mount) with a serial-number confirmation before anything is written; `nas mount` adds an already-formatted disk. Prefer doing it by hand? `cfdisk`/`mkfs` and every other [baked in tool](#baked-in-packages) still work exactly as before.
+* Prepare your disks. `nas disk init` formats a BLANK disk: it asks the role, the filesystem and the ext4 inode density, then writes the fstab line and mounts the disk. A serial-number confirmation protects the erase step. `nas mount` adds a disk that already has a filesystem. The manual tools (`cfdisk`, `mkfs`, and the other [baked in tools](#baked-in-packages)) work the same as before.
 * Register your primary storage disk in `/etc/fstab` mapping to the explicit path `/mnt/nasdata` where application data, Docker structures, and configuration backups will live (`nas disk init` and `nas mount` write these lines for you; hand-editing works the same as ever).
 * Register any other storage in `/etc/fstab` as well.
 * Test your configuration logic by running `nas status` to ensure no errors exist in your file system definitions.

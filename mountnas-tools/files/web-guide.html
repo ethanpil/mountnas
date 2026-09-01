@@ -432,7 +432,7 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><th>Command</th><th>Does</th></tr>
 <tr><td><code>setup</code></td><td>Guided first-run wizard (hostname, password, timezone, network). Auto-runs at first login; safe to re-run.</td></tr>
 <tr><td><code>status [--deep|--json]</code></td><td>Health + storage-config checks; exit 1 on failure. <code>--deep</code> adds SMART/SnapRAID (may wake disks); <code>--json</code> for monitoring.</td></tr>
-<tr><td><code>disks [--json]</code></td><td>Every disk: identity, partitions, temps (spin-down safe), fstab state, paste-ready fstab lines.</td></tr>
+<tr><td><code>disks [--json|init]</code></td><td>Every disk: identity, partitions, temps (spin-down safe), fstab state, paste-ready fstab lines.</td></tr>
 <tr><td><code>restart</code></td><td>Re-mount fstab disks and (re)start Docker/Samba/NFS — no reboot. Run after editing fstab.</td></tr>
 <tr><td><code>changes [--diff]</code></td><td>What <code>commit</code> would save; <code>--diff</code> shows the content. <span class="mut">(alias: changed)</span></td></tr>
 <tr><td><code>commit [-m "note"]</code></td><td>Save in-RAM config to the stick. Run interactively it asks for a note (Enter skips) — notes show in <code>rollback --list</code>. <span class="mut">(alias: save)</span></td></tr>
@@ -443,7 +443,8 @@ nas upgrade https://github.com/.../mountnas-X.img.gz # or a local file; then reb
 <tr><td><code>notify [--test|&lt;subject&gt; [body]]</code></td><td>List/test notification sinks, or send an ad-hoc message (body pipeable) — cron friendly.</td></tr>
 <tr><td><code>web [on [port]|off|status]</code></td><td>This read-only dashboard + guide. Off by default; default port 8080. <b><code>nas commit</code> after on/off</b> or the setting is lost at reboot (the command warns).</td></tr>
 <tr><td><code>ttyd [on [port]|off|status]</code></td><td>Browser terminal serving a real login prompt (root works — <code>on</code> whitelists ptys in securetty once). Off by default; port 22222; same <code>nas commit</code> rule.</td></tr>
-<tr><td><code>snapraid [run|schedule|status]</code></td><td>Gated SnapRAID maintenance: <code>run</code> syncs + scrubs now (refuses past the delete/change thresholds — <code>--force-sync</code> overrides once); <code>schedule [HH:MM|off]</code> manages the nightly cron line; <code>status [--deep]</code> shows the array per disk, the schedule and the last verdict. Settings: <code>/etc/mountnas/snapraid-maint.conf</code>.</td></tr>
+<tr><td><code>snapraid [run|add|schedule|status]</code></td><td>Gated SnapRAID maintenance: <code>run</code> syncs + scrubs now (refuses past the delete/change thresholds — <code>--force-sync</code> overrides once); <code>schedule [HH:MM|off]</code> manages the nightly cron line; <code>status [--deep]</code> shows the array per disk, the schedule and the last verdict. Settings: <code>/etc/mountnas/snapraid-maint.conf</code>.</td></tr>
+<tr><td><code>mount [disk]</code></td><td>Add an already-formatted partition to fstab and mount it (by /dev path, UUID, label or disk serial). Never formats; never the boot USB; append-only. Blank disks: <code>nas disk init</code>.</td></tr>
 <tr><td><code>logs [-n N|-f|--persist ...]</code></td><td>View syslog; optionally persist it to the data disk with rotation.</td></tr>
 <tr><td><code>report</code></td><td>Secrets-free diagnostics bundle in /tmp for bug reports.</td></tr>
 <tr><td><code>shutdown / reboot [--yes|--save]</code></td><td>Power off / reboot with an unsaved-changes gate; <code>--save</code> commits first.</td></tr>

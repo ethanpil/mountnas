@@ -248,6 +248,19 @@ _snap_note() {
 	awk -F'\t' -v t="$sn_ts" '$1==t{print $2; exit}' "$CFG/.mountnas-notes" 2>/dev/null
 }
 
+# Next free /mnt/<prefix>N in fstab (active lines only) — THE single copy
+# of the numbering loop the storage commands share.
+_next_free_mp() {   # $1=prefix (disk|parity) -> prints /mnt/<prefix>N
+	local nfp_n
+	nfp_n=1
+	while awk -v m="/mnt/$1$nfp_n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do
+		nfp_n=$((nfp_n + 1))
+	done
+	printf '/mnt/%s%s' "$1" "$nfp_n"
+}
+# active fstab entry for a mountpoint?
+_fstab_has_mp() { awk -v m="$1" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; }
+
 # Mirror the ACTIVE overlay to the data disk: the stick's disaster copy
 # (README "Recovery from a dead USB"). Called by every writer of the active
 # overlay — cmd_commit AND cmd_rollback — so the newest mirror always equals

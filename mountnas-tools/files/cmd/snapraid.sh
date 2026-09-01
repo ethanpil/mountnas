@@ -139,8 +139,23 @@ cmd_snapraid() {
 		amnt=${amnt%/}
 		[ "$amnt" = /mnt/nasdata ] && { bad "/mnt/nasdata stays OUT of the array (the one rule snapraid.conf shouts) — its content COPY is offered below instead"; return 1; }
 		mountpoint -q "$amnt" 2>/dev/null || { bad "$amnt is not a mountpoint — mount it first (nas mount)"; return 1; }
-		grep -qE "[[:space:]]$amnt/?([[:space:]]|$)" /etc/snapraid.conf 2>/dev/null \
-			&& { bad "$amnt is already in /etc/snapraid.conf"; return 1; }
+		_blocked "$amnt" && { bad "$amnt holds the supervisor's FAILURE placeholder, not a disk — fix the mount first (nas status)"; return 1; }
+		# duplicate check by VALUE, not regex: parity/content lines carry the
+		# mountpoint with a /snapraid.* suffix a whitespace-boundary regex
+		# never matches, and a path with regex metachars must not break the
+		# gate. Compare each field with the suffixes and slashes stripped.
+		if awk -v m="$amnt" '$1!~/^#/ {
+				for (i = 2; i <= NF; i++) {
+					n = split($i, parts, ",");
+					for (j = 1; j <= n; j++) {
+						v = parts[j]
+						sub(/\/snapraid\.[^\/]*$/, "", v); sub(/\/$/, "", v)
+						if (v == m) found = 1
+					}
+				}
+			} END { exit !found }' /etc/snapraid.conf 2>/dev/null; then
+			bad "$amnt is already in /etc/snapraid.conf"; return 1
+		fi
 		[ -f /etc/snapraid.conf ] || : > /etc/snapraid.conf
 		if [ "$aro" = --parity ]; then
 			# escalate: parity -> 2-parity -> ... (the variants the
@@ -166,15 +181,19 @@ cmd_snapraid() {
 		if [ "$acnt" -lt 2 ]; then
 			if mountpoint -q /mnt/nasdata 2>/dev/null; then
 				printf 'The array needs a SECOND content copy (snapraid refuses to run with one).\nAdd the usual one on nasdata? [Y/n]: '
-				IFS= read -r ans || ans=""
-				case "$ans" in n|N) warn "add a second content line before the first run, or snapraid refuses" ;;
-					*) printf 'content /mnt/nasdata/snapraid.content\n' >> /etc/snapraid.conf
-					   ok "snapraid.conf: + content /mnt/nasdata/snapraid.content" ;;
-				esac
+				# EOF (an underfilled script pipe) must mean NO — a config
+				# mutation may never ride on a missing answer
+				if IFS= read -r ans && ! { [ "$ans" = n ] || [ "$ans" = N ]; }; then
+					printf 'content /mnt/nasdata/snapraid.content\n' >> /etc/snapraid.conf
+					ok "snapraid.conf: + content /mnt/nasdata/snapraid.content"
+				else
+					warn "add a second content line before the first run, or snapraid refuses"
+				fi
 			else
 				warn "the array needs a SECOND content copy on another disk before the first run"
 			fi
 		fi
+		_ops_log snapraid "add $amnt${aro:+ --parity}"
 		hint "parity is not synced yet — run: nas snapraid run"
 		_snapraid_unsaved_conf_warn
 		;;

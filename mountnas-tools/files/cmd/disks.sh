@@ -234,27 +234,40 @@ cmd_disks_init() {
 		hint "after checking twice), then rerun: nas disk init $dev"
 		return 1
 	fi
-	serial=$(lsblk -dno serial "$dev" 2>/dev/null | tr -d ' ')
-	model=$(lsblk -dno model "$dev" 2>/dev/null)
+	# one lsblk fork for the identity trio; virtio and some USB bridges
+	# publish the serial only in sysfs, so fall back there before giving up
+	serial=$(lsblk -dno serial,model,size "$dev" 2>/dev/null)
+	model=$(printf '%s' "$serial" | awk '{$1=""; NF--; sub(/^ /,""); print}')
 	size=$(lsblk -dbno size "$dev" 2>/dev/null)
+	serial=$(printf '%s' "$serial" | awk '{print $1}' | tr -d ' ')
+	[ -n "$serial" ] || serial=$(cat "/sys/block/${dev##*/}/serial" 2>/dev/null | tr -d ' ')
 	printf '%s: %s  %s — BLANK (no partitions, no signatures)\n' "$dev" "${model:-?}" "$(_hum_b "${size:-0}")"
 	printf 'Role?\n  [1] nasdata   the system disk (Docker, appdata, backups) — required once\n'
 	printf '  [2] data      a storage disk (pool / SnapRAID array)\n'
 	printf '  [3] parity    a SnapRAID parity disk\n: '
 	IFS= read -r role || role=""
 	case "$role" in
-		1) awk '$1!~/^#/ && $2=="/mnt/nasdata"{f=1} END{exit !f}' /etc/fstab \
-			&& { bad "fstab already maps /mnt/nasdata"; return 1; }
+		1) _fstab_has_mp /mnt/nasdata && { bad "fstab already maps /mnt/nasdata"; return 1; }
 		   mp=/mnt/nasdata; lbl=nasdata ;;
-		2) n=1; while awk -v m="/mnt/disk$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
-		   mp=/mnt/disk$n; lbl=disk$n ;;
-		3) n=1; while awk -v m="/mnt/parity$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
-		   mp=/mnt/parity$n; lbl=parity$n ;;
+		2) mp=$(_next_free_mp disk); lbl=${mp##*/} ;;
+		3) mp=$(_next_free_mp parity); lbl=${mp##*/} ;;
 		*) echo "Cancelled."; return 1 ;;
 	esac
+	# the label must be UNIQUE on the box: a second filesystem labeled
+	# 'disk1' makes LABEL= resolution (nas mount, fstab lines) ambiguous —
+	# the exact confusion the serial confirmation exists to prevent
+	if findfs "LABEL=$lbl" >/dev/null 2>&1; then
+		bad "a filesystem labeled '$lbl' already exists ($(findfs "LABEL=$lbl" 2>/dev/null))"
+		hint "its fstab mountpoint differs from its label — mount or relabel that disk first"
+		return 1
+	fi
 	printf 'Filesystem [ext4/xfs, default ext4]: '
 	IFS= read -r fstype || fstype=""
 	case "$fstype" in '') fstype=ext4 ;; ext4|xfs) ;; *) bad "ext4 or xfs"; return 1 ;; esac
+	# the mkfs tool must exist BEFORE the destructive step: failing after
+	# parted strands a half-initialized disk this command then refuses
+	command -v "mkfs.$fstype" >/dev/null 2>&1 \
+		|| { bad "mkfs.$fstype is not installed — nothing was written"; return 1; }
 	mkfs_opts=""
 	if [ "$fstype" = ext4 ]; then
 		if [ "$role" = 3 ]; then
@@ -273,12 +286,16 @@ cmd_disks_init() {
 	fi
 	echo "Plan: GPT, one partition, mkfs.$fstype -L $lbl ${mkfs_opts# }"
 	echo "      then fstab -> $mp and a mount via the supervisor"
-	printf 'This ERASES %s (serial %s).\nType the LAST 4 characters of the serial to continue: ' "$dev" "${serial:-unknown}"
-	IFS= read -r ans || ans=""
+	# the confirm proves the operator is looking at the RIGHT physical disk.
+	# With no usable serial the fallback question is asked UP FRONT — asking
+	# for a serial that does not exist would waste the whole wizard run.
 	if [ -z "$serial" ] || [ ${#serial} -lt 4 ]; then
-		# no usable serial (some USB bridges): fall back to typing the device
-		[ "$ans" = "$dev" ] || { bad "no serial available — type the full device path ($dev) to confirm"; return 1; }
+		printf 'This ERASES %s (no serial available).\nType the FULL device path to continue: ' "$dev"
+		IFS= read -r ans || ans=""
+		[ "$ans" = "$dev" ] || { echo "Mismatch — nothing was written."; return 1; }
 	else
+		printf 'This ERASES %s (serial %s).\nType the LAST 4 characters of the serial to continue: ' "$dev" "$serial"
+		IFS= read -r ans || ans=""
 		[ "$ans" = "$(printf '%s' "$serial" | tail -c 4)" ] || { echo "Mismatch — nothing was written."; return 1; }
 	fi
 	parted -s "$dev" mklabel gpt mkpart primary 1MiB 100% >/dev/null 2>&1 \
@@ -291,13 +308,17 @@ cmd_disks_init() {
 	part=/dev/$part
 	# shellcheck disable=SC2086  # mkfs_opts is a flag list by construction
 	if [ "$fstype" = ext4 ]; then
-		mkfs.ext4 -Fq -L "$lbl" $mkfs_opts "$part" >/dev/null 2>&1 || { bad "mkfs.ext4 failed"; return 1; }
+		ans=$(mkfs.ext4 -Fq -L "$lbl" $mkfs_opts "$part" 2>&1) \
+			|| { printf '%s\n' "$ans" | tail -n 3 | sed 's/^/    /'; bad "mkfs.ext4 failed"; return 1; }
 	else
-		mkfs.xfs -fq -L "$lbl" "$part" >/dev/null 2>&1 || { bad "mkfs.xfs failed"; return 1; }
+		ans=$(mkfs.xfs -fq -L "$lbl" "$part" 2>&1) \
+			|| { printf '%s\n' "$ans" | tail -n 3 | sed 's/^/    /'; bad "mkfs.xfs failed"; return 1; }
 	fi
 	ok "partitioned + formatted (label $lbl)"
 	_ops_log disks "init $dev -> $lbl ($fstype)"
-	_mount_flow "$part"
+	# chain: the role maps to the mount flow's OWN numbering, passed as the
+	# preset so the flow never asks a second, differently-numbered question
+	case "$role" in 1) _mount_flow "$part" 3 ;; 2) _mount_flow "$part" 1 ;; 3) _mount_flow "$part" 2 ;; esac
 }
 # bytes -> human, local to the init flow (lsblk -b gives bytes)
 _hum_b() {

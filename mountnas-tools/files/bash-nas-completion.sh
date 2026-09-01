@@ -29,7 +29,7 @@ _nas_complete() {
 	--persist)       COMPREPLY=($(compgen -W "on off status" -- "$cur")) ;;
 	upgrade)         COMPREPLY=($(compgen -W "--check --yes" -- "$cur") $(compgen -f -- "$cur")) ;;
 	reboot|shutdown) COMPREPLY=($(compgen -W "--yes --save" -- "$cur")) ;;
-	help)            COMPREPLY=($(compgen -W "setup status disks mount restart changes commit save rollback backup logs log web ttyd snapraid share history notify report shutdown reboot upgrade version about" -- "$cur")) ;;
+	help)            COMPREPLY=($(compgen -W "setup status disks disk mount restart changes commit save rollback backup logs log web ttyd snapraid share history notify report shutdown reboot upgrade version about" -- "$cur")) ;;
 	esac
 }
 complete -F _nas_complete nas

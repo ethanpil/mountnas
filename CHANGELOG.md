@@ -24,7 +24,7 @@
   mount adds an already-formatted partition by /dev, UUID, label or
   serial — append-only against fstab, never the boot USB. snapraid add
   appends data/content or parity lines and enforces snapraid's own
-  two-content-copies rule. 'nas disk' aliases 'nas disks'.
+  two-content-copies rule. 'nas disk' aliases 'nas disks'. (5db57c8)
 - **User-installed services start at every boot.** Their packages install
   mid-boot (after /cfg mounts), so openrc's runlevel walk used to skip
   their not-yet-present init scripts and the service stayed down until a

@@ -90,7 +90,10 @@ case "${1:-help}" in
 	disks|disk) shift
 		case "${1:-}" in
 			--json) cmd_disks_json ;;
-			init) shift; cmd_disks_init "$@" ;;
+			init) shift
+				# the flagship destructive command deserves a working --help
+				case "${1:-}" in --help|-h) help_disks; exit 0 ;; esac
+				cmd_disks_init "$@" ;;
 			'') cmd_disks ;;
 			*) usage "nas disks [--json | init [device]]"; exit 1 ;;
 		esac ;;
