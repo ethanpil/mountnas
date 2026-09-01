@@ -8,8 +8,8 @@ MAINT=/usr/libexec/mountnas/snapraid-maint
 CALLS=/tmp/snapraid-calls
 stub lbu ':'
 stub rc-service 'exit 0'          # crond "running"
-# mountpoint: /cfg and the /run/* "disks" are mounted; /not-mounted* is not
-stub mountpoint 'case "$2" in /not-mounted*) exit 1 ;; *) exit 0 ;; esac'
+# mountpoint: everything is "mounted" except paths carrying not-mounted
+stub mountpoint 'case "$2" in *not-mounted*) exit 1 ;; *) exit 0 ;; esac'
 
 # The stub snapraid: logs every invocation; behavior driven by files.
 #   /tmp/diff-out    the diff output    /tmp/diff-rc  its exit code
@@ -260,46 +260,76 @@ assert_match 'force-sync' "$OUT"
 
 t "add: data disks number dN, each with a content line"
 seed
-run_nas snapraid add /not-mounted/disk9
+run_nas snapraid add /mnt/not-mounted-disk9
 assert_rc 1
 assert_match 'not a mountpoint' "$OUT"
-mkdir -p /run/disk2
-run_nas snapraid add /run/disk2/
+run_nas snapraid add /run/disk2
+assert_rc 1
+assert_match 'live under /mnt' "$OUT" "a tmpfs mountpoint must not become an array disk"
+mkdir -p /mnt/disk2
+run_nas snapraid add /mnt/disk2/
 assert_rc 0
-assert_match '\+ data d2 /run/disk2/' "$OUT"
-assert_match '^data d2 /run/disk2/$' "$(cat /etc/snapraid.conf)"
-assert_match '^content /run/disk2/snapraid.content$' "$(cat /etc/snapraid.conf)"
+assert_match '\+ data d2 /mnt/disk2/' "$OUT"
+assert_match '^data d2 /mnt/disk2/$' "$(cat /etc/snapraid.conf)"
+assert_match '^content /mnt/disk2/snapraid.content$' "$(cat /etc/snapraid.conf)"
 
 t "add --parity escalates parity -> 2-parity, with content copies"
 seed
-mkdir -p /run/parity2
-run_nas snapraid add /run/parity2 --parity
+mkdir -p /mnt/parity2
+run_nas snapraid add /mnt/parity2 --parity
 assert_rc 0
-assert_match '^2-parity /run/parity2/snapraid.2-parity$' "$(cat /etc/snapraid.conf)"
-assert_match '^content /run/parity2/snapraid.content$' "$(cat /etc/snapraid.conf)"
+assert_match '^2-parity /mnt/parity2/snapraid.2-parity$' "$(cat /etc/snapraid.conf)"
+assert_match '^content /mnt/parity2/snapraid.content$' "$(cat /etc/snapraid.conf)"
+
+t "add --parity refuses a conf with a parity-level gap (hand-managed)"
+seed
+printf '2-parity /run/parity2/snapraid.2-parity\ndata d1 /run/disk1/\n' > /etc/snapraid.conf
+mkdir -p /mnt/parity3
+run_nas snapraid add /mnt/parity3 --parity
+assert_rc 1
+assert_match 'not contiguous' "$OUT" "count-based escalation would duplicate a level"
 
 t "add refuses nasdata and duplicates"
 seed
 run_nas snapraid add /mnt/nasdata
 assert_rc 1
 assert_match 'stays OUT of the array' "$OUT"
-run_nas snapraid add /run/disk1
+printf 'data d9 /mnt/disk9/\n' >> /etc/snapraid.conf
+mkdir -p /mnt/disk9
+run_nas snapraid add /mnt/disk9
 assert_rc 1
 assert_match 'already in /etc/snapraid.conf' "$OUT"
 
-t "add enforces the two-content invariant (nasdata copy offered)"
+t "add enforces the content minimum (nasdata copy offered; EOF/no decline)"
 seed
 printf 'data d1 /run/disk1/\n' > /etc/snapraid.conf   # ONE content short
-mkdir -p /run/disk2
-OUT=$(printf 'y\n' | /usr/sbin/nas snapraid add /run/disk2 2>&1); RC=$?
+mkdir -p /mnt/disk2
+OUT=$(printf 'y\n' | /usr/sbin/nas snapraid add /mnt/disk2 2>&1); RC=$?
 assert_rc 0
-assert_match 'SECOND content copy' "$OUT"
+assert_match 'needs 2 content copies' "$OUT"
 assert_match '^content /mnt/nasdata/snapraid.content$' "$(cat /etc/snapraid.conf)"
 seed
 printf 'data d1 /run/disk1/\n' > /etc/snapraid.conf
-OUT=$(printf 'n\n' | /usr/sbin/nas snapraid add /run/disk2 2>&1)
-assert_match 'second content line before the first run' "$OUT"
-assert_nomatch 'content /mnt/nasdata' "$(cat /etc/snapraid.conf)" "declined = not added"
+OUT=$(printf 'no\n' | /usr/sbin/nas snapraid add /mnt/disk2 2>&1)
+assert_match 'content line on another disk before the first run' "$OUT"
+assert_nomatch 'content /mnt/nasdata' "$(cat /etc/snapraid.conf)" "'no' must decline, not read as yes"
+
+t "add: the content minimum follows the parity level count"
+seed
+# two parity levels (one via the old q- alias name) -> 3 copies required
+printf 'parity /run/parity1/snapraid.parity\nq-parity /run/parity2/snapraid.q-parity\ncontent /run/disk1/snapraid.content\ndata d1 /run/disk1/\n' > /etc/snapraid.conf
+mkdir -p /mnt/disk2
+OUT=$(printf 'y\n' | /usr/sbin/nas snapraid add /mnt/disk2 2>&1); RC=$?
+assert_rc 0
+assert_match 'needs 3 content copies' "$OUT"
+
+t "add: a mountpoint with a space is refused before any write"
+seed
+before=$(cat /etc/snapraid.conf)
+run_nas snapraid add '/mnt/my disk'
+assert_rc 1
+assert_match 'spaces or shell metacharacters' "$OUT"
+assert_eq "$before" "$(cat /etc/snapraid.conf)" "conf untouched"
 
 t "unsaved schedule warns (runlevel-honesty pattern)"
 seed

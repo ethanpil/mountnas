@@ -12,8 +12,12 @@ stub iptables 'exit 1'            # ufw chains absent (no fw hint) by default
 # mountpoint: /mnt/nasdata mounted; /not-mounted is not
 stub mountpoint 'case "$2" in /not-mounted*) exit 1 ;; *) exit 0 ;; esac'
 # testparm: exit per flag file; -s output = global + OUR file + optional
-# hand-written section (models the include resolution samba itself does)
+# hand-written section (models the include resolution samba itself does).
+# testparm-bad = always broken (exercises the add-time PRE-check);
+# testparm-bad-edit = broken only once the managed file holds [broken]
+# (passes the pre-check, fails the post-edit gate).
 stub testparm '[ -e /tmp/testparm-bad ] && exit 1
+[ -e /tmp/testparm-bad-edit ] && grep -q "^\[broken\]" /etc/samba/mountnas-shares.conf && exit 1
 echo "[global]"
 cat /etc/samba/mountnas-shares.conf 2>/dev/null
 [ -e /tmp/manual-share ] && printf "[handmade]\n\tpath = /mnt/nasdata/hand\n\tvalid users = hanna\n"
@@ -34,7 +38,7 @@ seed() {
 	printf '[global]\n   workgroup = WORKGROUP\ninclude = %s\n' "$SC" > "$SMB"
 	printf '; managed by nas share\n' > "$SC"
 	: > /tmp/smb-users; : > /tmp/sys-users
-	rm -f /tmp/testparm-bad /tmp/manual-share
+	rm -f /tmp/testparm-bad /tmp/testparm-bad-edit /tmp/manual-share
 }
 # 'nas share add' answers (the seed pre-creates the dir, so there is no
 # create-dir prompt): access-mode / user name / rw-or-ro — via stdin
@@ -97,11 +101,19 @@ t "the testparm gate restores the previous file byte-for-byte"
 seed; echo alice >> /tmp/smb-users; echo alice >> /tmp/sys-users
 add_share media /mnt/nasdata/media alice 1
 before=$(cat "$SC")
-: > /tmp/testparm-bad
+: > /tmp/testparm-bad-edit
 add_share broken /mnt/nasdata/media alice 1
 assert_rc 1
 assert_match 'restored unchanged' "$OUT"
 assert_eq "$before" "$(cat $SC)" "file must be byte-identical after a rejected edit"
+rm -f /tmp/testparm-bad-edit
+
+t "add refuses up front when smb.conf is ALREADY broken (right suspect)"
+seed; echo alice >> /tmp/smb-users; echo alice >> /tmp/sys-users
+: > /tmp/testparm-bad
+add_share media /mnt/nasdata/media alice 1
+assert_rc 1
+assert_match 'already invalid' "$OUT" "a pre-broken smb.conf must not blame the new share"
 rm -f /tmp/testparm-bad
 
 t "allow adds to valid users; allow --ro also to read list; idempotent"
@@ -181,6 +193,35 @@ grep -qx alice /tmp/smb-users || fail "user removed on a WRONG confirmation"
 OUT=$(printf 'alice\n' | /usr/sbin/nas share user remove alice 2>&1); RC=$?
 assert_rc 0
 grep -qx alice /tmp/smb-users && fail "user not removed after correct confirmation"
+
+t "revoke of a user not on the share is a reported no-op"
+seed; printf 'alice\nbob\n' >> /tmp/smb-users; printf 'alice\nbob\n' >> /tmp/sys-users
+add_share media /mnt/nasdata/media alice 1
+run_nas share revoke media bob
+assert_rc 0
+assert_match 'not on \[media\]' "$OUT"
+assert_nomatch 'NO user list' "$OUT" "an unchanged share must not warn it is open"
+assert_match 'valid users = alice' "$(cat $SC)"
+
+t "user remove deletes only SMB-shaped accounts; login accounts are kept"
+seed
+printf 'realuser\nsmbonly\n' >> /tmp/smb-users; printf 'realuser\nsmbonly\n' >> /tmp/sys-users
+echo 'realuser:x:1001:1001::/home/realuser:/bin/sh' >> /etc/passwd
+echo 'smbonly:x:1002:1002::/:/sbin/nologin' >> /etc/passwd
+run_nas share user remove realuser
+assert_rc 0
+assert_match 'KEPT' "$OUT"
+grep -qx realuser /tmp/sys-users || fail "login account deleted — its SSH access died with it"
+run_nas share user remove smbonly
+assert_rc 0
+grep -qx smbonly /tmp/sys-users && fail "SMB-only account not deleted"
+sed -i '/^realuser:/d; /^smbonly:/d' /etc/passwd
+
+t "uppercase share names are refused (samba section names fold case)"
+seed
+run_nas share add Global /mnt/nasdata/media
+assert_rc 1
+assert_match 'lowercase' "$OUT" "'Global' would merge into [global] as service defaults"
 
 t "a relative path and a dash-leading user are rejected outright"
 seed; echo alice >> /tmp/smb-users; echo alice >> /tmp/sys-users

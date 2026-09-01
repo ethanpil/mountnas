@@ -40,7 +40,7 @@ stub lsblk 'case "$*" in
 	*-Jo*) cat /tmp/lsblk-cand.json 2>/dev/null || echo "{\"blockdevices\":[]}" ;;
 	*-dno*serial*) echo SERIAL9876 ;;
 	*-dno*model*) echo "TestDisk 4TB" ;;
-	*-dbno*size*) echo 4000000000000 ;;
+	*-dno*size*) echo 3.6T ;;
 	*-rno*name*/dev/sdc*) printf "sdc\nsdc1\n" ;;
 	*-no*name*/dev/sdc*) echo sdc ;;
 	*-no*fstype*/dev/sdc*) echo "" ;;
