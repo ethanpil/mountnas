@@ -38,6 +38,7 @@ _cmd_help_for() {
 	web) help_web ;;
 	ttyd) help_ttyd ;;
 	snapraid) help_snapraid ;;
+	share|shares) help_share ;;
 	history) help_history ;;
 	notify) help_notify ;;
 	*) return 1 ;;
@@ -99,6 +100,7 @@ case "${1:-help}" in
 	web) shift; cmd_web "$@" ;;
 	ttyd) shift; cmd_ttyd "$@" ;;
 	snapraid) shift; cmd_snapraid "$@" ;;
+	share|shares) shift; cmd_share "$@" ;;
 	history) shift; cmd_history "$@" ;;
 	notify) shift; cmd_notify "$@" ;;
 	backup) shift; cmd_backup "$@" ;;

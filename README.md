@@ -193,7 +193,7 @@ These start automatically (unless noted). Docker, Samba, and NFS are held by the
 - **Time sync** (`chronyd`, on): on an isolated LAN, point it at a local source in `/etc/chrony/chrony.conf`, then `nas commit`.
 - **Network UPS Tools (NUT)** (`nut`, off by default): [Determine the UPS USB params](https://wiki.alpinelinux.org/wiki/Nut-ups) and update in `/etc/nut/`: `nut.conf`,`ups.conf`,`upsd.conf`, then `rc-update add nut-upsd` then nas commit`.
 - **Docker** (started once `/mnt/nasdata` is up): data-root is `/mnt/nasdata/docker`. Put compose files and appdata under `/mnt/nasdata` so they survive a dead USB and travel with the data.
-- **Samba** (started once `/mnt/nasdata` is up): edit `/etc/samba/smb.conf`, `smbpasswd -a <user>`, `rc-service samba restart`, `nas commit`.
+- **Samba** (started once `/mnt/nasdata` is up): `nas share user add alice && nas share add media /mnt/pool/media && nas commit` — a complete share, validated with `testparm` before samba sees it. `nas share` lists shares, `allow`/`revoke` manage a share's users (`--ro` = read-only), `nas share user passwd` changes passwords. Hand-editing `/etc/samba/smb.conf` still works exactly as before; the command never touches your hand-written shares.
 - **NFS** (started once `/mnt/nasdata` is up): edit `/etc/exports`, `rc-service nfs restart`, `nas commit`.
 - **Browser terminal (ttyd)** (off by default): `nas ttyd on && nas commit` — a real login prompt at `http://<box>:22222/` (root works; `on` whitelists ptys in `/etc/securetty` once). Handy when SSH is awkward — a tablet, a borrowed machine, a quick look from the couch.
 - **Mesh VPNs are not baked in** — install the one you use like any package; it persists across reboots and upgrades, and starts at every boot:

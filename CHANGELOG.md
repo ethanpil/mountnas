@@ -7,7 +7,14 @@
   overlay to /mnt/nasdata/config-backups/ (newest 30; dir 0700, files
   0600). A dead boot stick restores in three documented steps from a
   fresh image of the same release. 'nas status' and the dashboard
-  Protection card show the mirror age. (917c137)
+  Protection card show the mirror age. (917c137, 1bd81ab)
+- **'nas share' — Samba shares + users without hand-editing smb.conf**
+  (alias 'nas shares'). add/remove shares, allow/revoke users (--ro =
+  read-only), 'user add/passwd/remove' for SMB-only accounts. The
+  command owns ONE generated include file; hand-written smb.conf shares
+  are never touched but still listed. Every change is testparm-checked
+  before samba sees it and rolls back on a bad parse. Warns when an
+  active firewall blocks Samba.
 - **User-installed services start at every boot.** Their packages install
   mid-boot (after /cfg mounts), so openrc's runlevel walk used to skip
   their not-yet-present init scripts and the service stayed down until a

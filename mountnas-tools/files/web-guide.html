@@ -212,11 +212,10 @@ nas commit</code></pre>
 <section id="services">
 <h2>Sharing &amp; services <a class="top" href="#top">&uarr;</a></h2>
 <h3><a href="https://www.samba.org/">Samba</a> (Windows/macOS shares)</h3>
-<pre><code>vi /etc/samba/smb.conf            # add a [share] block (template included)
-adduser -D alice                  # system user (if new)
-smbpasswd -a alice                # samba password
-rc-service samba restart
+<pre><code>nas share user add alice          # SMB-only account + password
+nas share add media /mnt/pool/media
 nas commit</code></pre>
+<p>That is a complete share: <code>nas share</code> lists every share (including ones you hand-write in smb.conf — those are never touched by the command), <code>allow</code>/<code>revoke</code> manage a share's users (<code>--ro</code> grants read-only), <code>nas share user passwd</code> changes a password. Every change is validated with <code>testparm</code> before samba sees it; a bad edit rolls back automatically. Prefer hand-editing? <code>/etc/samba/smb.conf</code> still works exactly as before — the two coexist.</p>
 <h3><a href="https://linux-nfs.org/">NFS</a></h3>
 <pre><code>vi /etc/exports
 rc-service nfs restart &amp;&amp; nas commit</code></pre>

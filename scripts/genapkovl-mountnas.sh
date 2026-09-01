@@ -196,11 +196,23 @@ mk root:root 0644 "$tmp/etc/samba/smb.conf" <<'EOF'
    fruit:metadata = stream
    vfs objects = catia fruit streams_xattr
 
+# Shares the easy way:  nas share add <name> <path>   (see 'nas help share')
+# — they land in the include below. Hand-written [sections] here keep
+# working and are never touched by the command.
+include = /etc/samba/mountnas-shares.conf
+
 # [media]
 #    path = /mnt/disk1/media
 #    browseable = yes
 #    writable = yes
 #    valid users = @users
+EOF
+
+# the managed-shares file the include points at: must EXIST or testparm
+# (and samba) reject the config outright on a share-less box
+mk root:root 0644 "$tmp/etc/samba/mountnas-shares.conf" <<'EOF'
+; managed by 'nas share' — created shares appear here. Edit via the
+; command; this file is regenerated around your entries' keys.
 EOF
 
 mk root:root 0644 "$tmp/etc/snapraid.conf" <<'EOF'
