@@ -21,10 +21,32 @@ SMB_CONF=/etc/samba/smb.conf
 # release on; a box that upgraded into the feature gets it appended HERE —
 # one marker-tagged line, the only smb.conf edit this command ever makes.
 _share_ensure_include() {
-	grep -q "include = $SHARES_CONF" "$SMB_CONF" 2>/dev/null && return 0
-	printf '\n# managed shares (nas share) — keep this include; edit shares via the command\ninclude = %s\n' \
-		"$SHARES_CONF" >> "$SMB_CONF" || { bad "cannot update $SMB_CONF"; return 1; }
-	hint "added 'include = $SHARES_CONF' to smb.conf"
+	# ACTIVE include lines only: a user who commented the include out has
+	# disabled managed shares on purpose — matching the commented line would
+	# report success while the share is silently never served
+	awk -v want="include = $SHARES_CONF" '
+		/^[ \t]*include[ \t]*=/ { line = $0; sub(/^[ \t]*/, "", line); if (line == want) found = 1 }
+		END { exit !found }
+	' "$SMB_CONF" 2>/dev/null && return 0
+	# The include MUST land in [global] context — BEFORE the first hand-
+	# written [section]. Appended at EOF on a typical upgraded smb.conf
+	# (which ends with a share section) samba classifies 'include' as a
+	# global parameter in service context and IGNORES it: every managed
+	# share would be silently invisible while the command reports success.
+	local tmpf
+	tmpf=$(mktemp) || { bad "cannot update $SMB_CONF (mktemp failed)"; return 1; }
+	awk -v inc="include = $SHARES_CONF" '
+		!done && /^[ \t]*\[/ && $0 !~ /^[ \t]*\[global\]/ {
+			print "# managed shares (nas share) — keep this include; edit shares via the command"
+			print inc; print ""; done = 1
+		}
+		{ print }
+		END { if (!done) {
+			print "# managed shares (nas share) — keep this include; edit shares via the command"
+			print inc } }
+	' "$SMB_CONF" > "$tmpf" 2>/dev/null || { rm -f "$tmpf"; bad "cannot update $SMB_CONF"; return 1; }
+	cat "$tmpf" > "$SMB_CONF" && rm -f "$tmpf"
+	hint "added 'include = $SHARES_CONF' to smb.conf (inside [global])"
 }
 # every section name in OUR file (never parses hand-written smb.conf shares)
 _share_names() {
@@ -64,6 +86,25 @@ _share_drop_key() {   # $1=share $2=key
 	' "$SHARES_CONF" > "$tmpf" || { rm -f "$tmpf"; return 1; }
 	cat "$tmpf" > "$SHARES_CONF" && rm -f "$tmpf"
 }
+_share_drop_section() {   # $1=share — remove the whole managed section
+	local tmpf
+	tmpf=$(mktemp) || return 1
+	awk -v s="[$1]" '
+		$0 == s { in_s = 1; next }
+		/^\[/   { in_s = 0 }
+		!in_s   { print }
+	' "$SHARES_CONF" > "$tmpf" || { rm -f "$tmpf"; return 1; }
+	cat "$tmpf" > "$SHARES_CONF" && rm -f "$tmpf"
+}
+# take the pre-edit byte backup every mutation restores from. An UNCHECKED
+# mktemp here is the one way the gate could destroy what it protects: with
+# bak="" the rollback's 'cat "" > file' truncates the managed config.
+_share_begin() {
+	local bak
+	bak=$(mktemp) || return 1
+	cat "$SHARES_CONF" > "$bak" || { rm -f "$bak"; return 1; }
+	printf '%s' "$bak"
+}
 # validate with testparm, restore the previous bytes on failure. EVERY
 # mutation goes through this gate — a garbled config can therefore reach
 # neither samba nor the next boot (the backup is taken before the edit by
@@ -93,17 +134,14 @@ _share_unsaved() {
 	fi
 	return 0
 }
-# a share path must sit on a mounted disk: on this diskless box a path on
-# the RAM root is the classic footgun ('nas status' fails on it too)
+# a share path must sit on a MOUNTED DATA DISK. lib.sh's _path_on_disk is
+# the single walk (it also detects the supervisor's read-only placeholder
+# over a failed disk — a plain mountpoint check passes on that and would
+# put a share on a dead disk). Absolute paths only: dirname of a relative
+# path bottoms out at "." and never reaches "/".
 _share_path_ok() {
-	local p
-	p=$1
-	[ -d "$p" ] || p=$(dirname "$p")
-	while [ "$p" != "/" ]; do
-		mountpoint -q "$p" 2>/dev/null && return 0
-		p=$(dirname "$p")
-	done
-	return 1
+	case "$1" in /*) ;; *) return 1 ;; esac
+	[ "$(_path_on_disk "$1")" = ok ]
 }
 # the firewall check the maintainer asked for: an ACTIVE ufw with no samba
 # rule means the share works from localhost and nowhere else — say so now,
@@ -123,16 +161,25 @@ _share_smbpasswd() {   # $@ passed through (-a <user> | <user>)
 # every user granted on any share: managed sections + hand-written smb.conf
 # ones (via testparm, which resolves the include so both kinds appear)
 _share_all_granted() {
+	# 'force user' counts as granted: deleting a share's force-user account
+	# bricks the share for EVERYONE at connect time (testparm cannot catch
+	# it — it does not validate accounts), so removal must clear the same
+	# double-opt-in as a listed user. 'nobody' (guest shares) is exempt.
 	testparm -s "$SMB_CONF" 2>/dev/null \
-		| sed -n 's/^[[:space:]]*valid users *= *//p; s/^[[:space:]]*read list *= *//p' \
-		| tr ',' '\n' | tr -d '\t ' | grep -v '^@' | grep . | sort -u
+		| sed -n 's/^[[:space:]]*valid users *= *//p; s/^[[:space:]]*read list *= *//p; s/^[[:space:]]*force user *= *//p' \
+		| tr ',' '\n' | tr -d '\t ' | grep -v '^@' | grep -vx nobody | grep . | sort -u
+}
+# argument-shape guard for user names arriving at allow/revoke/user …:
+# a leading dash would reach grep/smbpasswd/deluser in flag position
+_share_user_arg_ok() {
+	case "$1" in ''|*[!a-z0-9_-]*|[_-]*) return 1 ;; *) return 0 ;; esac
 }
 _share_samba_users() {
 	pdbedit -L 2>/dev/null | cut -d: -f1 | sort -u
 }
 
 cmd_share() {
-	local sub name path u ro bak owner ans mode users lost
+	local sub name path u ro bak owner ans mode users lost created
 	sub=${1:-list}
 	case "$sub" in
 	list)
@@ -147,7 +194,7 @@ cmd_share() {
 		' | awk -F'\t' -v managed="$(_share_names | tr '\n' ' ')" '
 			$1 == "SHARE" {
 				if (cur != "") emit()
-				cur = $2; p = us = ro = ""; ronly = "No"; guest = "No"
+				cur = $2; p = us = ro = ""; ronly = "Yes"; guest = "No"
 				next
 			}
 			$1 == "path"     { p = $2 }
@@ -158,10 +205,10 @@ cmd_share() {
 			END { if (cur != "") emit() }
 			function emit(   tag, acc) {
 				tag = index(" " managed " ", " " cur " ") ? "managed" : "manual "
-				if (guest == "Yes") acc = "guest"
+				if (tolower(guest) == "yes") acc = "guest"
 				else acc = (us == "" ? "(no valid users — everyone with a samba login)" : us)
 				printf "  [%s] %-16s %-30s %s%s%s\n", tag, cur, p, acc, \
-					(ronly == "Yes" ? "  [read-only]" : ""), \
+					(tolower(ronly) == "yes" ? "  [read-only]" : ""), \
 					(ro != "" ? "  [ro: " ro "]" : "")
 			}'
 		[ -n "$(_share_names)" ] || [ -n "$(testparm -s "$SMB_CONF" 2>/dev/null | grep -v '^\[global\]' | grep '^\[')" ] \
@@ -171,7 +218,7 @@ cmd_share() {
 		name=${2:-}; path=${3:-}
 		[ -n "$name" ] && [ -n "$path" ] || { usage "nas share add <name> <path>"; return 1; }
 		case "$name" in
-			*[!A-Za-z0-9_-]*) bad "share names are letters, digits, _ and - only"; return 1 ;;
+			*[!A-Za-z0-9_-]*|[_-]*) bad "share names are letters, digits, _ and - (first character a letter or digit)"; return 1 ;;
 			global|homes|printers) bad "'$name' is a reserved samba section name"; return 1 ;;
 		esac
 		_share_names | grep -qx "$name" && { bad "share [$name] already exists (see: nas share)"; return 1; }
@@ -180,24 +227,29 @@ cmd_share() {
 		_share_path_ok "$path" || {
 			bad "$path is not on a mounted disk — a share on the RAM root vanishes at reboot"
 			hint "mount the disk first (nas disks shows a paste-ready fstab line)"; return 1; }
+		mode=""
 		if [ ! -d "$path" ]; then
 			printf '%s does not exist. Create it? [Y/n]: ' "$path"; IFS= read -r ans || ans=""
 			case "$ans" in n|N) echo "Cancelled."; return 1 ;; esac
 			mkdir -p "$path" || { bad "cannot create $path"; return 1; }
+			mode=created   # only a dir WE made is re-owned below
 		fi
+		created=$mode
 		# access: guest, an existing samba user, or a new one — asked, not
 		# flagged. The prompts read stdin, so scripts can pipe the answers
 		# (the same pattern the setup wizard uses).
 		owner=""; mode=rw
 		printf 'Access for [%s]:  [1] a user (recommended)  [2] guest (no password, read-only): ' "$name"
 		IFS= read -r ans || ans=""
+		case "$ans" in 2|g|guest) ans=2 ;; esac
 		if [ "$ans" = 2 ]; then
-			owner=guest
+			owner=@guest
 		else
-			printf 'Samba users:%s\n' "$(_share_samba_users | tr '\n' ' ' | sed 's/^/ /;s/ $//')"
+			users=$(_share_samba_users)
+			printf 'Samba users:%s\n' "$(printf '%s' "$users" | tr '\n' ' ' | sed 's/^/ /;s/ $//')"
 			printf 'User name (existing, or a new one to create): '; IFS= read -r u || u=""
 			[ -n "$u" ] || { bad "a user is required"; return 1; }
-			if ! _share_samba_users | grep -qx "$u"; then
+			if ! printf '%s\n' "$users" | grep -qx "$u"; then
 				cmd_share user add "$u" || return 1
 			fi
 			owner=$u
@@ -206,12 +258,12 @@ cmd_share() {
 		fi
 		_share_ensure_include || return 1
 		[ -f "$SHARES_CONF" ] || : > "$SHARES_CONF"
-		bak=$(mktemp); cat "$SHARES_CONF" > "$bak"
+		bak=$(_share_begin) || { bad "cannot take the pre-edit backup (RAM root full?)"; return 1; }
 		{
 			printf '\n[%s]\n' "$name"
 			printf '   ; managed by nas share — edit via the command, not by hand\n'
 			printf '   path = %s\n' "$path"
-			if [ "$owner" = guest ]; then
+			if [ "$owner" = @guest ]; then
 				printf '   guest ok = yes\n   read only = yes\n   force user = nobody\n'
 			else
 				printf '   valid users = %s\n' "$owner"
@@ -223,10 +275,10 @@ cmd_share() {
 		_share_gate "$bak" || return 1
 		# a dir this command just created belongs to the share's owner so
 		# writes work; a PRE-EXISTING dir keeps its ownership untouched
-		[ "$owner" != guest ] && [ -z "$(ls -A "$path" 2>/dev/null)" ] && chown "$owner" "$path" 2>/dev/null
+		[ "$owner" != @guest ] && [ "$created" = created ] && chown "$owner" "$path" 2>/dev/null
 		_share_reload
-		ok "share [$name] -> $path ($([ "$owner" = guest ] && echo 'guest, read-only' || echo "$owner, $mode"))"
-		hint "reach it at \\\\\\\\$(hostname)\\\\$name  (or smb://$(hostname).local/$name)"
+		ok "share [$name] -> $path ($([ "$owner" = @guest ] && echo 'guest, read-only' || echo "$owner, $mode"))"
+		hint "reach it at \\\\$(hostname)\\$name  (or smb://$(hostname).local/$name)"
 		_share_fw_hint
 		_share_unsaved
 		;;
@@ -242,19 +294,16 @@ cmd_share() {
 			return 1; }
 		users=$(_share_get "$name" "valid users" | tr ',' '\n' | tr -d ' ' | grep .)
 		path=$(_share_get "$name" "path")
-		bak=$(mktemp); cat "$SHARES_CONF" > "$bak"
-		awk -v s="[$name]" '
-			$0 == s { in_s = 1; next }
-			/^\[/   { in_s = 0 }
-			!in_s   { print }
-		' "$SHARES_CONF" > "$SHARES_CONF.new" && cat "$SHARES_CONF.new" > "$SHARES_CONF"
-		rm -f "$SHARES_CONF.new"
+		bak=$(_share_begin) || { bad "cannot take the pre-edit backup (RAM root full?)"; return 1; }
+		_share_drop_section "$name" || { rm -f "$bak"; bad "rewrite failed — [$name] is unchanged"; return 1; }
 		_share_gate "$bak" || return 1
 		_share_reload
 		ok "share [$name] removed — the directory ($path) and its files are untouched"
 		# a user this removal orphaned (on no other share) is offered up too
+		lost=$(_share_all_granted)
 		for u in $users; do
-			_share_all_granted | grep -qx "$u" && continue
+			printf '%s
+' "$lost" | grep -qx "$u" && continue
 			printf 'User %s is on no other share. Delete the user too? [y/N]: ' "$u"
 			IFS= read -r ans || ans=""
 			case "$ans" in
@@ -267,11 +316,12 @@ cmd_share() {
 	allow)
 		name=${2:-}; u=${3:-}; ro=${4:-}
 		[ -n "$name" ] && [ -n "$u" ] || { usage "nas share allow <name> <user> [--ro]"; return 1; }
+		_share_user_arg_ok "$u" || { bad "invalid user name '$u'"; return 1; }
 		case "$ro" in ''|--ro) ;; *) usage "nas share allow <name> <user> [--ro]"; return 1 ;; esac
 		_share_names | grep -qx "$name" || { bad "no managed share [$name] (hand-written shares stay hand-edited)"; return 1; }
 		_share_samba_users | grep -qx "$u" || { bad "no samba user '$u' — create one: nas share user add $u"; return 1; }
 		[ "$(_share_get "$name" "guest ok")" = yes ] && { bad "[$name] is a guest share — user grants do not apply"; return 1; }
-		bak=$(mktemp); cat "$SHARES_CONF" > "$bak"
+		bak=$(_share_begin) || { bad "cannot take the pre-edit backup (RAM root full?)"; return 1; }
 		users=$(_share_get "$name" "valid users")
 		printf '%s' ", $users," | grep -q ", $u," || _share_set "$name" "valid users" "${users:+$users, }$u"
 		if [ "$ro" = "--ro" ]; then
@@ -286,8 +336,9 @@ cmd_share() {
 	revoke)
 		name=${2:-}; u=${3:-}
 		[ -n "$name" ] && [ -n "$u" ] || { usage "nas share revoke <name> <user>"; return 1; }
+		_share_user_arg_ok "$u" || { bad "invalid user name '$u'"; return 1; }
 		_share_names | grep -qx "$name" || { bad "no managed share [$name]"; return 1; }
-		bak=$(mktemp); cat "$SHARES_CONF" > "$bak"
+		bak=$(_share_begin) || { bad "cannot take the pre-edit backup (RAM root full?)"; return 1; }
 		users=$(_share_get "$name" "valid users" | tr ',' '\n' | tr -d ' ' | grep -vx "$u" | paste -sd, - | sed 's/,/, /g')
 		if [ -n "$users" ]; then _share_set "$name" "valid users" "$users"
 		else _share_drop_key "$name" "valid users"
@@ -299,6 +350,7 @@ cmd_share() {
 		_share_gate "$bak" || return 1
 		_share_reload
 		ok "$u revoked from [$name]"
+		[ "$(_share_get "$name" "force user")" = "$u" ] 			&& warn "$u is still [$name]'s 'force user' (writes act as $u) — deleting the account would break the share"
 		_share_unsaved
 		;;
 	user|users)
@@ -318,7 +370,7 @@ cmd_share() {
 		add)
 			u=${3:-}
 			[ -n "$u" ] || { usage "nas share user add <user>"; return 1; }
-			case "$u" in *[!a-z0-9_-]*) bad "user names are lowercase letters, digits, _ and - only"; return 1 ;; esac
+			case "$u" in *[!a-z0-9_-]*|[_-]*|'') bad "user names are lowercase letters, digits, _ and - (first character a letter or digit)"; return 1 ;; esac
 			# an SMB-only account: no shell, no home, Linux password locked —
 			# the ONE password this user has is the samba one set right here
 			if ! id "$u" >/dev/null 2>&1; then
@@ -331,12 +383,14 @@ cmd_share() {
 		passwd)
 			u=${3:-}
 			[ -n "$u" ] || { usage "nas share user passwd <user>"; return 1; }
+			_share_user_arg_ok "$u" || { bad "invalid user name '$u'"; return 1; }
 			_share_samba_users | grep -qx "$u" || { bad "no samba user '$u'"; return 1; }
 			_share_smbpasswd "$u" && ok "password changed for $u" && _share_unsaved
 			;;
 		remove)
 			u=${3:-}
 			[ -n "$u" ] || { usage "nas share user remove <user>"; return 1; }
+			_share_user_arg_ok "$u" || { bad "invalid user name '$u'"; return 1; }
 			_share_samba_users | grep -qx "$u" || { bad "no samba user '$u'"; return 1; }
 			if _share_all_granted | grep -qx "$u"; then
 				warn "$u is still granted on a share — revoke first, or confirm to remove anyway"

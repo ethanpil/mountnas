@@ -182,6 +182,47 @@ OUT=$(printf 'alice\n' | /usr/sbin/nas share user remove alice 2>&1); RC=$?
 assert_rc 0
 grep -qx alice /tmp/smb-users && fail "user not removed after correct confirmation"
 
+t "a relative path and a dash-leading user are rejected outright"
+seed; echo alice >> /tmp/smb-users; echo alice >> /tmp/sys-users
+run_nas share add rel foo
+assert_rc 1
+assert_match 'not on a mounted disk' "$OUT" "relative paths must never hang the walk"
+add_share media /mnt/nasdata/media alice 1
+run_nas share revoke media -x
+assert_rc 1
+assert_match "invalid user name '-x'" "$OUT" "a dash arg must not reach grep and wipe the ACL"
+assert_match 'valid users = alice' "$(cat $SC)" "ACL untouched after the rejected revoke"
+run_nas share allow media -r
+assert_rc 1
+
+t "the force user is protected: remove needs the typed confirm even off the lists"
+seed; echo alice >> /tmp/smb-users; echo alice >> /tmp/sys-users
+add_share media /mnt/nasdata/media alice 1
+run_nas share revoke media alice          # off valid users, still force user
+assert_match "force user" "$OUT"
+OUT=$(printf 'wrong\n' | /usr/sbin/nas share user remove alice 2>&1); RC=$?
+assert_rc 1
+assert_match 'still granted' "$OUT" "force user must count as granted"
+grep -qx alice /tmp/smb-users || fail "force-user account deleted — the share is bricked"
+
+t "the include lands INSIDE [global], before hand-written sections"
+seed
+# an upgraded box: smb.conf ENDS with a hand-written share (the case where
+# an EOF append would be service-scoped and samba would IGNORE the include)
+printf '[global]\n   workgroup = W\n\n[handrolled]\n   path = /mnt/nasdata/media\n' > "$SMB"
+echo alice >> /tmp/smb-users; echo alice >> /tmp/sys-users
+add_share media /mnt/nasdata/media alice 1
+assert_rc 0
+inc_ln=$(grep -n "include = $SC" "$SMB" | cut -d: -f1 | head -n1)
+sec_ln=$(grep -n '^\[handrolled\]' "$SMB" | cut -d: -f1)
+[ "$inc_ln" -lt "$sec_ln" ] || fail "include appended after a [section] — samba ignores it there (line $inc_ln vs $sec_ln)"
+
+t "list tags a guest share read-only even though testparm omits defaults"
+seed
+OUT=$(printf '2\n' | /usr/sbin/nas share add pub /mnt/nasdata/media 2>&1)
+run_nas share list
+assert_match 'pub.*guest.*\[read-only\]' "$OUT"
+
 t "hand-written share removal is refused with directions"
 seed; : > /tmp/manual-share
 run_nas share remove handmade

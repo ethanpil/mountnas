@@ -14,7 +14,7 @@
   command owns ONE generated include file; hand-written smb.conf shares
   are never touched but still listed. Every change is testparm-checked
   before samba sees it and rolls back on a bad parse. Warns when an
-  active firewall blocks Samba.
+  active firewall blocks Samba. (00b2203)
 - **User-installed services start at every boot.** Their packages install
   mid-boot (after /cfg mounts), so openrc's runlevel walk used to skip
   their not-yet-present init scripts and the service stayed down until a

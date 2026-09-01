@@ -263,7 +263,8 @@ cmd_status() {
 		&& bad "a data path is in the lbu include list (commit would copy your disk!) — remove with: lbu exclude <path>" \
 		|| ok "lbu include has no data paths"
 	# share/export paths must land on a live disk mount, not the RAM root
-	awk -F= '/^[[:space:]]*path[[:space:]]*=/{gsub(/[[:space:]]/,"",$2);print $2}' /etc/samba/smb.conf 2>/dev/null | while read -r p; do
+	awk -F= '/^[[:space:]]*path[[:space:]]*=/{gsub(/[[:space:]]/,"",$2);print $2}' \
+		/etc/samba/smb.conf /etc/samba/mountnas-shares.conf 2>/dev/null | while read -r p; do
 		[ -z "$p" ] && continue
 		case "$(_path_on_disk "$p")" in
 			ok)      ok "samba path $p on a mounted fs" ;;
