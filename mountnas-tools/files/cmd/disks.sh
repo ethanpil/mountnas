@@ -106,10 +106,12 @@ cmd_disks() {
 	| { n=1; while IFS="$TAB" read -r PK VEND MOD SER NAME FSTYPE LABEL UUID; do
 		case "$LABEL" in BOOT|MNASCFG) continue ;; esac
 		[ "$PK" = "$usb" ] && continue
-		# already referenced in an ACTIVE fstab entry (by UUID)? Commented-out
+		# already referenced in an ACTIVE fstab entry — by UUID=, LABEL= or
+		# the /dev path (all three are valid entry forms)? Commented-out
 		# lines don't count: a disk the user disabled by commenting its entry
 		# must get its paste-ready line back.
-		awk '$1!~/^#/' /etc/fstab 2>/dev/null | grep -qF "$UUID" && continue
+		lb=$LABEL; [ "$lb" = "-" ] && lb=""
+		_fstab_has_fs "$UUID" "$lb" "/dev/$NAME" && continue
 		if [ "$have_nd" = 0 ]; then mp=/mnt/nasdata; have_nd=1
 		else
 			while awk -v m="/mnt/disk$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
@@ -193,12 +195,20 @@ EOF
 # tool never automates re-formatting an already-partitioned disk.
 # Design record: SPEC-roadmap-4.md §1 (incl. the cmkfs-precedent overrule).
 _disks_blank() {   # TSV of blank whole disks: name size serial model
-	lsblk -Jbo NAME,TYPE,SIZE,SERIAL,MODEL,FSTYPE 2>/dev/null | jq -r '
+	# the wipefs filter keeps the picker's definition of BLANK identical to
+	# the gate below: a disk carrying an EMPTY partition label (zero
+	# partitions, but a gpt/dos signature) must not be offered and then
+	# refused two prompts later
+	lsblk -Jo NAME,TYPE,SIZE,SERIAL,MODEL,FSTYPE 2>/dev/null | jq -r '
 		def s(f): (f // "-") | tostring;
 		.blockdevices[] | select(.type=="disk")
 		| select(.name | test("^(fd|sr|loop|ram|zram)") | not)
 		| select((.children | length // 0) == 0) | select(.fstype == null)
-		| [.name, s(.size), s(.serial), s(.model)] | @tsv'
+		| [.name, s(.size), s(.serial), s(.model)] | @tsv' \
+	| while IFS="$(printf '\t')" read -r d s ser mod; do
+		wipefs -n "/dev/$d" 2>/dev/null | grep -q . && continue
+		printf '%s\t%s\t%s\t%s\n' "$d" "$s" "$ser" "$mod"
+	done
 }
 cmd_disks_init() {
 	local dev size serial model role fstype contents mkfs_opts mp lbl ans part n line sel
@@ -210,7 +220,7 @@ cmd_disks_init() {
 		n=0
 		printf '%s\n' "$line" | while IFS="$(printf '\t')" read -r d s ser mod; do
 			n=$((n + 1))
-			printf '  [%d] /dev/%-8s %10s  %s  (serial %s)\n' "$n" "$d" "$(_hum_b "$s")" "$mod" "$ser"
+			printf '  [%d] /dev/%-8s %10s  %s  (serial %s)\n' "$n" "$d" "$s" "$mod" "$ser"
 		done
 		printf 'Which one? [1-%s]: ' "$(printf '%s\n' "$line" | grep -c .)"
 		IFS= read -r sel || sel=""
@@ -234,14 +244,15 @@ cmd_disks_init() {
 		hint "after checking twice), then rerun: nas disk init $dev"
 		return 1
 	fi
-	# one lsblk fork for the identity trio; virtio and some USB bridges
-	# publish the serial only in sysfs, so fall back there before giving up
-	serial=$(lsblk -dno serial,model,size "$dev" 2>/dev/null)
-	model=$(printf '%s' "$serial" | awk '{$1=""; NF--; sub(/^ /,""); print}')
-	size=$(lsblk -dbno size "$dev" 2>/dev/null)
-	serial=$(printf '%s' "$serial" | awk '{print $1}' | tr -d ' ')
+	# one column per fork — a COMBINED listing whitespace-splits wrong when
+	# the serial column is empty (the model's first word becomes the
+	# "serial" and the destructive confirm asks for text not on the disk).
+	# virtio and some USB bridges publish the serial only in sysfs.
+	serial=$(lsblk -dno serial "$dev" 2>/dev/null | tr -d ' ')
+	model=$(lsblk -dno model "$dev" 2>/dev/null | sed 's/^ *//; s/ *$//')
+	size=$(lsblk -dno size "$dev" 2>/dev/null | tr -d ' ')
 	[ -n "$serial" ] || serial=$(cat "/sys/block/${dev##*/}/serial" 2>/dev/null | tr -d ' ')
-	printf '%s: %s  %s — BLANK (no partitions, no signatures)\n' "$dev" "${model:-?}" "$(_hum_b "${size:-0}")"
+	printf '%s: %s  %s — BLANK (no partitions, no signatures)\n' "$dev" "${model:-?}" "${size:-?}"
 	printf 'Role?\n  [1] nasdata   the system disk (Docker, appdata, backups) — required once\n'
 	printf '  [2] data      a storage disk (pool / SnapRAID array)\n'
 	printf '  [3] parity    a SnapRAID parity disk\n: '
@@ -273,7 +284,8 @@ cmd_disks_init() {
 		if [ "$role" = 3 ]; then
 			contents=1   # parity is one huge file — large-file inode density
 		else
-			printf 'Contents?  (sets the ext4 inode density — xfs allocates dynamically)\n'
+			printf 'Contents?  (sets the ext4 inode density — fixed at format time,\n'
+			printf 'a wrong answer needs a reformat; xfs allocates dynamically)\n'
 			printf '  [1] mostly large files   videos, backups, disk images  (1 inode / 1 MB)\n'
 			printf '  [2] mixed or small files photos, music, documents      (mkfs default)\n: '
 			IFS= read -r contents || contents=""
@@ -309,20 +321,16 @@ cmd_disks_init() {
 	# shellcheck disable=SC2086  # mkfs_opts is a flag list by construction
 	if [ "$fstype" = ext4 ]; then
 		ans=$(mkfs.ext4 -Fq -L "$lbl" $mkfs_opts "$part" 2>&1) \
-			|| { printf '%s\n' "$ans" | tail -n 3 | sed 's/^/    /'; bad "mkfs.ext4 failed"; return 1; }
+			|| { printf '%s\n' "$ans" | tail -n 3 | sed 's/^/    /'; bad "mkfs.ext4 failed"
+				 hint "the disk now carries an empty partition table — wipe it (wipefs -a $dev) and rerun"; return 1; }
 	else
 		ans=$(mkfs.xfs -fq -L "$lbl" "$part" 2>&1) \
-			|| { printf '%s\n' "$ans" | tail -n 3 | sed 's/^/    /'; bad "mkfs.xfs failed"; return 1; }
+			|| { printf '%s\n' "$ans" | tail -n 3 | sed 's/^/    /'; bad "mkfs.xfs failed"
+				 hint "the disk now carries an empty partition table — wipe it (wipefs -a $dev) and rerun"; return 1; }
 	fi
 	ok "partitioned + formatted (label $lbl)"
 	_ops_log disks "init $dev -> $lbl ($fstype)"
-	# chain: the role maps to the mount flow's OWN numbering, passed as the
-	# preset so the flow never asks a second, differently-numbered question
-	case "$role" in 1) _mount_flow "$part" 3 ;; 2) _mount_flow "$part" 1 ;; 3) _mount_flow "$part" 2 ;; esac
-}
-# bytes -> human, local to the init flow (lsblk -b gives bytes)
-_hum_b() {
-	awk -v b="${1:-0}" 'BEGIN{ if (b>=1099511627776) printf "%.1f TB", b/1099511627776;
-		else if (b>=1073741824) printf "%.1f GB", b/1073741824;
-		else printf "%.0f MB", b/1048576 }'
+	# chain: the role is passed BY NAME — the two menus number their options
+	# differently, so the flow takes names and never re-asks
+	case "$role" in 1) _mount_flow "$part" nasdata ;; 2) _mount_flow "$part" data ;; 3) _mount_flow "$part" parity ;; esac
 }

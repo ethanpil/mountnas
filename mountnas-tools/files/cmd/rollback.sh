@@ -76,7 +76,12 @@ cmd_rollback() {
 	done
 	# -p preserves the mtime — the note lookup keys off it
 	cp -p "$act" "$keep" || { bad "could not preserve the current overlay — aborting, nothing changed"; return 1; }
-	# stage + rename so a power cut cannot leave a torn active overlay
+	# stage + rename so a power cut cannot leave a torn overlay. Plain cp
+	# ON PURPOSE (no -p): _mirror_overlay stamps the mirror from the active
+	# overlay's mtime, and the restored config must become the NEWEST
+	# mirror — the README's recovery step says "copy the newest"; an old
+	# preserved stamp would make that step restore the config the user
+	# just escaped.
 	if cp "$sel" "$act.new" && mv "$act.new" "$act"; then
 		sync
 		_ops_log rollback "restored $(basename "$sel")${seln:+ — $seln}"

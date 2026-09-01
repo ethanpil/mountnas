@@ -137,6 +137,13 @@ cmd_snapraid() {
 		[ -n "$amnt" ] || { usage "nas snapraid add <mountpoint> [--parity]"; return 1; }
 		case "$aro" in ''|--parity) ;; *) usage "nas snapraid add <mountpoint> [--parity]"; return 1 ;; esac
 		amnt=${amnt%/}
+		# spaces or metacharacters make a conf line snapraid whitespace-splits
+		# wrong (the same guard 'nas mount' puts on custom mountpoints)
+		case "$amnt" in *[!A-Za-z0-9/_.-]*) bad "the mountpoint may not contain spaces or shell metacharacters"; return 1 ;; esac
+		# under /mnt only, like every sibling gate: a tmpfs mountpoint (/run,
+		# /dev/shm) or /cfg passes a bare mountpoint probe, and parity in RAM
+		# vanishes at reboot
+		case "$amnt" in /mnt/?*) ;; *) bad "array disks live under /mnt (mount one: nas mount)"; return 1 ;; esac
 		[ "$amnt" = /mnt/nasdata ] && { bad "/mnt/nasdata stays OUT of the array (the one rule snapraid.conf shouts) — its content COPY is offered below instead"; return 1; }
 		mountpoint -q "$amnt" 2>/dev/null || { bad "$amnt is not a mountpoint — mount it first (nas mount)"; return 1; }
 		_blocked "$amnt" && { bad "$amnt holds the supervisor's FAILURE placeholder, not a disk — fix the mount first (nas status)"; return 1; }
@@ -158,9 +165,24 @@ cmd_snapraid() {
 		fi
 		[ -f /etc/snapraid.conf ] || : > /etc/snapraid.conf
 		if [ "$aro" = --parity ]; then
-			# escalate: parity -> 2-parity -> ... (the variants the
-			# preflight parses); each parity disk also carries a content copy
-			adn=$(grep -cE '^[[:space:]]*([2-6]-|z-)?parity[[:space:]]' /etc/snapraid.conf)
+			# escalate: parity -> 2-parity -> ... — by the LEVEL SET, not a
+			# line count: q-/z-parity are the old alias names for levels 2/3,
+			# and a hand-edited conf with a gap (say only '2-parity' left)
+			# must be refused, not given a colliding duplicate level. Each
+			# parity disk also carries a content copy (the manual allows it).
+			adn=$(awk '$1 !~ /^#/ {
+					l = 0
+					if ($1 == "parity") l = 1
+					else if ($1 ~ /^[2-6]-parity$/) l = substr($1, 1, 1) + 0
+					else if ($1 == "q-parity") l = 2
+					else if ($1 == "z-parity") l = 3
+					if (l) { seen[l] = 1; if (l > mx) mx = l }
+				} END {
+					for (i = 1; i <= mx; i++) if (!(i in seen)) { print "gap"; exit }
+					print mx + 0
+				}' /etc/snapraid.conf)
+			[ "$adn" = gap ] \
+				&& { bad "the parity levels in snapraid.conf are not contiguous — hand-managed; add the line by hand"; return 1; }
 			case "$adn" in
 				0) printf 'parity %s/snapraid.parity\n' "$amnt" >> /etc/snapraid.conf
 				   ok "snapraid.conf: + parity $amnt/snapraid.parity" ;;
@@ -175,22 +197,28 @@ cmd_snapraid() {
 		fi
 		printf 'content %s/snapraid.content\n' "$amnt" >> /etc/snapraid.conf
 		ok "snapraid.conf: + content $amnt/snapraid.content"
-		# the ≥2-content invariant: snapraid hard-refuses fewer than two
-		# content copies on different disks. Offer the house convention.
+		# the content-copy invariant: snapraid requires one copy PER PARITY
+		# LEVEL plus one (so ≥2 with single parity, ≥3 with double). Offer
+		# the house convention when the count is short.
 		acnt=$(grep -cE '^[[:space:]]*content[[:space:]]' /etc/snapraid.conf)
-		if [ "$acnt" -lt 2 ]; then
-			if mountpoint -q /mnt/nasdata 2>/dev/null; then
-				printf 'The array needs a SECOND content copy (snapraid refuses to run with one).\nAdd the usual one on nasdata? [Y/n]: '
+		adn=$(grep -cE '^[[:space:]]*([2-6]-|q-|z-)?parity[[:space:]]' /etc/snapraid.conf)
+		adn=$((adn + 1)); [ "$adn" -lt 2 ] && adn=2
+		if [ "$acnt" -lt "$adn" ]; then
+			if mountpoint -q /mnt/nasdata 2>/dev/null \
+				&& ! grep -qE '^[[:space:]]*content[[:space:]]+/mnt/nasdata/' /etc/snapraid.conf; then
+				printf 'The array needs %s content copies (one per parity level, plus one) and has %s.\nAdd the usual one on nasdata? [Y/n]: ' "$adn" "$acnt"
 				# EOF (an underfilled script pipe) must mean NO — a config
 				# mutation may never ride on a missing answer
-				if IFS= read -r ans && ! { [ "$ans" = n ] || [ "$ans" = N ]; }; then
+				IFS= read -r ans || ans=n
+				case "$ans" in [nN]*) ans=n ;; *) ans=y ;; esac
+				if [ "$ans" = y ]; then
 					printf 'content /mnt/nasdata/snapraid.content\n' >> /etc/snapraid.conf
 					ok "snapraid.conf: + content /mnt/nasdata/snapraid.content"
 				else
-					warn "add a second content line before the first run, or snapraid refuses"
+					warn "add a content line on another disk before the first run, or snapraid refuses"
 				fi
 			else
-				warn "the array needs a SECOND content copy on another disk before the first run"
+				warn "the array needs $adn content copies (has $acnt) — add one on another disk before the first run"
 			fi
 		fi
 		_ops_log snapraid "add $amnt${aro:+ --parity}"

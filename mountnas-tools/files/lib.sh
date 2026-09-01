@@ -260,7 +260,21 @@ _next_free_mp() {   # $1=prefix (disk|parity) -> prints /mnt/<prefix>N
 }
 # active fstab entry for a mountpoint?
 _fstab_has_mp() { awk -v m="$1" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; }
+# is a filesystem already referenced by an ACTIVE fstab entry? An entry can
+# name it by UUID=, by LABEL= or by the /dev path — all three are valid.
+# THE single predicate: cmd_disks (paste-ready), _mount_candidates and
+# _mount_flow must all agree, or a disk one gate refuses is offered by another.
+_fstab_has_fs() {   # $1=uuid $2=label ("" if none) $3=/dev/path
+	# shellcheck disable=SC2086  # ${2:+...} expands to two words on purpose
+	awk '$1!~/^#/ {print $1}' /etc/fstab 2>/dev/null \
+		| grep -qxF -e "UUID=$1" ${2:+-e "LABEL=$2"} -e "$3"
+}
 
+# Mirrors kept in $DATA/config-backups, NEWEST first. The prune below lists
+# every mirror EXCEPT the just-written one, so it keeps (MIRROR_KEEP - 1) old
+# files + the new one = MIRROR_KEEP total. The docs state this number
+# (README, guide, commit help) — keep them in step when changing it.
+MIRROR_KEEP=30
 # Mirror the ACTIVE overlay to the data disk: the stick's disaster copy
 # (README "Recovery from a dead USB"). Called by every writer of the active
 # overlay — cmd_commit AND cmd_rollback — so the newest mirror always equals
@@ -270,9 +284,13 @@ _fstab_has_mp() { awk -v m="$1" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab
 # 0600, and off-site copies belong inside an ENCRYPTED backup.
 _mirror_overlay() {
 	local mdir src dst tmpf mst
+	tmpf=""   # referenced in the failure branch — set -u dies on an unset local
 	mdir="$DATA/config-backups"
 	src="$CFG/$(hostname).apkovl.tar.gz"
-	if ! mountpoint -q "$DATA" 2>/dev/null; then
+	# _blocked: a FAILED data disk carries the supervisor's read-only
+	# placeholder, which passes a bare mountpoint probe — that box must get
+	# the quiet skip hint, not a mkdir-failure warn on every commit
+	if ! mountpoint -q "$DATA" 2>/dev/null || _blocked "$DATA"; then
 		hint "config mirror skipped (data disk not mounted) — the overlay lives only on the stick"
 		return 0
 	fi
@@ -296,25 +314,41 @@ _mirror_overlay() {
 		# no clock state can remove it. One budget for the directory:
 		# renamed-host history ages out like any other (names keep the
 		# host, so a restore can still tell them apart).
+		# only files of OUR name shape (…-<14-digit stamp>) are budgeted and
+		# pruned: a file the user hand-copied here must never be deleted, and
+		# its non-stamp key must not hijack the sort (the key is cut from the
+		# BASENAME — a dash in the directory path is not a stamp separator)
 		ls -1 "$mdir"/*.apkovl.tar.gz 2>/dev/null \
-			| awk -v d="$dst" '$0 != d { s = $0; sub(/\.apkovl\.tar\.gz$/, "", s); sub(/.*-/, "", s); print s "\t" $0 }' \
-			| sort -r | cut -f2- | tail -n +30 \
+			| awk -v d="$dst" '$0 != d {
+				s = $0; sub(/.*\//, "", s); sub(/\.apkovl\.tar\.gz$/, "", s); sub(/.*-/, "", s)
+				if (length(s) == 14 && s ~ /^[0-9]+$/) print s "\t" $0 }' \
+			| sort -r | cut -f2- | tail -n +$MIRROR_KEEP \
 			| while IFS= read -r tmpf; do rm -f "$tmpf"; done
-		ok "mirrored to $mdir ($(find "$mdir" -maxdepth 1 -name '*.apkovl.tar.gz' 2>/dev/null | wc -l | tr -d ' ') kept)"
+		# a glob count — the just-written $dst guarantees at least one match
+		ok "mirrored to $mdir ($(set -- "$mdir"/*.apkovl.tar.gz; echo $#) kept)"
 	else
 		rm -f "$tmpf" 2>/dev/null
 		warn "config mirror to $mdir failed — the overlay on the stick is saved"
 	fi
 }
-# newest mirror + its age in days, shared by status (and mirrored logic in
-# gen-webstatus, which cannot source this file). Prints "path age" or
-# nothing when no mirror exists; a future mtime clamps to age 0.
+# newest mirror's age in days + the mirror count, shared by cmd_status and
+# cmd_status_json (the dashboard renders the JSON field). Prints "age count"
+# or nothing when no mirror exists; a future mtime clamps to age 0. The
+# newest mirror is picked by the embedded STAMP, exactly like the prune in
+# _mirror_overlay — mtime ordering lies on a box whose clock stepped.
 _mirror_newest() {
-	local mn ma me
-	mn=$(ls -1t "$DATA"/config-backups/*.apkovl.tar.gz 2>/dev/null | head -n1)
-	[ -n "$mn" ] || return 1
+	local ml mn mc ma me
+	# stamped mirrors only, keyed from the basename — the same shape filter
+	# the prune applies (a hand-copied file is not a managed mirror)
+	ml=$(ls -1 "$DATA"/config-backups/*.apkovl.tar.gz 2>/dev/null \
+		| awk '{ s = $0; sub(/.*\//, "", s); sub(/\.apkovl\.tar\.gz$/, "", s); sub(/.*-/, "", s)
+			if (length(s) == 14 && s ~ /^[0-9]+$/) print s "\t" $0 }' \
+		| sort -r)
+	[ -n "$ml" ] || return 1
+	mc=$(printf '%s\n' "$ml" | grep -c .)
+	mn=$(printf '%s\n' "$ml" | head -n1 | cut -f2-)
 	me=$(date -r "$mn" +%s 2>/dev/null) || return 1
 	ma=$(( ( $(date +%s) - me ) / 86400 ))
 	[ "$ma" -lt 0 ] && ma=0
-	printf '%s %s' "$mn" "$ma"
+	printf '%s %s' "$ma" "$mc"
 }

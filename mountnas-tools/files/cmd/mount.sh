@@ -32,33 +32,38 @@ _mount_resolve() {
 	fi
 	printf '%s' "$dev"
 }
-# partitions eligible for 'nas mount': carry a filesystem, not the boot USB,
-# not BOOT/MNASCFG, not already in an active fstab entry. TSV: dev fstype label uuid size
+# filesystems eligible for 'nas mount': not the boot USB, not BOOT/MNASCFG,
+# not already in an active fstab entry. Both partitions AND whole-disk
+# filesystems (a table-less mkfs'd disk, common on drives migrated from
+# other NAS software) — the inventory shows those, so the picker must too.
+# TSV: dev fstype label uuid size
 _mount_candidates() {
-	local usb
+	local usb lbl
 	usb=$(_boot_usb_disk)
 	lsblk -Jo NAME,TYPE,FSTYPE,LABEL,UUID,SIZE 2>/dev/null | jq -r '
 		def s(f): (f // "-") | tostring;
 		.blockdevices[] | select(.type=="disk")
-		| select(.name | test("^(fd|sr|loop|ram|zram)") | not) as $d | $d.children[]?
-		| select(.type=="part") | select(.uuid and .fstype)
+		| select(.name | test("^(fd|sr|loop|ram|zram)") | not) as $d
+		| (($d | select(.uuid and .fstype)),
+		   ($d.children[]? | select(.type=="part") | select(.uuid and .fstype)))
 		| [$d.name, .name, .fstype, s(.label), .uuid, s(.size)] | @tsv' \
 	| while IFS="$(printf '\t')" read -r pk name fstype label uuid size; do
 		[ "$pk" = "$usb" ] && continue
 		case "$label" in BOOT|MNASCFG) continue ;; esac
-		awk '$1!~/^#/' /etc/fstab 2>/dev/null | grep -qF "$uuid" && continue
+		lbl=$label; [ "$lbl" = "-" ] && lbl=""
+		_fstab_has_fs "$uuid" "$lbl" "/dev/$name" && continue
 		printf '/dev/%s\t%s\t%s\t%s\t%s\n' "$name" "$fstype" "$label" "$uuid" "$size"
 	done
 }
 # the shared add-to-fstab flow. $1 = /dev/<part>. Asks the role, appends the
 # fstab line, mounts via the supervisor, then offers 'nas snapraid add' for
 # array roles. Prompts read stdin (pipeable, the wizard pattern).
-# $2 (optional) = a role preset from 'nas disk init': the chain must not
-# ask the role AGAIN with different numbering (init: 1=nasdata,2=data,3=
-# parity; here: 1=data,2=parity,3=nasdata — a reflexive same-answer would
-# silently flip a data disk into parity).
+# $2 (optional) = a role preset from 'nas disk init', BY NAME
+# (data|parity|nasdata): the two menus number their options differently, so
+# an ordinal preset would silently flip a data disk into parity the moment
+# either menu changes — names cannot mis-map.
 _mount_flow() {
-	local dev uuid fstype label mp role ans
+	local dev uuid fstype label mp role ans later
 	dev=$1
 	# ONE blkid fork; export format is KEY=value per line
 	uuid=$(blkid -o export "$dev" 2>/dev/null)
@@ -71,8 +76,7 @@ _mount_flow() {
 	# entries legitimately use any of the three.
 	[ "$(lsblk -no pkname "$dev" 2>/dev/null | head -n1)" = "$(_boot_usb_disk)" ] \
 		&& { bad "$dev is on the BOOT USB — never a data disk"; return 1; }
-	if awk '$1!~/^#/ {print $1}' /etc/fstab 2>/dev/null \
-		| grep -qxF -e "UUID=$uuid" ${label:+-e "LABEL=$label"} -e "$dev"; then
+	if _fstab_has_fs "$uuid" "$label" "$dev"; then
 		bad "$dev is already in fstab (by UUID, label or device path)"; return 1
 	fi
 	# already hand-mounted somewhere? say so before asking the role
@@ -86,20 +90,26 @@ _mount_flow() {
 		printf '  [3] nasdata      (the system disk — Docker, appdata, backups)\n'
 		printf '  [4] custom path\n'
 		printf ': '; IFS= read -r role || role=""
+		# the menu ordinal becomes the role NAME right here — presets from
+		# 'nas disk init' arrive as names and never touch this numbering
+		case "$role" in
+			1) role=data ;; 2) role=parity ;; 3) role=nasdata ;; 4) role=custom ;;
+			*) echo "Cancelled."; return 1 ;;
+		esac
 	fi
 	case "$role" in
-		1) mp=$(_next_free_mp disk) ;;
-		2) mp=$(_next_free_mp parity) ;;
-		3) _fstab_has_mp /mnt/nasdata \
+		data)   mp=$(_next_free_mp disk) ;;
+		parity) mp=$(_next_free_mp parity) ;;
+		nasdata) _fstab_has_mp /mnt/nasdata \
 			&& { bad "fstab already maps /mnt/nasdata — remove that line first if you mean to replace it"; return 1; }
 		   mp=/mnt/nasdata ;;
-		4) printf 'Mountpoint (under /mnt): '; IFS= read -r mp || mp=""
+		custom) printf 'Mountpoint (under /mnt): '; IFS= read -r mp || mp=""
 		   mp=${mp%/}
 		   case "$mp" in /mnt/?*) ;; *) bad "the mountpoint must live under /mnt"; return 1 ;; esac
 		   # spaces make a 7-field fstab line the supervisor misparses
 		   case "$mp" in *[!A-Za-z0-9/_.-]*) bad "the mountpoint may not contain spaces or shell metacharacters"; return 1 ;; esac
 		   _fstab_has_mp "$mp" && { bad "fstab already maps $mp"; return 1; } ;;
-		*) echo "Cancelled."; return 1 ;;
+		*) bad "unknown role '$role'"; return 1 ;;
 	esac
 	printf 'UUID=%s  %s  %s  rw,noatime,nofail  0 2\n' "$uuid" "$mp" "$fstype" >> /etc/fstab \
 		|| { bad "cannot append to /etc/fstab"; return 1; }
@@ -118,16 +128,16 @@ _mount_flow() {
 	_ops_log mount "$dev -> $mp"
 	# complete the chain for array roles: the conf edit happens only through
 	# the one append-only path, and only on an explicit yes — EOF on stdin
-	# (an underfilled script pipe) must mean NO, never yes
-	case "$role" in 1|2)
+	# (an underfilled script pipe) must mean NO, never yes; so must any
+	# answer that starts with n ("n", "no", "nope")
+	case "$role" in data|parity)
+		later="nas snapraid add $mp$([ "$role" = parity ] && echo ' --parity')"
 		printf 'Add it to the SnapRAID array now? [Y/n]: '
-		if IFS= read -r ans; then
-			case "$ans" in n|N) hint "later: nas snapraid add $mp$([ "$role" = 2 ] && echo ' --parity')" ;;
-				*) if [ "$role" = 2 ]; then cmd_snapraid add "$mp" --parity; else cmd_snapraid add "$mp"; fi ;;
-			esac
-		else
-			hint "no answer (EOF) — later: nas snapraid add $mp$([ "$role" = 2 ] && echo ' --parity')"
-		fi ;;
+		IFS= read -r ans || ans=n
+		case "$ans" in
+			[nN]*) hint "later: $later" ;;
+			*) if [ "$role" = parity ]; then cmd_snapraid add "$mp" --parity; else cmd_snapraid add "$mp"; fi ;;
+		esac ;;
 	esac
 	if lbu status 2>/dev/null | grep -q 'etc/fstab'; then
 		warn "fstab change NOT saved — gone after a reboot unless you run: nas commit"

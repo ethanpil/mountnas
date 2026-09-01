@@ -10,7 +10,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -32,7 +32,8 @@ cmd_status() {
 
 	hdr "system"
 	mountpoint -q "$CFG" && ok "config partition mounted ($CFG)" || bad "config partition NOT mounted — saves will be lost"
-	case "$(cat $STATE/data 2>/dev/null)" in
+	dstate=$(cat "$STATE/data" 2>/dev/null)
+	case "$dstate" in
 		ok)           ok "data disk mounted ($DATA)" ;;
 		fresh)        warn "no data disk configured — add to /etc/fstab, then nas commit" ;;
 		disconnected) bad "data disk NOT FOUND — check power/cabling" ;;
@@ -90,11 +91,10 @@ cmd_status() {
 	# last-commit age, and a month without commits is an idle box, not a
 	# failure — the one real failure (commits skipping the mirror) is not
 	# age-shaped.
-	local cmir cage
-	if [ "$(cat "$STATE/data" 2>/dev/null)" = ok ]; then
+	local cmir
+	if [ "$dstate" = ok ]; then
 		if cmir=$(_mirror_newest); then
-			cage=${cmir##* }
-			ok "config mirror: newest $cage day(s) old ($(find "$DATA/config-backups" -maxdepth 1 -name '*.apkovl.tar.gz' 2>/dev/null | wc -l | tr -d ' ') kept)"
+			ok "config mirror: newest ${cmir%% *} day(s) old (${cmir##* } kept)"
 		else
 			hint "no config mirror yet — the next 'nas commit' writes one to $DATA/config-backups"
 		fi
@@ -371,12 +371,18 @@ cmd_status() {
 # text, so the display format is free to change without breaking consumers.
 # Exit code matches the human mode: 1 when any check FAILed.
 cmd_status_json() {
-	local dp jrc lb un
+	local dp jrc lb un mj mres
 	dp="${1:-}"
 	NAS_CHECKS=$(mktemp) || { echo '{"error":"mktemp failed"}'; return 1; }
 	NAS_NO_SENSORS=1
 	cmd_status $dp > /dev/null 2>&1
 	jrc=$?
+	# the config-mirror field the dashboard renders — null when the data
+	# disk is not healthy or no mirror exists (same gate as the human check)
+	mj=null
+	if [ "$(cat "$STATE/data" 2>/dev/null)" = ok ] && mres=$(_mirror_newest); then
+		mj="{\"age_days\":${mres%% *},\"count\":${mres##* }}"
+	fi
 	lb=$(awk 'NR==1{print $1}' /etc/mountnas/last-backup 2>/dev/null)
 	case "$lb" in ''|*[!0-9]*) lb=null ;; esac
 	un=$(cat "$STATE/unsaved" 2>/dev/null); case "$un" in ''|*[!0-9]*) un=0 ;; esac
@@ -392,6 +398,7 @@ cmd_status_json() {
 		--argjson memory "$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2}
 			END{printf "{\"total_kb\":%d,\"available_kb\":%d,\"swap_total_kb\":%d,\"swap_used_kb\":%d}", t+0, a+0, st+0, (st-sf)+0}' /proc/meminfo 2>/dev/null || echo '{}')" \
 		--argjson failed "$([ "$jrc" -ne 0 ] && echo true || echo false)" \
+		--argjson mirror "$mj" \
 	'[inputs | split("\t")] as $r |
 	 def msgs(t): [$r[] | select(.[0]==t) | .[1]];
 	 {release:$release, version:$version, hostname:$hostname, uptime_seconds:$uptime,
@@ -402,6 +409,7 @@ cmd_status_json() {
 	  memory: $memory,
 	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch, deep:$deep,
 	  snapraid_last_run: (if $snapraid_last_run == "" then null else $snapraid_last_run end),
+	  mirror: $mirror,
 	  healthy: ($failed|not),
 	  checks: {ok: (msgs("OK")|length), warn: (msgs("WARN")|length), fail: (msgs("FAIL")|length)},
 	  fail_lines: msgs("FAIL"), warn_lines: msgs("WARN"), ok_lines: msgs("OK")}' < "$NAS_CHECKS"

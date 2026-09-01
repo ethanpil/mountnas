@@ -62,7 +62,12 @@ _cmd_help_for() {
 # 'nas <cmd> --help' NEVER executes the command: focused help when we have a
 # page for it, the overview otherwise. (Falling through used to RUN the
 # command — 'nas status --help' would have run a status instead of helping.)
+# The third position too: 'nas disk init --help', 'nas snapraid add --help'
+# and 'nas share user --help' are help requests, not arguments.
 case "${2:-}" in
+	--help|-h) _cmd_help_for "${1:-}" || cmd_help; exit 0 ;;
+esac
+case "${3:-}" in
 	--help|-h) _cmd_help_for "${1:-}" || cmd_help; exit 0 ;;
 esac
 
@@ -90,10 +95,7 @@ case "${1:-help}" in
 	disks|disk) shift
 		case "${1:-}" in
 			--json) cmd_disks_json ;;
-			init) shift
-				# the flagship destructive command deserves a working --help
-				case "${1:-}" in --help|-h) help_disks; exit 0 ;; esac
-				cmd_disks_init "$@" ;;
+			init) shift; cmd_disks_init "$@" ;;
 			'') cmd_disks ;;
 			*) usage "nas disks [--json | init [device]]"; exit 1 ;;
 		esac ;;
