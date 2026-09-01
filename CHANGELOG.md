@@ -3,28 +3,21 @@
 ## [Unreleased]
 
 ### Added
-- **Config mirror**: every 'nas commit' and 'nas rollback' copies the
-  overlay to /mnt/nasdata/config-backups/ (newest 30; dir 0700, files
-  0600). A dead boot stick restores in three documented steps from a
-  fresh image of the same release. 'nas status' and the dashboard
-  Protection card show the mirror age. (917c137, 1bd81ab)
-- **'nas share' — Samba shares + users without hand-editing smb.conf**
-  (alias 'nas shares'). add/remove shares, allow/revoke users (--ro =
-  read-only), 'user add/passwd/remove' for SMB-only accounts. The
-  command owns ONE generated include file; hand-written smb.conf shares
-  are never touched but still listed. Every change is testparm-checked
-  before samba sees it and rolls back on a bad parse. Warns when an
-  active firewall blocks Samba. (00b2203, 3fca791)
-- **The storage chain: 'nas disk init' + 'nas mount' + 'nas snapraid
-  add'** — a disk goes from shrink-wrap to parity-protected without an
-  editor. init is the ONE destructive command: BLANK disks only (a
-  formatted disk is refused and pointed at 'nas mount' — this tool
-  never automates re-formatting), serial-suffix confirmation, role
-  presets (ext4 inode density for media vs mixed, -m 0 on data/parity).
-  mount adds an already-formatted partition by /dev, UUID, label or
-  serial — append-only against fstab, never the boot USB. snapraid add
-  appends data/content or parity lines and enforces snapraid's own
-  two-content-copies rule. 'nas disk' aliases 'nas disks'. (5db57c8)
+- **Config mirror**: each 'nas commit' and 'nas rollback' copies the
+  overlay to /mnt/nasdata/config-backups/ (newest 30, root-only).
+  'nas status' and the dashboard show the mirror age. The README
+  documents the recovery steps. (917c137, 1bd81ab)
+- **'nas share'** (alias 'nas shares'): Samba shares and users without
+  hand-editing smb.conf. The command owns ONE generated include file.
+  Hand-written smb.conf shares stay untouched but are listed. testparm
+  checks each change before samba sees it; a bad parse is rolled back.
+  Warns when an active firewall blocks Samba. (00b2203, 3fca791)
+- **The storage chain**: 'nas disk init' formats a BLANK disk (the ONE
+  destructive command — a formatted disk is refused and pointed at
+  'nas mount'; a serial-suffix confirmation gates the erase). 'nas
+  mount' adds an already-formatted filesystem to fstab, append-only.
+  'nas snapraid add' appends the array lines and enforces the
+  content-copy minimum. 'nas disk' aliases 'nas disks'. (5db57c8)
 - **User-installed services start at every boot.** Their packages install
   mid-boot (after /cfg mounts), so openrc's runlevel walk used to skip
   their not-yet-present init scripts and the service stayed down until a

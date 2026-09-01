@@ -356,10 +356,10 @@ on the data disk (newest 30 kept). Restore in three steps:
 1. Write a fresh image of the **same release** to a new stick and boot it
    (`nas version` output is in each mirror; a different release also works, but
    run `nas upgrade` to it afterwards so the package repos match).
-2. Skip the wizard, mount your data disk (one fstab line, `nas restart`), then
-   **replace** the stick's seed overlay with the newest mirror — the seed must
-   not remain next to it, because Alpine refuses to load anything when two
-   `*.apkovl.tar.gz` files share the partition:
+2. Skip the wizard. Mount your data disk (one fstab line, then `nas restart`).
+   Then **replace** the stick's seed overlay with the newest mirror. WARNING:
+   remove the seed first — when two `*.apkovl.tar.gz` files share the
+   partition, Alpine loads neither:
 
    ```text
    rm /cfg/*.apkovl.tar.gz
@@ -369,11 +369,11 @@ on the data disk (newest 30 kept). Restore in three steps:
    installed yourself re-download at boot (or `apk add` them again) — their
    on-stick cache died with the old stick.
 
-Because the mirror lives on the data disk, **any off-site backup of your data
-already includes your config** — no extra setup. One caveat: the mirror contains
-password hashes and SSH host keys, so an off-site copy belongs inside an
-**encrypted** backup (restic always encrypts; `borg init` asks — pick anything
-but `none`; a plain `rclone copy` does not encrypt).
+The mirror lives on the data disk, so **any off-site backup of your data
+already includes your config** — no extra setup. One caveat: the mirror
+contains password hashes and SSH host keys. Keep off-site copies inside an
+**encrypted** backup. restic always encrypts. `borg init` asks — pick anything
+but `none`. A plain `rclone copy` does not encrypt.
 
 Your data disks are untouched in every recovery path above.
 
