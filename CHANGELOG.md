@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- **Config mirror**: every 'nas commit' copies the overlay to
+  /mnt/nasdata/config-backups/ (newest 30; dir 0700, files 0600). A dead
+  boot stick restores in three documented steps from any release image.
+  'nas status' and the dashboard Protection card show the mirror age.
+
+### Added
 - **User-installed services start at every boot.** Their packages install
   mid-boot (after /cfg mounts), so openrc's runlevel walk used to skip
   their not-yet-present init scripts and the service stayed down until a

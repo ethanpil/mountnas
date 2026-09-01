@@ -71,6 +71,47 @@ assert_rc 0
 assert_match 'No new changes' "$OUT"
 assert_match 'saved to /cfg' "$OUT"
 
+t "commit mirrors the overlay to the data disk (0700 dir, 0600 file)"
+reset
+stub mountpoint 'exit 0'          # cfg AND nasdata mounted for the mirror trio
+rm -rf /mnt/nasdata/config-backups
+run_nas commit -m note
+assert_rc 0
+assert_match 'mirrored to /mnt/nasdata/config-backups \(1 kept\)' "$OUT"
+m=$(find /mnt/nasdata/config-backups -name '*.apkovl.tar.gz' | head -n1)
+[ -n "$m" ] || fail "no mirror file written"
+assert_eq 700 "$(stat -c %a /mnt/nasdata/config-backups)" "dir mode"
+assert_eq 600 "$(stat -c %a "$m")" "file mode"
+cmp -s "$m" "/cfg/$(hostname).apkovl.tar.gz" || fail "mirror differs from the overlay"
+
+t "mirror retention keeps the newest 30"
+reset
+mkdir -p /mnt/nasdata/config-backups
+i=0; while [ $i -lt 34 ]; do
+	i=$((i + 1))
+	f=/mnt/nasdata/config-backups/mountnas-2020010100$(printf '%04d' $i).apkovl.tar.gz
+	: > "$f"; touch -d "@$(( 1600000000 + i * 60 ))" "$f"
+done
+run_nas commit -m note
+assert_rc 0
+assert_match '\(30 kept\)' "$OUT"
+assert_eq 30 "$(find /mnt/nasdata/config-backups -name '*.apkovl.tar.gz' | grep -c .)" "pruned to 30"
+[ ! -e /mnt/nasdata/config-backups/mountnas-20200101000001.apkovl.tar.gz ] \
+	|| fail "the oldest mirror survived the prune"
+
+t "mirror skips with a hint when the data disk is absent — commit still succeeds"
+reset
+# mountpoint: /cfg mounted, /mnt/nasdata NOT (the stub answers per path)
+stub mountpoint 'case "$2" in /mnt/nasdata) exit 1 ;; *) exit 0 ;; esac'
+run_nas commit -m note
+assert_rc 0 "a missing data disk must never fail the commit"
+assert_match 'mirror skipped \(data disk not mounted\)' "$OUT"
+# a HINT by contract: rendering it [WARN]/[FAIL] would nag every commit on a
+# box that legitimately runs without nasdata (mutation-checked)
+assert_nomatch '\[(WARN|FAIL)\].*mirror skipped' "$OUT" "the skip must stay a hint"
+assert_match 'saved to /cfg' "$OUT"
+stub mountpoint 'case "$2" in /|/cfg) exit 0 ;; esac; exit 1'   # the file default
+
 t "non-tty commit without -m never prompts (no note)"
 reset; run_nas save
 assert_rc 0

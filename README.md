@@ -348,8 +348,23 @@ If your boot drive fails:
 * Boot the new stick. **Do not** leave the failed stick attached — two MountNAS drives
   share the same disk labels and will collide.
 
-No backup image yet? Write a fresh release image (`mountnas-<tag>.img.gz`) to a new stick
-and reconfigure. Your data disks are untouched either way.
+No backup image yet? You are still covered by the **config mirror**: every
+`nas commit` copies your saved config to `/mnt/nasdata/config-backups/` on the
+data disk (newest 30 kept). Restore in three steps:
+
+1. Write a fresh release image (`mountnas-<tag>.img.gz`) to a new stick and boot it.
+2. Skip the wizard, mount your data disk (one fstab line, `nas restart`), then copy
+   the newest mirror over the empty overlay:
+   `cp /mnt/nasdata/config-backups/<host>-<newest>.apkovl.tar.gz /cfg/<host>.apkovl.tar.gz`
+3. Reboot. The box comes back with your config, users and passwords intact.
+
+Because the mirror lives on the data disk, **any off-site backup of your data
+already includes your config** — no extra setup. One caveat: the mirror contains
+password hashes and SSH host keys, so an off-site copy belongs inside an
+**encrypted** backup (restic and borg encrypt by default; a plain `rclone copy`
+does not).
+
+Your data disks are untouched in every recovery path above.
 
 ## Upgrading
 
