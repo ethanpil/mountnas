@@ -108,15 +108,20 @@ if [ "${sinks:-0}" -gt 0 ] 2>/dev/null; then
 else
 	sinks_html="<span class=\"pill p-off\">none &mdash; set up: nas notify</span>"
 fi
-# config mirror: the disaster copy each commit writes to the data disk
-cmir_html='<span class="mut">none yet — written by nas commit</span>'
-cmir=$(ls -1t "$DATA"/config-backups/*.apkovl.tar.gz 2>/dev/null | head -n1)
-if [ -n "$cmir" ]; then
-	cmir_age=$(( ( $(date +%s) - $(date -r "$cmir" +%s 2>/dev/null || date +%s) ) / 86400 ))
-	cmir_n=$(find "$DATA/config-backups" -maxdepth 1 -name "*.apkovl.tar.gz" 2>/dev/null | wc -l | tr -d " ")
-	if [ "$cmir_age" -ge 30 ]; then
-		cmir_html="<span class=\"pill p-warn\">newest $cmir_age day(s) old &middot; $cmir_n kept</span>"
-	else
+# config mirror: the disaster copy each commit writes to the data disk.
+# Gated like the CLI (an unmounted nasdata must not render "none yet —
+# written by nas commit": on that box the commit SKIPS the mirror). No age
+# threshold, matching nas status: mirror age equals last-commit age, and an
+# idle box is not a failure. A future mtime (clock stepped back) clamps to 0.
+cmir_html='<span class="mut">off — data disk absent</span>'
+if mountpoint -q "$DATA" 2>/dev/null; then
+	cmir_html='<span class="mut">none yet — written by nas commit</span>'
+	cmir=$(ls -1t "$DATA"/config-backups/*.apkovl.tar.gz 2>/dev/null | head -n1)
+	cmir_ep=$(date -r "$cmir" +%s 2>/dev/null)
+	if [ -n "$cmir" ] && [ -n "$cmir_ep" ]; then
+		cmir_age=$(( ( $(date +%s) - cmir_ep ) / 86400 ))
+		[ "$cmir_age" -lt 0 ] && cmir_age=0
+		cmir_n=$(find "$DATA/config-backups" -maxdepth 1 -name "*.apkovl.tar.gz" 2>/dev/null | wc -l | tr -d ' ')
 		cmir_html="<span class=\"pill p-ok\">newest $cmir_age day(s) old &middot; $cmir_n kept</span>"
 	fi
 fi

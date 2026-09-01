@@ -348,21 +348,31 @@ If your boot drive fails:
 * Boot the new stick. **Do not** leave the failed stick attached — two MountNAS drives
   share the same disk labels and will collide.
 
-No backup image yet? You are still covered by the **config mirror**: every
-`nas commit` copies your saved config to `/mnt/nasdata/config-backups/` on the
-data disk (newest 30 kept). Restore in three steps:
+No backup image yet? The **config mirror** protects you: every `nas commit`
+(and `nas rollback`) copies your saved config to `/mnt/nasdata/config-backups/`
+on the data disk (newest 30 kept). Restore in three steps:
 
-1. Write a fresh release image (`mountnas-<tag>.img.gz`) to a new stick and boot it.
-2. Skip the wizard, mount your data disk (one fstab line, `nas restart`), then copy
-   the newest mirror over the empty overlay:
-   `cp /mnt/nasdata/config-backups/<host>-<newest>.apkovl.tar.gz /cfg/<host>.apkovl.tar.gz`
-3. Reboot. The box comes back with your config, users and passwords intact.
+1. Write a fresh image of the **same release** to a new stick and boot it
+   (`nas version` output is in each mirror; a different release also works, but
+   run `nas upgrade` to it afterwards so the package repos match).
+2. Skip the wizard, mount your data disk (one fstab line, `nas restart`), then
+   **replace** the stick's seed overlay with the newest mirror — the seed must
+   not remain next to it, because Alpine refuses to load anything when two
+   `*.apkovl.tar.gz` files share the partition:
+
+   ```text
+   rm /cfg/*.apkovl.tar.gz
+   cp /mnt/nasdata/config-backups/<host>-<newest>.apkovl.tar.gz /cfg/
+   ```
+3. Reboot. Your configuration, users and passwords are restored. Packages you
+   installed yourself re-download at boot (or `apk add` them again) — their
+   on-stick cache died with the old stick.
 
 Because the mirror lives on the data disk, **any off-site backup of your data
 already includes your config** — no extra setup. One caveat: the mirror contains
 password hashes and SSH host keys, so an off-site copy belongs inside an
-**encrypted** backup (restic and borg encrypt by default; a plain `rclone copy`
-does not).
+**encrypted** backup (restic always encrypts; `borg init` asks — pick anything
+but `none`; a plain `rclone copy` does not encrypt).
 
 Your data disks are untouched in every recovery path above.
 

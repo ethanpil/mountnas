@@ -82,14 +82,19 @@ cmd_status() {
 	lbu_out=$(lbu status 2>/dev/null)
 	n=$(printf '%s' "$lbu_out" | grep -c .)
 	[ "${n:-0}" -gt 0 ] && warn "$n unsaved change(s) — run nas commit" || ok "no unsaved changes"
-	# config mirror age (the disaster copy cmd_commit writes to the data
-	# disk). Absent data disk already warns above; no mirror with nasdata
-	# mounted means the box predates the feature or never committed since.
-	if mountpoint -q "$DATA" 2>/dev/null; then
-		cmir=$(ls -1t "$DATA"/config-backups/*.apkovl.tar.gz 2>/dev/null | head -n1)
-		if [ -n "$cmir" ]; then
-			cage=$(( ( $(date +%s) - $(date -r "$cmir" +%s 2>/dev/null || date +%s) ) / 86400 ))
-			ok "config mirror: newest $cage day(s) old ($(find "$DATA/config-backups" -maxdepth 1 -name "*.apkovl.tar.gz" 2>/dev/null | wc -l | tr -d " ") kept)"
+	# config mirror age (the disaster copy _mirror_overlay writes to the
+	# data disk). Gated on the supervisor's own data-disk verdict (the
+	# file's idiom — see the docker check below) rather than a second
+	# mountpoint probe; an absent disk already warned above. Age carries
+	# NO threshold, here or on the dashboard: mirror age equals
+	# last-commit age, and a month without commits is an idle box, not a
+	# failure — the one real failure (commits skipping the mirror) is not
+	# age-shaped.
+	local cmir cage
+	if [ "$(cat "$STATE/data" 2>/dev/null)" = ok ]; then
+		if cmir=$(_mirror_newest); then
+			cage=${cmir##* }
+			ok "config mirror: newest $cage day(s) old ($(find "$DATA/config-backups" -maxdepth 1 -name '*.apkovl.tar.gz' 2>/dev/null | wc -l | tr -d ' ') kept)"
 		else
 			hint "no config mirror yet — the next 'nas commit' writes one to $DATA/config-backups"
 		fi

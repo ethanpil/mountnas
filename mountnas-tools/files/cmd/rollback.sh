@@ -81,6 +81,10 @@ cmd_rollback() {
 		sync
 		_ops_log rollback "restored $(basename "$sel")${seln:+ — $seln}"
 		ok "restored $(basename "$sel") as the active saved config"
+		# the mirror mirrors the ACTIVE overlay — a rollback just changed
+		# it, and no commit follows a rollback, so refresh here too or the
+		# disaster copy stays the config the user just rolled back FROM
+		_mirror_overlay
 		hint "Reboot to apply it:  nas reboot"
 	else
 		rm -f "$act.new"

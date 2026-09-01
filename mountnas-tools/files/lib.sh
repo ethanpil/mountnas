@@ -247,3 +247,61 @@ _snap_note() {
 	sn_ts=$(date -u -r "$1" +%Y%m%d%H%M%S 2>/dev/null) || return 0
 	awk -F'\t' -v t="$sn_ts" '$1==t{print $2; exit}' "$CFG/.mountnas-notes" 2>/dev/null
 }
+
+# Mirror the ACTIVE overlay to the data disk: the stick's disaster copy
+# (README "Recovery from a dead USB"). Called by every writer of the active
+# overlay — cmd_commit AND cmd_rollback — so the newest mirror always equals
+# the config the box will boot. Best-effort by contract: the overlay write
+# already succeeded, so a missing data disk is a hint, never an error. The
+# mirror holds password hashes and SSH host keys: directory 0700, files
+# 0600, and off-site copies belong inside an ENCRYPTED backup.
+_mirror_overlay() {
+	local mdir src dst tmpf mst
+	mdir="$DATA/config-backups"
+	src="$CFG/$(hostname).apkovl.tar.gz"
+	if ! mountpoint -q "$DATA" 2>/dev/null; then
+		hint "config mirror skipped (data disk not mounted) — the overlay lives only on the stick"
+		return 0
+	fi
+	# an ENCRYPTED overlay has no plain-named file; mirroring it is a
+	# different feature (the ciphertext name embeds the cipher) — skip
+	# quietly rather than nag every commit on a legitimately set-up box
+	[ -f "$src" ] || { hint "config mirror skipped (no plain overlay at $src)"; return 0; }
+	# the mirror carries the overlay's OWN mtime stamp — the same identity
+	# 'nas rollback --list' and .mountnas-notes key on, so a restored user
+	# can line a mirror up against the snapshot list. Two writes of the
+	# same overlay second overwrite one mirror: same identity, newest wins.
+	mst=$(date -u -r "$src" +%Y%m%d%H%M%S 2>/dev/null) || mst=$(date -u +%Y%m%d%H%M%S)
+	dst="$mdir/$(hostname)-$mst.apkovl.tar.gz"
+	if mkdir -p "$mdir" 2>/dev/null && chmod 700 "$mdir" 2>/dev/null \
+		&& tmpf=$(mktemp "$mdir/.mirror.XXXXXX" 2>/dev/null) \
+		&& cp "$src" "$tmpf" 2>/dev/null && chmod 600 "$tmpf" && mv "$tmpf" "$dst"; then
+		# retention: newest 30 by the embedded UTC STAMP — mtime ordering
+		# deletes the JUST-WRITTEN mirror on a box whose clock is behind
+		# (no RTC, pre-NTP commit), and a plain name sort misorders across
+		# hostnames. The new file is excluded from the prune outright, so
+		# no clock state can remove it. One budget for the directory:
+		# renamed-host history ages out like any other (names keep the
+		# host, so a restore can still tell them apart).
+		ls -1 "$mdir"/*.apkovl.tar.gz 2>/dev/null \
+			| awk -v d="$dst" '$0 != d { s = $0; sub(/\.apkovl\.tar\.gz$/, "", s); sub(/.*-/, "", s); print s "\t" $0 }' \
+			| sort -r | cut -f2- | tail -n +30 \
+			| while IFS= read -r tmpf; do rm -f "$tmpf"; done
+		ok "mirrored to $mdir ($(find "$mdir" -maxdepth 1 -name '*.apkovl.tar.gz' 2>/dev/null | wc -l | tr -d ' ') kept)"
+	else
+		rm -f "$tmpf" 2>/dev/null
+		warn "config mirror to $mdir failed — the overlay on the stick is saved"
+	fi
+}
+# newest mirror + its age in days, shared by status (and mirrored logic in
+# gen-webstatus, which cannot source this file). Prints "path age" or
+# nothing when no mirror exists; a future mtime clamps to age 0.
+_mirror_newest() {
+	local mn ma me
+	mn=$(ls -1t "$DATA"/config-backups/*.apkovl.tar.gz 2>/dev/null | head -n1)
+	[ -n "$mn" ] || return 1
+	me=$(date -r "$mn" +%s 2>/dev/null) || return 1
+	ma=$(( ( $(date +%s) - me ) / 86400 ))
+	[ "$ma" -lt 0 ] && ma=0
+	printf '%s %s' "$mn" "$ma"
+}

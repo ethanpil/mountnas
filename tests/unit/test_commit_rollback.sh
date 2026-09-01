@@ -19,7 +19,7 @@ stub lbu "case \"\$1\" in
 	        echo \"ovl \$n\" > '$act'; touch -d \"@\$(( 1700000000 + n * 60 ))\" '$act' ;;
 	status) cat /tmp/lbu-status 2>/dev/null ;;
 	esac"
-reset() { rm -f /cfg/*.tar.gz /cfg/*.tar.gz.* /cfg/.mountnas-notes /cfg/mountnas-ops.log; : > /etc/apk/protected_paths.d/lbu.list; : > /tmp/lbu-status; }
+reset() { rm -f /cfg/*.tar.gz /cfg/*.tar.gz.* /cfg/.mountnas-notes /cfg/mountnas-ops.log; rm -rf /mnt/nasdata/config-backups; : > /etc/apk/protected_paths.d/lbu.list; : > /tmp/lbu-status; }
 
 t "commit refuses when /cfg is not mounted"
 reset; stub mountpoint 'exit 1'
@@ -86,6 +86,7 @@ cmp -s "$m" "/cfg/$(hostname).apkovl.tar.gz" || fail "mirror differs from the ov
 
 t "mirror retention keeps the newest 30"
 reset
+stub mountpoint 'exit 0'          # self-contained: not reliant on the case above
 mkdir -p /mnt/nasdata/config-backups
 i=0; while [ $i -lt 34 ]; do
 	i=$((i + 1))
@@ -110,6 +111,32 @@ assert_match 'mirror skipped \(data disk not mounted\)' "$OUT"
 # box that legitimately runs without nasdata (mutation-checked)
 assert_nomatch '\[(WARN|FAIL)\].*mirror skipped' "$OUT" "the skip must stay a hint"
 assert_match 'saved to /cfg' "$OUT"
+t "an encrypted overlay skips the mirror quietly, never a warning"
+reset
+stub mountpoint 'exit 0'
+run_nas commit -m note
+mv "/cfg/$(hostname).apkovl.tar.gz" "/cfg/$(hostname).apkovl.tar.gz.aes-256-cbc"
+rm -rf /mnt/nasdata/config-backups
+# the lbu stub recreates the plain overlay on commit, so simulate the
+# encrypted-box shape by pointing hostname elsewhere for one run
+stub hostname 'echo encbox'
+run_nas commit -m note
+assert_rc 0
+assert_match 'mirror skipped \(no plain overlay' "$OUT"
+assert_nomatch '\[WARN\].*mirror' "$OUT" "an encrypted setup must not warn every commit"
+rm -f "$STUBS/hostname" /cfg/*.aes-256-cbc
+stub mountpoint 'case "$2" in /|/cfg) exit 0 ;; esac; exit 1'   # the file default
+
+t "rollback refreshes the mirror to the restored config"
+reset
+stub mountpoint 'exit 0'
+run_nas commit -m first
+run_nas commit -m second
+run_nas_in y rollback 1
+assert_rc 0
+m=$(ls -1t /mnt/nasdata/config-backups/*.apkovl.tar.gz | head -n1)
+cmp -s "$m" "/cfg/$(hostname).apkovl.tar.gz" \
+	|| fail "newest mirror is not the ROLLED-BACK overlay — a dead stick would restore the config the user escaped"
 stub mountpoint 'case "$2" in /|/cfg) exit 0 ;; esac; exit 1'   # the file default
 
 t "non-tty commit without -m never prompts (no note)"

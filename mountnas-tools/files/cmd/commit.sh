@@ -76,32 +76,7 @@ cmd_commit() {
 	fi
 	sz=$(du -k "$CFG"/*.apkovl.tar.gz 2>/dev/null | awk '{s+=$1}END{print s}')
 	[ "${sz:-0}" -gt 51200 ] && warn "overlay is large (${sz}KB) — a big file in a tracked path (e.g. /root)?"
-	# Mirror the fresh overlay to the DATA disk: the stick's disaster copy.
-	# A dead boot USB then costs three documented steps (flash a release
-	# image, copy the newest mirror onto MNASCFG, boot) instead of a rebuild.
-	# Best-effort by contract: the commit above already succeeded, so a
-	# missing data disk is a hint, never an error. The mirror holds password
-	# hashes and SSH host keys — directory 0700, files 0600, and the docs
-	# say off-site copies of it belong inside an ENCRYPTED backup.
-	if mountpoint -q "$DATA" 2>/dev/null; then
-		if mkdir -p "$DATA/config-backups" 2>/dev/null \
-			&& chmod 700 "$DATA/config-backups" 2>/dev/null \
-			&& cp "$CFG/$(hostname).apkovl.tar.gz" \
-				"$DATA/config-backups/.$(hostname).mirror.new" 2>/dev/null \
-			&& chmod 600 "$DATA/config-backups/.$(hostname).mirror.new" \
-			&& mv "$DATA/config-backups/.$(hostname).mirror.new" \
-				"$DATA/config-backups/$(hostname)-$(date -u +%Y%m%d%H%M%S).apkovl.tar.gz"; then
-			# retention: newest 30 (a commit per day is a month of history)
-			ls -1t "$DATA"/config-backups/*.apkovl.tar.gz 2>/dev/null | tail -n +31 \
-				| while IFS= read -r f; do rm -f "$f"; done
-			ok "mirrored to $DATA/config-backups ($(find "$DATA/config-backups" -maxdepth 1 -name "*.apkovl.tar.gz" 2>/dev/null | wc -l | tr -d " ") kept)"
-		else
-			rm -f "$DATA/config-backups/.$(hostname).mirror.new" 2>/dev/null
-			warn "config mirror to $DATA/config-backups failed — the commit itself is saved"
-		fi
-	else
-		hint "config mirror skipped (data disk not mounted) — the overlay lives only on the stick"
-	fi
+	_mirror_overlay
 	_ops_log commit "${note:-(no note)}"
 	ok "saved to $CFG${note:+  (note: $note)}"
 }
