@@ -247,3 +247,63 @@ def test_all_mounts_return_after_reboot(golden_with_extras):
     g.poll_until("rc-service samba status", timeout=120,
                  desc="samba after reboot")
     assert g.data_state() == "ok"
+
+
+@pytest.mark.slow
+def test_disk_init_mount_snapraid_chain(golden_with_extras):
+    """The guided storage chain on real disks: 'nas disk init' formats a
+    BLANK extra disk end to end (GPT, ext4 with the media inode density,
+    fstab, supervisor mount, the SnapRAID offer), a second run refuses the
+    now-used disk and points at 'nas mount', and the resulting array
+    passes a real 'nas snapraid run'."""
+    import re
+    from pathlib import Path
+    from lib.guest import push_nas_tree
+    files_dir = Path(__file__).resolve().parent.parent.parent \
+        / "mountnas-tools" / "files"
+    g = golden_with_extras(2)
+    push_nas_tree(g, files_dir)
+    g.push(files_dir / "snapraid-maint",
+           "/usr/libexec/mountnas/snapraid-maint")
+    g.run("chmod 755 /usr/libexec/mountnas/snapraid-maint", check=True)
+
+    # the extra disks carry serials EXTRA0/EXTRA1 (DiskSpec) — the confirm
+    # token is the last 4 characters
+    # init vdc as a DATA disk: role=2, fs=default, contents=1 (large),
+    # serial suffix, then the chained mount flow: role=1, snapraid=y,
+    # second-content offer=y (nasdata is mounted on the golden guest)
+    r = g.run("printf '2\n\n1\nTRA0\n1\ny\ny\n' | nas disk init /dev/vdc",
+              timeout=600)
+    assert r.rc == 0, f"disk init rc={r.rc}:\n{r.out[-3000:]}"
+    g.poll_until("mountpoint -q /mnt/disk1", timeout=180, desc="disk1 mounted")
+    # the media inode density and zero root reserve actually applied
+    r = g.run("tune2fs -l /dev/vdc1", check=True)
+    ic = int(re.search(r"Inode count:\s+(\d+)", r.out).group(1))
+    bc = int(re.search(r"Block count:\s+(\d+)", r.out).group(1))
+    bs = int(re.search(r"Block size:\s+(\d+)", r.out).group(1))
+    assert (bc * bs) / ic > 500_000, f"inode density not applied ({ic} inodes)"
+    assert re.search(r"Reserved block count:\s+0\b", r.out), "-m 0 not applied"
+    g.run("grep -q '/mnt/disk1' /etc/fstab", check=True)
+    g.run("grep -q 'data d1 /mnt/disk1/' /etc/snapraid.conf", check=True)
+    g.run("grep -c '^content ' /etc/snapraid.conf | grep -qx 2", check=True)
+
+    # a second init on the SAME disk must refuse and point at nas mount
+    r = g.run("nas disk init /dev/vdc", timeout=60)
+    assert r.rc != 0 and "NOT blank" in r.out, r.out
+    assert "nas mount" in r.out, r.out
+
+    # parity disk via init role=3 (no contents question), chained mount
+    # role=2(parity), snapraid=y
+    r = g.run("printf '3\n\nTRA1\n2\ny\n' | nas disk init /dev/vdd",
+              timeout=600)
+    assert r.rc == 0, f"parity init rc={r.rc}:\n{r.out[-3000:]}"
+    g.poll_until("mountpoint -q /mnt/parity1", timeout=180,
+                 desc="parity1 mounted")
+    g.run("grep -q '^parity /mnt/parity1/snapraid.parity' /etc/snapraid.conf",
+          check=True)
+
+    # the chain produced a REAL runnable array
+    g.run("head -c 4096 /dev/urandom > /mnt/disk1/probe.bin", check=True)
+    r = g.run("NO_COLOR=1 nas snapraid run", timeout=900)
+    assert r.rc == 0, f"chain array failed its first sync:\n{r.out[-2000:]}"
+    g.run("test -s /mnt/parity1/snapraid.parity", check=True)

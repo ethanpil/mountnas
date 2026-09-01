@@ -490,3 +490,56 @@ def test_user_service_starts_after_world_sync_heal(dev_guest):
     assert r.rc != 0, f"heal must not start merely-stopped services:\n{r.out}"
     g.run("rc-service crond start && rc-update del rsyncd default"
           " && rc-service rsyncd stop", check=True)
+
+
+# ------------------------------------------------------------- nas share
+
+def test_share_end_to_end_with_real_samba(dev_guest):
+    """'nas share' against the REAL samba stack: user add (SMB-only), share
+    add via piped answers, an actual smbclient write, per-user read-only,
+    the testparm gate, and the include landing where samba honors it.
+    The rc9 image predates the feature, so _share_ensure_include exercises
+    the UPGRADED-box path -- the include must land inside [global] even
+    though this smb.conf ends with a hand-written share section."""
+    g = dev_guest
+    g.poll_until("rc-service samba status", timeout=300, desc="samba up")
+    # an upgraded-box shape: a hand-written share at EOF
+    g.run("printf '\n[handrolled]\n   path = /mnt/nasdata\n   read only = yes\n"
+          "   guest ok = yes\n' >> /etc/samba/smb.conf && rc-service samba reload",
+          check=True)
+    g.run("printf 'pw1\npw1\n' | nas share user add alice", timeout=120,
+          check=True)
+    g.run("mkdir -p /mnt/nasdata/teamdocs", check=True)
+    r = g.run("printf '1\nalice\n1\n' | nas share add teamdocs /mnt/nasdata/teamdocs",
+              timeout=120)
+    assert r.rc == 0, f"share add rc={r.rc}:\n{r.out}"
+    # the include must be in [global] scope or smbd ignores it silently
+    r = g.run("awk '/^\[/{s=$0} /include = .*mountnas-shares/{print s; exit}'"
+              " /etc/samba/smb.conf", check=True)
+    assert "[handrolled]" not in r.out, \
+        f"include landed inside a share section — samba ignores it there: {r.out}"
+    r = g.run("testparm -s 2>/dev/null | grep -A3 '^\[teamdocs\]'", check=True)
+    assert "teamdocs" in r.out, "managed share invisible to samba"
+    # a REAL write through smbd as alice
+    g.run("echo probe > /tmp/upload.txt", check=True)
+    r = g.run("smbclient //127.0.0.1/teamdocs -U alice%pw1"
+              " -c 'put /tmp/upload.txt upload.txt'", timeout=120)
+    assert r.rc == 0, f"authenticated write failed:\n{r.out}"
+    g.run("test -s /mnt/nasdata/teamdocs/upload.txt", check=True)
+    # a second user, granted read-only: the write must FAIL, the read succeed
+    g.run("printf 'pw2\npw2\n' | nas share user add bob", timeout=120,
+          check=True)
+    g.run("nas share allow teamdocs bob --ro", timeout=60, check=True)
+    r = g.run("smbclient //127.0.0.1/teamdocs -U bob%pw2"
+              " -c 'put /tmp/upload.txt blocked.txt'", timeout=120)
+    assert r.rc != 0, "read-only grant accepted a write"
+    r = g.run("smbclient //127.0.0.1/teamdocs -U bob%pw2 -c 'get upload.txt /tmp/dl.txt'",
+              timeout=120)
+    assert r.rc == 0, f"read-only user could not read:\n{r.out}"
+    # list shows both worlds; hand-written stays untouched by remove
+    r = g.run("NO_COLOR=1 nas share list", check=True)
+    assert "teamdocs" in r.out and "handrolled" in r.out, r.out
+    g.run("printf 'n\n' | nas share remove teamdocs", timeout=60, check=True)
+    g.run("grep -q '^\[handrolled\]' /etc/samba/smb.conf", check=True)
+    r = g.run("testparm -s 2>/dev/null | grep '^\[teamdocs\]'")
+    assert r.rc != 0, "share still served after remove"
