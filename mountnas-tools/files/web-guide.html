@@ -161,6 +161,7 @@ a.top{float:right;font-size:11px;color:var(--mut);text-decoration:none;font-weig
 
 <section id="storage">
 <h2>Storage <a class="top" href="#top">&uarr;</a></h2>
+<p><b>The guided path:</b> <code>nas disk init</code> formats a BLANK disk end to end (role, filesystem, ext4 inode density for media vs mixed files, fstab, mount, an offer into the SnapRAID array) behind a serial-number confirmation; a formatted disk is refused — <code>nas mount</code> adds those instead (by /dev path, UUID, label or serial), and this tool never automates re-formatting a partitioned disk. Both only APPEND to fstab.</p>
 <p>Disks are managed in <code>/etc/fstab</code> — like any Linux box. Mount everything under <code>/mnt</code>. One mountpoint is special: <b><code>/mnt/nasdata</code></b> must exist to hold Docker data, appdata and backups; Docker/Samba/NFS stay off until it is mounted.</p>
 <h3>Add a disk</h3>
 <pre><code>nas disks                         # find the disk; copy its paste-ready fstab line

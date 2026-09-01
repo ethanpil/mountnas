@@ -258,6 +258,49 @@ run_nas snapraid status
 assert_match 'BLOCKED by the threshold gate' "$OUT"
 assert_match 'force-sync' "$OUT"
 
+t "add: data disks number dN, each with a content line"
+seed
+run_nas snapraid add /not-mounted/disk9
+assert_rc 1
+assert_match 'not a mountpoint' "$OUT"
+mkdir -p /run/disk2
+run_nas snapraid add /run/disk2/
+assert_rc 0
+assert_match '\+ data d2 /run/disk2/' "$OUT"
+assert_match '^data d2 /run/disk2/$' "$(cat /etc/snapraid.conf)"
+assert_match '^content /run/disk2/snapraid.content$' "$(cat /etc/snapraid.conf)"
+
+t "add --parity escalates parity -> 2-parity, with content copies"
+seed
+mkdir -p /run/parity2
+run_nas snapraid add /run/parity2 --parity
+assert_rc 0
+assert_match '^2-parity /run/parity2/snapraid.2-parity$' "$(cat /etc/snapraid.conf)"
+assert_match '^content /run/parity2/snapraid.content$' "$(cat /etc/snapraid.conf)"
+
+t "add refuses nasdata and duplicates"
+seed
+run_nas snapraid add /mnt/nasdata
+assert_rc 1
+assert_match 'stays OUT of the array' "$OUT"
+run_nas snapraid add /run/disk1
+assert_rc 1
+assert_match 'already in /etc/snapraid.conf' "$OUT"
+
+t "add enforces the two-content invariant (nasdata copy offered)"
+seed
+printf 'data d1 /run/disk1/\n' > /etc/snapraid.conf   # ONE content short
+mkdir -p /run/disk2
+OUT=$(printf 'y\n' | /usr/sbin/nas snapraid add /run/disk2 2>&1); RC=$?
+assert_rc 0
+assert_match 'SECOND content copy' "$OUT"
+assert_match '^content /mnt/nasdata/snapraid.content$' "$(cat /etc/snapraid.conf)"
+seed
+printf 'data d1 /run/disk1/\n' > /etc/snapraid.conf
+OUT=$(printf 'n\n' | /usr/sbin/nas snapraid add /run/disk2 2>&1)
+assert_match 'second content line before the first run' "$OUT"
+assert_nomatch 'content /mnt/nasdata' "$(cat /etc/snapraid.conf)" "declined = not added"
+
 t "unsaved schedule warns (runlevel-honesty pattern)"
 seed
 stub lbu 'echo "M var/spool/cron/crontabs/root"'

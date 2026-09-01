@@ -22,7 +22,8 @@ unset _f
 _cmd_help_for() {
 	case "${1:-}" in
 	status) help_status ;;
-	disks) help_disks ;;
+	disks|disk) help_disks ;;
+	mount) help_mount ;;
 	changes|changed) help_changes ;;
 	rollback) help_rollback ;;
 	backup) help_backup ;;
@@ -86,11 +87,14 @@ case "${1:-help}" in
 			if [ "$dp" = 1 ]; then cmd_status --deep; else cmd_status; fi
 		fi
 		;;
-	disks) shift
+	disks|disk) shift
 		case "${1:-}" in
 			--json) cmd_disks_json ;;
-			*) cmd_disks ;;
+			init) shift; cmd_disks_init "$@" ;;
+			'') cmd_disks ;;
+			*) usage "nas disks [--json | init [device]]"; exit 1 ;;
 		esac ;;
+	mount) shift; cmd_mount "$@" ;;
 	restart) cmd_restart ;;
 	changes|changed) shift; cmd_changes "$@" ;;
 	report) cmd_report ;;

@@ -14,7 +14,17 @@
   command owns ONE generated include file; hand-written smb.conf shares
   are never touched but still listed. Every change is testparm-checked
   before samba sees it and rolls back on a bad parse. Warns when an
-  active firewall blocks Samba. (00b2203)
+  active firewall blocks Samba. (00b2203, 3fca791)
+- **The storage chain: 'nas disk init' + 'nas mount' + 'nas snapraid
+  add'** — a disk goes from shrink-wrap to parity-protected without an
+  editor. init is the ONE destructive command: BLANK disks only (a
+  formatted disk is refused and pointed at 'nas mount' — this tool
+  never automates re-formatting), serial-suffix confirmation, role
+  presets (ext4 inode density for media vs mixed, -m 0 on data/parity).
+  mount adds an already-formatted partition by /dev, UUID, label or
+  serial — append-only against fstab, never the boot USB. snapraid add
+  appends data/content or parity lines and enforces snapraid's own
+  two-content-copies rule. 'nas disk' aliases 'nas disks'.
 - **User-installed services start at every boot.** Their packages install
   mid-boot (after /cfg mounts), so openrc's runlevel walk used to skip
   their not-yet-present init scripts and the service stayed down until a

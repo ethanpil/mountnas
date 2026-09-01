@@ -30,6 +30,12 @@ _snapraid_configured() {
 	grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null
 }
 _snapraid_cronline() { crontab -l 2>/dev/null | grep -F "$SRMARK"; }
+_snapraid_unsaved_conf_warn() {
+	if lbu status 2>/dev/null | grep -q 'etc/snapraid\.conf'; then
+		warn "snapraid.conf change NOT saved — gone after a reboot unless you run: nas commit"
+	fi
+	return 0
+}
 _snapraid_unsaved() {
 	lbu status 2>/dev/null | grep -qE '(cron/crontabs|etc/mountnas/snapraid-maint\.conf)'
 }
@@ -119,6 +125,59 @@ cmd_snapraid() {
 		if _snapraid_unsaved; then
 			warn "not saved — the schedule is gone after a reboot unless you run: nas commit"
 		fi ;;
+	add)
+		# append-only array membership: 'data dN <mnt>' + a content line, or
+		# a parity line — the ONE path that edits the user-owned
+		# /etc/snapraid.conf, offered by 'nas mount'/'nas disk init' too.
+		# The real trap it manages: snapraid refuses to run with fewer than
+		# TWO content copies on different disks — the ≥2-content check below
+		# is the reason this command exists (SPEC-roadmap-4.md §1).
+		local amnt aro adn acnt ans
+		amnt=${2:-}; aro=${3:-}
+		[ -n "$amnt" ] || { usage "nas snapraid add <mountpoint> [--parity]"; return 1; }
+		case "$aro" in ''|--parity) ;; *) usage "nas snapraid add <mountpoint> [--parity]"; return 1 ;; esac
+		amnt=${amnt%/}
+		[ "$amnt" = /mnt/nasdata ] && { bad "/mnt/nasdata stays OUT of the array (the one rule snapraid.conf shouts) — its content COPY is offered below instead"; return 1; }
+		mountpoint -q "$amnt" 2>/dev/null || { bad "$amnt is not a mountpoint — mount it first (nas mount)"; return 1; }
+		grep -qE "[[:space:]]$amnt/?([[:space:]]|$)" /etc/snapraid.conf 2>/dev/null \
+			&& { bad "$amnt is already in /etc/snapraid.conf"; return 1; }
+		[ -f /etc/snapraid.conf ] || : > /etc/snapraid.conf
+		if [ "$aro" = --parity ]; then
+			# escalate: parity -> 2-parity -> ... (the variants the
+			# preflight parses); each parity disk also carries a content copy
+			adn=$(grep -cE '^[[:space:]]*([2-6]-|z-)?parity[[:space:]]' /etc/snapraid.conf)
+			case "$adn" in
+				0) printf 'parity %s/snapraid.parity\n' "$amnt" >> /etc/snapraid.conf
+				   ok "snapraid.conf: + parity $amnt/snapraid.parity" ;;
+				[1-5]) printf '%s-parity %s/snapraid.%s-parity\n' "$((adn + 1))" "$amnt" "$((adn + 1))" >> /etc/snapraid.conf
+				   ok "snapraid.conf: + $((adn + 1))-parity $amnt/snapraid.$((adn + 1))-parity" ;;
+				*) bad "six parity levels already configured"; return 1 ;;
+			esac
+		else
+			adn=1; while grep -qE "^[[:space:]]*data[[:space:]]+d${adn}[[:space:]]" /etc/snapraid.conf; do adn=$((adn + 1)); done
+			printf 'data d%s %s/\n' "$adn" "$amnt" >> /etc/snapraid.conf
+			ok "snapraid.conf: + data d$adn $amnt/"
+		fi
+		printf 'content %s/snapraid.content\n' "$amnt" >> /etc/snapraid.conf
+		ok "snapraid.conf: + content $amnt/snapraid.content"
+		# the ≥2-content invariant: snapraid hard-refuses fewer than two
+		# content copies on different disks. Offer the house convention.
+		acnt=$(grep -cE '^[[:space:]]*content[[:space:]]' /etc/snapraid.conf)
+		if [ "$acnt" -lt 2 ]; then
+			if mountpoint -q /mnt/nasdata 2>/dev/null; then
+				printf 'The array needs a SECOND content copy (snapraid refuses to run with one).\nAdd the usual one on nasdata? [Y/n]: '
+				IFS= read -r ans || ans=""
+				case "$ans" in n|N) warn "add a second content line before the first run, or snapraid refuses" ;;
+					*) printf 'content /mnt/nasdata/snapraid.content\n' >> /etc/snapraid.conf
+					   ok "snapraid.conf: + content /mnt/nasdata/snapraid.content" ;;
+				esac
+			else
+				warn "the array needs a SECOND content copy on another disk before the first run"
+			fi
+		fi
+		hint "parity is not synced yet — run: nas snapraid run"
+		_snapraid_unsaved_conf_warn
+		;;
 	status)
 		case "${2:-}" in ''|--deep) ;; *) usage "nas snapraid status [--deep]"; return 1 ;; esac
 		if ! _snapraid_configured; then
@@ -163,18 +222,22 @@ cmd_snapraid() {
 				tail -n 15 "$(sed -n 's/^log=//p' "$SRMAINT_STATE")" 2>/dev/null | sed 's/^/  /'
 			fi
 		fi ;;
-	*) usage "nas snapraid [run [--force-sync] | schedule [HH:MM|off] | status [--deep]]"; return 1 ;;
+	*) usage "nas snapraid [run [--force-sync] | add <mnt> [--parity] | schedule [HH:MM|off] | status [--deep]]"; return 1 ;;
 	esac
 }
 
 # help page for 'nas snapraid --help' / 'nas help snapraid'
 help_snapraid() {
 	cat <<EOF
-nas snapraid [run [--force-sync] | schedule [HH:MM|off] | status [--deep]]
+nas snapraid [run [--force-sync] | add <mnt> [--parity] | schedule [HH:MM|off] | status [--deep]]
   Gated SnapRAID maintenance. A bare cron 'snapraid sync' would write a
   mass deletion (ransomware, a fat-fingered rm) INTO parity; this refuses
   to sync past the thresholds, refuses to run with a disk unmounted, and
   scrubs a slice of old blocks after each clean sync.
+  add <mnt>     append the array lines for a mounted disk: 'data dN' +
+                its content copy (--parity: the next parity level). Also
+                enforces snapraid's two-content-copies rule. Append-only;
+                removal stays a documented manual procedure.
   run           sync + scrub now. --force-sync skips the threshold gate
                 for one run (every other protection still applies).
   schedule      write the nightly cron line (default 02:00); 'off' removes

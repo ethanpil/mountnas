@@ -12,14 +12,14 @@ _nas_complete() {
 	case "$prev" in
 	# command list: keep in sync with the dispatcher in files/nas AND the zsh
 	# compdef (files/zsh-nas-completion)
-	nas)             COMPREPLY=($(compgen -W "setup status disks restart changes changed commit save rollback backup logs log web ttyd snapraid share shares history notify report shutdown reboot upgrade version about help" -- "$cur")) ;;
+	nas)             COMPREPLY=($(compgen -W "setup status disks disk mount restart changes changed commit save rollback backup logs log web ttyd snapraid share shares history notify report shutdown reboot upgrade version about help" -- "$cur")) ;;
 	status)          COMPREPLY=($(compgen -W "--deep --json" -- "$cur")) ;;
 	web|ttyd)        COMPREPLY=($(compgen -W "on off status" -- "$cur")) ;;
-	snapraid)        COMPREPLY=($(compgen -W "run schedule status" -- "$cur")) ;;
+	snapraid)        COMPREPLY=($(compgen -W "run add schedule status" -- "$cur")) ;;
 	share|shares)    COMPREPLY=($(compgen -W "list add remove delete allow revoke user users" -- "$cur")) ;;
 	history)         COMPREPLY=($(compgen -W "-n --all" -- "$cur")) ;;
 	notify)          COMPREPLY=($(compgen -W "--test" -- "$cur")) ;;
-	disks)           COMPREPLY=($(compgen -W "--json" -- "$cur")) ;;
+	disks|disk)      COMPREPLY=($(compgen -W "--json init" -- "$cur")) ;;
 	changes|changed) COMPREPLY=($(compgen -W "--diff" -- "$cur")) ;;
 	commit|save)     COMPREPLY=($(compgen -W "-m" -- "$cur")) ;;
 	rollback)        COMPREPLY=($(compgen -W "--list" -- "$cur")) ;;
@@ -29,7 +29,7 @@ _nas_complete() {
 	--persist)       COMPREPLY=($(compgen -W "on off status" -- "$cur")) ;;
 	upgrade)         COMPREPLY=($(compgen -W "--check --yes" -- "$cur") $(compgen -f -- "$cur")) ;;
 	reboot|shutdown) COMPREPLY=($(compgen -W "--yes --save" -- "$cur")) ;;
-	help)            COMPREPLY=($(compgen -W "setup status disks restart changes commit save rollback backup logs log web ttyd snapraid share history notify report shutdown reboot upgrade version about" -- "$cur")) ;;
+	help)            COMPREPLY=($(compgen -W "setup status disks mount restart changes commit save rollback backup logs log web ttyd snapraid share history notify report shutdown reboot upgrade version about" -- "$cur")) ;;
 	esac
 }
 complete -F _nas_complete nas

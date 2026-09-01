@@ -173,10 +173,135 @@ cmd_disks_json() {
 # help page for 'nas disks --help' / 'nas help disks'
 help_disks() {
 	cat <<EOF
-nas disks [--json]
+nas disks [--json | init [device]]   (alias: nas disk)
   Every disk with identity (model/serial/bus/temp), partitions (fstype,
   label, UUID, mountpoint, free space), fstab state, and a paste-ready
   fstab line per unconfigured partition. Never wakes sleeping disks.
   --json   same inventory, machine-readable (byte sizes)
+  init     guided format of a BLANK disk (role, filesystem, inode
+           density), then fstab + mount + a SnapRAID offer. Refuses any
+           disk with partitions or signatures — formatting a used disk
+           stays a by-hand act; add formatted disks with 'nas mount'.
+           Confirms with the disk serial's last 4 characters.
 EOF
+}
+
+# nas disk init — THE one destructive command: format a BLANK disk, then
+# chain into the mount flow (cmd/mount.sh). A disk with any partition or
+# filesystem signature is refused outright — no --force exists; formatting a
+# used disk stays a deliberate by-hand act (wipefs -a, then rerun). This
+# tool never automates re-formatting an already-partitioned disk.
+# Design record: SPEC-roadmap-4.md §1 (incl. the cmkfs-precedent overrule).
+_disks_blank() {   # TSV of blank whole disks: name size serial model
+	lsblk -Jbo NAME,TYPE,SIZE,SERIAL,MODEL,FSTYPE 2>/dev/null | jq -r '
+		def s(f): (f // "-") | tostring;
+		.blockdevices[] | select(.type=="disk")
+		| select(.name | test("^(fd|sr|loop|ram|zram)") | not)
+		| select((.children | length // 0) == 0) | select(.fstype == null)
+		| [.name, s(.size), s(.serial), s(.model)] | @tsv'
+}
+cmd_disks_init() {
+	local dev size serial model role fstype contents mkfs_opts mp lbl ans part n line sel
+	dev=${1:-}
+	if [ -z "$dev" ]; then
+		hdr "BLANK disks (no partitions, no filesystem signatures)"
+		line=$(_disks_blank)
+		[ -n "$line" ] || { hint "none — an already-formatted disk is added with: nas mount"; return 0; }
+		n=0
+		printf '%s\n' "$line" | while IFS="$(printf '\t')" read -r d s ser mod; do
+			n=$((n + 1))
+			printf '  [%d] /dev/%-8s %10s  %s  (serial %s)\n' "$n" "$d" "$(_hum_b "$s")" "$mod" "$ser"
+		done
+		printf 'Which one? [1-%s]: ' "$(printf '%s\n' "$line" | grep -c .)"
+		IFS= read -r sel || sel=""
+		case "$sel" in ''|*[!0-9]*) echo "Cancelled."; return 1 ;; esac
+		dev=/dev/$(printf '%s\n' "$line" | awk -v x="$sel" 'NR==x{print $1}')
+		[ "$dev" != /dev/ ] || { bad "no disk $sel"; return 1; }
+	fi
+	[ -b "$dev" ] || { bad "$dev is not a block device"; return 1; }
+	[ "$(lsblk -no pkname "$dev" 2>/dev/null | head -n1)" = "" ] \
+		|| { bad "$dev is a partition — name the whole disk (e.g. ${dev%[0-9]*})"; return 1; }
+	[ "$(lsblk -no name "$dev" 2>/dev/null | head -n1)" = "$(_boot_usb_disk)" ] \
+		&& { bad "$dev is the BOOT USB"; return 1; }
+	# BLANK means blank: any partition table or filesystem signature refuses
+	if [ -n "$(lsblk -no fstype "$dev" 2>/dev/null | grep .)" ] \
+		|| [ "$(lsblk -no name "$dev" 2>/dev/null | grep -c .)" -gt 1 ] \
+		|| wipefs -n "$dev" 2>/dev/null | grep -q .; then
+		bad "$dev is NOT blank — this tool never automates formatting a"
+		bad "partitioned disk; that stays a deliberate by-hand act."
+		hint "already formatted and you want to USE it:   nas mount $dev"
+		hint "sure you want it ERASED: wipe it yourself (wipefs -a $dev,"
+		hint "after checking twice), then rerun: nas disk init $dev"
+		return 1
+	fi
+	serial=$(lsblk -dno serial "$dev" 2>/dev/null | tr -d ' ')
+	model=$(lsblk -dno model "$dev" 2>/dev/null)
+	size=$(lsblk -dbno size "$dev" 2>/dev/null)
+	printf '%s: %s  %s — BLANK (no partitions, no signatures)\n' "$dev" "${model:-?}" "$(_hum_b "${size:-0}")"
+	printf 'Role?\n  [1] nasdata   the system disk (Docker, appdata, backups) — required once\n'
+	printf '  [2] data      a storage disk (pool / SnapRAID array)\n'
+	printf '  [3] parity    a SnapRAID parity disk\n: '
+	IFS= read -r role || role=""
+	case "$role" in
+		1) awk '$1!~/^#/ && $2=="/mnt/nasdata"{f=1} END{exit !f}' /etc/fstab \
+			&& { bad "fstab already maps /mnt/nasdata"; return 1; }
+		   mp=/mnt/nasdata; lbl=nasdata ;;
+		2) n=1; while awk -v m="/mnt/disk$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
+		   mp=/mnt/disk$n; lbl=disk$n ;;
+		3) n=1; while awk -v m="/mnt/parity$n" '$1!~/^#/ && $2==m{f=1} END{exit !f}' /etc/fstab; do n=$((n+1)); done
+		   mp=/mnt/parity$n; lbl=parity$n ;;
+		*) echo "Cancelled."; return 1 ;;
+	esac
+	printf 'Filesystem [ext4/xfs, default ext4]: '
+	IFS= read -r fstype || fstype=""
+	case "$fstype" in '') fstype=ext4 ;; ext4|xfs) ;; *) bad "ext4 or xfs"; return 1 ;; esac
+	mkfs_opts=""
+	if [ "$fstype" = ext4 ]; then
+		if [ "$role" = 3 ]; then
+			contents=1   # parity is one huge file — large-file inode density
+		else
+			printf 'Contents?  (sets the ext4 inode density — xfs allocates dynamically)\n'
+			printf '  [1] mostly large files   videos, backups, disk images  (1 inode / 1 MB)\n'
+			printf '  [2] mixed or small files photos, music, documents      (mkfs default)\n: '
+			IFS= read -r contents || contents=""
+		fi
+		[ "$contents" = 1 ] && mkfs_opts="-i 1048576"
+		# ext4 reserves 5%% for root BY DEFAULT — ~200 GB dead on a 4 TB data
+		# disk. nasdata keeps 1%%: it hosts Docker and logs, and a hard-full
+		# nasdata is the failure the reserve softens.
+		if [ "$role" = 1 ]; then mkfs_opts="$mkfs_opts -m 1"; else mkfs_opts="$mkfs_opts -m 0"; fi
+	fi
+	echo "Plan: GPT, one partition, mkfs.$fstype -L $lbl ${mkfs_opts# }"
+	echo "      then fstab -> $mp and a mount via the supervisor"
+	printf 'This ERASES %s (serial %s).\nType the LAST 4 characters of the serial to continue: ' "$dev" "${serial:-unknown}"
+	IFS= read -r ans || ans=""
+	if [ -z "$serial" ] || [ ${#serial} -lt 4 ]; then
+		# no usable serial (some USB bridges): fall back to typing the device
+		[ "$ans" = "$dev" ] || { bad "no serial available — type the full device path ($dev) to confirm"; return 1; }
+	else
+		[ "$ans" = "$(printf '%s' "$serial" | tail -c 4)" ] || { echo "Mismatch — nothing was written."; return 1; }
+	fi
+	parted -s "$dev" mklabel gpt mkpart primary 1MiB 100% >/dev/null 2>&1 \
+		|| { bad "partitioning failed (parted)"; return 1; }
+	# the kernel needs a beat to publish the new partition node
+	command -v partprobe >/dev/null 2>&1 && partprobe "$dev" >/dev/null 2>&1
+	part=$(lsblk -rno name "$dev" 2>/dev/null | sed -n 2p)
+	n=0; while [ -z "$part" ] && [ $n -lt 10 ]; do sleep 0.3; n=$((n+1)); part=$(lsblk -rno name "$dev" 2>/dev/null | sed -n 2p); done
+	[ -n "$part" ] || { bad "new partition did not appear"; return 1; }
+	part=/dev/$part
+	# shellcheck disable=SC2086  # mkfs_opts is a flag list by construction
+	if [ "$fstype" = ext4 ]; then
+		mkfs.ext4 -Fq -L "$lbl" $mkfs_opts "$part" >/dev/null 2>&1 || { bad "mkfs.ext4 failed"; return 1; }
+	else
+		mkfs.xfs -fq -L "$lbl" "$part" >/dev/null 2>&1 || { bad "mkfs.xfs failed"; return 1; }
+	fi
+	ok "partitioned + formatted (label $lbl)"
+	_ops_log disks "init $dev -> $lbl ($fstype)"
+	_mount_flow "$part"
+}
+# bytes -> human, local to the init flow (lsblk -b gives bytes)
+_hum_b() {
+	awk -v b="${1:-0}" 'BEGIN{ if (b>=1099511627776) printf "%.1f TB", b/1099511627776;
+		else if (b>=1073741824) printf "%.1f GB", b/1073741824;
+		else printf "%.0f MB", b/1048576 }'
 }

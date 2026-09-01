@@ -14,8 +14,8 @@ Get your system running by following these steps:
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
 * Complete the automatic `nas setup` wizard (it starts by itself at your first login) to set the hostname, root password, timezone, and network.
 * Identify your attached storage volumes and their respective identifiers by running `nas disks`.
-* Partition and format blank data disks using tools such as `cfdisk` or `mkfs` or other [baked in tools](#baked-in-packages).
-* Register your primary storage disk in `/etc/fstab` mapping to the explicit path `/mnt/nasdata` where application data, Docker structures, and configuration backups will live.
+* Prepare your disks: `nas disk init` guides you through formatting a BLANK disk (role, filesystem, ext4 inode density, fstab, mount) with a serial-number confirmation before anything is written; `nas mount` adds an already-formatted disk. Prefer doing it by hand? `cfdisk`/`mkfs` and every other [baked in tool](#baked-in-packages) still work exactly as before.
+* Register your primary storage disk in `/etc/fstab` mapping to the explicit path `/mnt/nasdata` where application data, Docker structures, and configuration backups will live (`nas disk init` and `nas mount` write these lines for you; hand-editing works the same as ever).
 * Register any other storage in `/etc/fstab` as well.
 * Test your configuration logic by running `nas status` to ensure no errors exist in your file system definitions.
 * Initialize your storage attachment and start dependent services without a system restart by executing `rc-service mountnas restart`.
@@ -124,6 +124,7 @@ all included with the kernel; it's only these device-firmware blobs that are cur
 * Mount your parity disks in `/etc/fstab` just like any other disk.
 * Configure `/etc/snapraid.conf`
   * Keep `/mnt/nasdata` out of the array
+* (Disks prepared with `nas disk init`/`nas mount` are OFFERED into the array automatically — `nas snapraid add <mnt> [--parity]` does the same by hand, including the second content copy snapraid requires.)
 * Run the first sync, then schedule nightly maintenance:
 
 ```text

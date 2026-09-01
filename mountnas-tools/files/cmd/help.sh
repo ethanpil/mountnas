@@ -20,6 +20,7 @@ ${C_HD}Everyday${C_NO}
   ${C_B}web${C_NO} / ${C_B}ttyd${C_NO} Dashboard + guide / browser terminal  [on [port]|off|status]
   ${C_B}snapraid${C_NO}  Gated parity sync + scrub    [run|schedule [HH:MM|off]|status]
   ${C_B}share${C_NO}     Samba shares + users        [list|add|remove|allow|user...]
+  ${C_B}mount${C_NO}     Add a formatted disk to fstab + mount it        [disk]
 
 ${C_HD}Recover${C_NO}
   ${C_B}rollback${C_NO}  Revert to a previous committed config        [--list | <n>]
