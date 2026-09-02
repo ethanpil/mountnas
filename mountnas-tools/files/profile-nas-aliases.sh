@@ -14,9 +14,22 @@ case $- in *i*)
 	# added in a future release is covered here with no edit. Interactive
 	# shells only — scripts, doas and 'command rc-update' are untouched.
 	rc-update() {
-		local ds hit a s
+		local ds hit a s dsov
 		ds=$(sed -n 's/.*DATA_SERVICES-\([^}]*\)}.*/\1/p' /etc/init.d/mountnas 2>/dev/null | head -n1)
 		[ -n "$ds" ] || ds="docker samba nfs"
+		# The ACTIVE set, not just the built-in default. A service the user
+		# removed from DATA_SERVICES is no longer supervisor-owned, and putting
+		# it in a runlevel is then their ONLY remaining way to run it — which
+		# is exactly what nas status documents and stops flagging. Guarding it
+		# here blocked that escape hatch and printed advice that was both false
+		# ("it starts on its own") and circular ("set DATA_SERVICES=").
+		# The '=' sentinel separates "set to empty" (meaningful: no data
+		# services) from "file absent or died", where the default must stand.
+		dsov=$( . /etc/conf.d/mountnas 2>/dev/null; printf '=%s' "${DATA_SERVICES-__unset__}" )
+		case "$dsov" in
+			"=__unset__"|"") ;;
+			"="*) ds=${dsov#=} ;;
+		esac
 		hit=""
 		# only add/del are wrong for these; 'show' and every other service
 		# must pass straight through

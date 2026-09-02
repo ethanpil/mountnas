@@ -10,7 +10,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate srv srd
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -249,7 +249,19 @@ cmd_status() {
 		done
 	fi
 	# docker data-root: config points under $DATA, but only OK once the disk is mounted
-	dr=$(awk -F'"' '/data-root/{print $4}' /etc/docker/daemon.json 2>/dev/null)
+	# jq, never a quote-position awk. The old '-F"' with $4 read the wrong field
+	# as soon as any other quoted pair preceded data-root on the same line —
+	# {"log-level":"warn","data-root":"/mnt/nasdata/docker"} yielded "warn" —
+	# and then FAILed a correctly configured box, flipping nas status to exit 1
+	# for every cron and monitoring probe. jq is a declared hard dependency.
+	dr=""
+	if [ -s /etc/docker/daemon.json ]; then
+		if jq -e . /etc/docker/daemon.json >/dev/null 2>&1; then
+			dr=$(jq -r '."data-root" // empty' /etc/docker/daemon.json 2>/dev/null)
+		else
+			bad "/etc/docker/daemon.json is not valid JSON — Docker will refuse to start"
+		fi
+	fi
 	if [ -n "$dr" ]; then
 		if [ "${dr#"$DATA"}" != "$dr" ]; then
 			[ "$(cat $STATE/data 2>/dev/null)" = ok ] \

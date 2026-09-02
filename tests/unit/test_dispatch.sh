@@ -19,14 +19,28 @@ assert_match '^nas status \[--deep\|--json\]' "$OUT"
 [ ! -e /tmp/ran ] || fail "status ran despite --help"
 
 t "every mapped topic has a page (nas help <topic>)"
-for topic in status disks changes changed rollback backup logs log upgrade shutdown \
-	reboot setup version about commit save restart report web ttyd snapraid history notify; do
+# EVERY alias belongs in this list. 'disk' and 'shares' were missing, and both
+# were broken: _cmd_help_for kept a second, partial alias map for its existence
+# re-check, so those two printed their page and THEN returned 1 — the caller
+# read that as an unknown topic and dumped the whole overview underneath.
+for topic in status disks disk mount changes changed rollback backup logs log upgrade shutdown \
+	reboot setup version about commit save restart report web ttyd snapraid share shares history notify; do
 	run_nas help "$topic"
 	[ "$RC" = 0 ] || fail "help $topic: rc=$RC"
 	case "$topic" in
-		changed) want=changes ;; log) want=logs ;; save) want=commit ;; *) want=$topic ;;
+		disk) want=disks ;; changed) want=changes ;; log) want=logs ;;
+		save) want=commit ;; shares) want=share ;; *) want=$topic ;;
 	esac
 	assert_match "^nas $want" "$OUT" "help $topic"
+	# the page ALONE — never the overview printed on top of it
+	assert_nomatch '^Everyday' "$OUT" "help $topic printed the overview too"
+done
+
+t "an aliased <cmd> --help prints the page only, and exits 0"
+for topic in disk shares changed log save reboot; do
+	run_nas "$topic" --help
+	[ "$RC" = 0 ] || fail "$topic --help: rc=$RC"
+	assert_nomatch '^Everyday' "$OUT" "$topic --help printed the overview too"
 done
 
 t "nas help <typo> fails with the command list"

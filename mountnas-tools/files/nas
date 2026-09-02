@@ -20,26 +20,40 @@ unset _f
 # help_<cmd> function next to its command in cmd/<name>.sh; this maps the
 # command names and aliases onto them.
 _cmd_help_for() {
+	# ONE alias -> canonical map, applied BEFORE the dispatch below. There used
+	# to be a SECOND, partial copy of this map after the dispatch (for the
+	# existence re-check), and that copy was missing 'disk' and 'shares': both
+	# printed their page and THEN returned 1, so the caller treated a known
+	# topic as unknown, printed the entire overview on top of the page, and
+	# exited nonzero. 'reboot' is handled at the check instead — help_shutdown
+	# prints the verb it is given, so it must still see the original word.
+	case "${1:-}" in
+	disk)    set -- disks ;;
+	changed) set -- changes ;;
+	log)     set -- logs ;;
+	save)    set -- commit ;;
+	shares)  set -- share ;;
+	esac
 	case "${1:-}" in
 	status) help_status ;;
-	disks|disk) help_disks ;;
+	disks) help_disks ;;
 	mount) help_mount ;;
-	changes|changed) help_changes ;;
+	changes) help_changes ;;
 	rollback) help_rollback ;;
 	backup) help_backup ;;
-	logs|log) help_logs ;;
+	logs) help_logs ;;
 	upgrade) help_upgrade ;;
 	shutdown|reboot) help_shutdown "$1" ;;
 	setup) help_setup ;;
 	version) help_version ;;
 	about) help_about ;;
-	commit|save) help_commit ;;
+	commit) help_commit ;;
 	restart) help_restart ;;
 	report) help_report ;;
 	web) help_web ;;
 	ttyd) help_ttyd ;;
 	snapraid) help_snapraid ;;
-	share|shares) help_share ;;
+	share) help_share ;;
 	history) help_history ;;
 	notify) help_notify ;;
 	*) return 1 ;;
@@ -48,11 +62,10 @@ _cmd_help_for() {
 	# name can be MISSING (a partial install, an interrupted upgrade). Report
 	# that like an unknown topic instead of reporting success: 'nas help X'
 	# used to exit 0 while ash printed 'help_X: not found' to stderr.
-	command -v "help_$1" >/dev/null 2>&1 || {
-		case "$1" in changed) set -- changes ;; log) set -- logs ;;
-			save) set -- commit ;; reboot) set -- shutdown ;; esac
-		command -v "help_$1" >/dev/null 2>&1 || return 1
-	}
+	# The topic name IS its function name after the alias map above, with
+	# 'reboot' the one exception (its page is help_shutdown).
+	case "${1:-}" in reboot) set -- shutdown ;; esac
+	command -v "help_$1" >/dev/null 2>&1 || return 1
 	# 0 for every known topic, as before the split: the status of the page
 	# itself (a failed write to a closed stdout) must not read as 'no such
 	# topic' and print the overview on top of the failure.
