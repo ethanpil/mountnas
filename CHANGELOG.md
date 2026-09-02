@@ -50,6 +50,15 @@
   && rc-update add tailscale default && rc-service tailscale start &&
   tailscale up && nas commit'. The docs cover Tailscale, ZeroTier and
   NetBird. WireGuard stays baked in.
+- **Pre-release compatibility shims are gone.** No public box ever ran the
+  seeds they served. The supervisor no longer migrates the alpha-era
+  `/etc/lbu/{include,exclude}` files, and no longer re-adds ufw and
+  zram-init to the boot runlevel for boxes upgraded from before rc.base
+  shipped. The `/etc/mountnas/alert-email` file is neither seeded nor
+  read: `/etc/mountnas/notify.conf` is the one place for alert sinks
+  (an `email:` line does the same job). UPGRADE.md drops the
+  alpha-1/2/3 reflash procedure. Two QEMU tests that covered the shims
+  are removed (suite: 87 tests).
 
 ### Changed
 - **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
