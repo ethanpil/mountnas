@@ -1,7 +1,8 @@
 # SPEC: four differentiation features
 
-Status: DRAFT for review. Not implemented. Order of build: §3 (config
-mirror) → §2 (shares) → §1 (disks init) → §4 (doc generation). Each is
+Status: §1 (storage chain), §2 (`nas share`) and §3 (config mirror) are
+IMPLEMENTED — see CHANGELOG "Unreleased". §4 (doc generation) is NOT
+implemented. Order of build was §3 → §2 → §1 → §4. Each is
 its own change set with its own spec-review-test cycle; this document is
 the shared design record. Maintainer notes from 2026-08-26 are folded in
 and marked **[note]**.

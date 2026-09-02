@@ -1,6 +1,7 @@
 # SPEC: snapraid-maint — scheduled SnapRAID maintenance
 
-Status: DRAFT for review. Not implemented.
+Status: IMPLEMENTED (2026-08-25, `nas snapraid` + `snapraid-maint`). Kept as
+the design record; CONTEXT.md §11 has the short version.
 Provenance: the step order and the safety model follow Zack Reed's
 "Modern SnapRAID Maintenance Script" (v2.2.0, 2026-07-14). The code is
 original. We do not copy the script (no license).

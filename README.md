@@ -8,7 +8,7 @@ MountNAS is intended for power users, comfortable around a Linux system and comm
 
 Get your system running by following these steps:
 
-* Hardware: any x86_64 box with **4 GB+ RAM — this is a floor, not a suggestion.** The OS and every package unpack into a RAM filesystem at each boot, and that filesystem is capped at half your RAM, so a 2 GB box cannot fit the system no matter how much swap it has. Compressed zram swap (on by default) buys headroom *above* the floor — it keeps a 4 GB box comfortable under Docker load — but it cannot lower it. The console warns at boot when RAM is below 4 GB.
+* Hardware: any x86_64 box with **4 GB+ RAM — this is a floor, not a suggestion.** The OS and every package unpack into a RAM filesystem at each boot, and that filesystem is capped at half your RAM, so a 2 GB box cannot fit the system no matter how much swap it has. Compressed zram swap (on by default) buys headroom *above* the floor — it keeps a 4 GB box comfortable under Docker load — but it cannot lower it. The console warns at boot when RAM is below 4 GB. Boots under legacy BIOS and UEFI; **Secure Boot must be off** (the boot loader is unsigned).
 * Download a MountNAS release from GitHub:`mountnas-<tag>.img.gz`
 * Write the image to a flash drive (min. 4 GB) using `gunzip -c mountnas-<tag>.img.gz | sudo dd of=/dev/sdX bs=4M status=progress` or a graphical utility like [Etcher](https://etcher.balena.io/).
 * Boot your hardware from the flash drive and log in to the console as the `root` user with no password.
@@ -97,6 +97,12 @@ package snapshot. After installing, run `nas commit` — the downloaded packages
 cached on the config partition and reinstall automatically at every boot, even with
 no network. `nas upgrade` preserves your added packages and re-pins the repository
 version to match the new release.
+
+**Packages you add persist. Upgrades of shipped packages do not.** `apk upgrade`
+works for the running session, but the next boot installs the shipped package set
+from the USB again, and the boot-time world sync never replaces an installed package.
+Newer versions of Samba, Docker, OpenSSH and the rest reach a box through
+`nas upgrade` to a newer release.
 
 ### Adding firmware for other hardware
 

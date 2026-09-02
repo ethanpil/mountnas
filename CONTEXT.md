@@ -501,7 +501,7 @@ node identity across reboots.
 
 ## 8. What's verified vs. open
 
-**Verified (all in CI, per release):** full build assembles; all 6 local apks
+**Verified (all in CI, per release):** full build assembles; all 3 local apks
 build & sign; boot-to-login under SeaBIOS and OVMF; the first-install story
 end-to-end (wizard, storage registration, docker/samba gating, commit, reboot
 persistence — supervisor smoke test); a real in-place upgrade from the previous

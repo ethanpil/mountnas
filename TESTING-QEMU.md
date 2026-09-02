@@ -2,7 +2,7 @@
 
 This document covers the self-hosted QEMU test suite in `tests/qemu/`:
 what hardware/VM you need, how to run it on a freshly installed Alpine
-Linux system, how to read the results, and **what every one of the 85
+Linux system, how to read the results, and **what every one of the 89
 tests actually verifies**.
 
 The suite complements — it does not replace — the blocking CI smoke tests
@@ -222,7 +222,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (85 tests)
+## 4. The complete test catalog (89 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·

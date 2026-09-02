@@ -23,16 +23,6 @@
   their not-yet-present init scripts and the service stayed down until a
   manual start. The supervisor now starts exactly the services its world
   re-sync makes startable.
-
-### Removed
-- **Mesh VPNs are no longer baked in** (tailscale, zerotier-one — and the
-  local zerotier APKBUILD). Install the one you use instead; it persists
-  and now starts at every boot: e.g. 'apk add tailscale tailscale-openrc
-  && rc-update add tailscale default && rc-service tailscale start &&
-  tailscale up && nas commit'. The docs cover Tailscale, ZeroTier and
-  NetBird. WireGuard stays baked in.
-
-### Added
 - **`nas snapraid` — gated parity maintenance** (SPEC-snapraid-maint.md).
   `run` refuses to sync past the delete/update thresholds (the ransomware
   and fat-finger guard; a blocked sync leaves parity able to restore the
@@ -44,12 +34,13 @@
   Thresholds: `/etc/mountnas/snapraid-maint.conf`; history:
   `/mnt/nasdata/snapraid/logs`.
 
-### Fixed
-- smartd no longer crash-loops on a box with no SMART-capable device (USB
-  enclosures, VMs): the seeded /etc/conf.d/smartd sets '-q never', so the
-  daemon stays up and idle instead of exiting. Boxes that upgraded keep
-  their existing conf.d; add the line by hand if the syslog shows
-  "smartd ... status: crashed".
+### Removed
+- **Mesh VPNs are no longer baked in** (tailscale, zerotier-one — and the
+  local zerotier APKBUILD). Install the one you use instead; it persists
+  and now starts at every boot: e.g. 'apk add tailscale tailscale-openrc
+  && rc-update add tailscale default && rc-service tailscale start &&
+  tailscale up && nas commit'. The docs cover Tailscale, ZeroTier and
+  NetBird. WireGuard stays baked in.
 
 ### Changed
 - **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
@@ -62,6 +53,11 @@
   function-local everywhere else, so those five read like locals. (8759fd5)
 
 ### Fixed
+- smartd no longer crash-loops on a box with no SMART-capable device (USB
+  enclosures, VMs): the seeded /etc/conf.d/smartd sets '-q never', so the
+  daemon stays up and idle instead of exiting. Boxes that upgraded keep
+  their existing conf.d; add the line by hand if the syslog shows
+  "smartd ... status: crashed".
 - A known `nas help <topic>` returns 0 again. The split made it return the
   status of the page, so an unwritable stdout printed the whole overview on
   top of the failure. (6fa27d5)
@@ -69,6 +65,16 @@
   (6fa27d5)
 - `nas help <topic>` reports a missing help page instead of exiting 0.
   (095be9e)
+
+### Docs
+- README states the persistence rule: packages you add persist, upgrades
+  of shipped packages do not (the boot-time world sync never replaces an
+  installed package). README states that Secure Boot must be off.
+- Stale counts and statuses corrected: the QEMU suite has 89 tests, not
+  85 (TESTING-QEMU.md); three local apks, not six (CONTEXT.md §8); both
+  SPEC files now say what is implemented. The built-in guide no longer
+  lists tailscale and zerotier-one as baked in. README-simple.md, an
+  unfinished draft that still described the removed mesh VPNs, is gone.
 
 ### Testing
 - **Unit tests for the CLI** under busybox ash: `tests/unit/`, 66 cases, run
