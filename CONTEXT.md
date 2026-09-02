@@ -9,9 +9,15 @@ that will silently regress if "cleaned up" without understanding it.
 
 ---
 
-## 1. Status at a glance (as of 1.0rc9, 2026-08-26)
+## 1. Status at a glance (as of 1.0, 2026-09-02)
 
-- **Build: GREEN, releases through 1.0rc9 published.** The workflow assembles
+- **1.0 is out.** The 30-finding max-effort review before it fixed two paths
+  that could write a mass deletion into parity, a notify.conf shape that
+  silently dropped every alert, an upgrade that reported success after a
+  failed save, a supervisor that could serve an empty share from its own
+  failure placeholder, and an unbounded walk that hung `nas status`.
+  Validated on 1.0rc10: 89/89 QEMU tests under KVM, all build gates green.
+- **Build: GREEN, releases through 1.0 published.** The workflow assembles
   everything end-to-end: 3 local apks (mountnas-tools, snapraid, mergerfs),
   `mkimage` ISO, single-slot 3.5 GiB `.img.gz` (~1 GB compressed). Signing key is a fixed secret since alpha-7
   (§6) — the published `.rsa.pub` is a stable trust anchor now.

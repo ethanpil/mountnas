@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [1.0] — 2026-09-02
+
+**First stable release.** Validated on 1.0rc10: the full QEMU suite passed
+89 of 89 under KVM, and the build gates (boot under both firmwares, the
+supervisor smoke test, and a real in-place upgrade from the previous
+release) all passed.
 
 ### Added
 - **Upgrades deliver newly seeded /etc files.** A release can add a
