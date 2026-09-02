@@ -20,8 +20,14 @@ CURL="curl -fsS --max-time 10"
 log() { printf '%s notify: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
 
 # Active sinks = the non-comment notify.conf lines, deduped.
+# Trim BOTH ends. The shipped template indents every example ('#   ntfy:...'),
+# so the natural edit — delete the '#' — leaves leading spaces, and the
+# delivery loop below reads with IFS= (which does NOT trim). The sink type
+# then parsed as '   ntfy', every alert was dropped as an unknown type, and
+# nas status still counted the line and reported alerting healthy.
 _sinks() {
-	sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$CONF" 2>/dev/null | sort -u
+	sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' \
+		"$CONF" 2>/dev/null | sort -u
 }
 
 if [ "${1:-}" = "--list" ]; then _sinks; exit 0; fi
@@ -50,7 +56,11 @@ while IFS= read -r sink; do
 			log "email sink $target skipped: mail(1) unavailable (configure msmtp)"; rc=1
 		fi ;;
 	ntfy)
-		$CURL -H "Title: $subj" --data-binary "$body" "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
+		# body on STDIN with @-, never as an argument value: curl reads a
+		# leading '@' in --data-binary as "upload this local file", so an
+		# alert whose text began with '@' was dropped (and '<' would have
+		# sent the contents of a local file to the sink instead).
+		printf '%s' "$body" | $CURL -H "Title: $subj" --data-binary @- "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
 	webhook)
 		jq -n --arg t "$subj" --arg m "$body" --arg h "$(hostname)" \
 			'{title:$t, message:$m, host:$h}' \
@@ -64,7 +74,9 @@ while IFS= read -r sink; do
 			'{content:("**\($t)**\n\($m)")}' \
 			| $CURL -H 'Content-Type: application/json' --data-binary @- "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
 	gotify)
-		$CURL -F "title=$subj" -F "message=$body" "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
+		# 'message=<-' reads the value from stdin — same reason as ntfy above:
+		# in -F, a leading '@' means upload a file and '<' means read one.
+		printf '%s' "$body" | $CURL -F "title=$subj" -F "message=<-" "$target" >/dev/null 2>>"$LOG" || rc=1 ;;
 	*)
 		log "unknown sink type '$kind' in $CONF — skipped"; rc=1 ;;
 	esac

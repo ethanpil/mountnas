@@ -40,11 +40,15 @@ class ReceivedMail:
         return str(msg.get_payload())
 
 
-def configure_guest_msmtp(guest, port: int) -> None:
+def configure_guest_msmtp(guest, port: int,
+                          alert_email: str = "alerts@test.local") -> None:
     """Point the guest's mail pipeline at the host-side sink (10.0.2.2).
 
     Overwrites /etc/msmtprc with a plaintext no-auth account (the shipped
-    file is a commented template).
+    file is a commented template) and registers an email sink in
+    notify.conf, which is the only sink source the notify helper reads.
+    Without the sink every alert is a silent no-op, so the fault-injection
+    tests that assert on a disk-loss alert would wait for mail forever.
     """
     guest.run(
         "cat > /etc/msmtprc <<'EOF'\n"
@@ -59,6 +63,8 @@ def configure_guest_msmtp(guest, port: int) -> None:
         "chmod 600 /etc/msmtprc",
         check=True,
     )
+    guest.run(f"printf '%s\\n' 'email:{alert_email}' > /etc/mountnas/notify.conf",
+              check=True)
 
 
 class _Handler(socketserver.StreamRequestHandler):

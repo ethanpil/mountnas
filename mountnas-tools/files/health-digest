@@ -11,8 +11,16 @@ NOTIFY=/usr/libexec/mountnas/notify
 [ -n "$("$NOTIFY" --list 2>/dev/null)" ] || exit 0
 
 st=$(NO_COLOR=1 nas status 2>&1); rc=$?
+# The verdict comes from the STRUCTURED records, never from the human text.
+# cmd_status_json renders from those records precisely so the display format
+# stays free to change; grepping '[WARN]' out of the printed lines meant a
+# retag, a recolour or a reflow would silently make every digest report OK on
+# a box full of warnings. --json re-runs the same fast checks (no disk wake),
+# which is an acceptable cost for a weekly, opt-in job.
+warns=$(nas status --json 2>/dev/null | jq -r '.checks.warn // 0' 2>/dev/null)
+case "$warns" in ''|*[!0-9]*) warns=0 ;; esac
 if [ "$rc" -ge 1 ]; then verdict="FAIL"
-elif printf '%s' "$st" | grep -q '\[WARN\]'; then verdict="warnings"
+elif [ "$warns" -gt 0 ]; then verdict="warnings"
 else verdict="OK"; fi
 
 recent=$(tail -n 5 /cfg/mountnas-ops.log 2>/dev/null | awk -F'\t' '{ printf "  %s  %-10s %s\n", $1, $2, $4 }')
