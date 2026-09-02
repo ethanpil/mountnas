@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- **Upgrades deliver newly seeded /etc files.** A release can add a
+  config file and boxes that upgrade now receive it, create-if-absent.
+  Only /etc/conf.d had a delivery path before. (c7e74b0)
 - **Wifi client baked in:** `wpa_supplicant`, `wpa_supplicant-openrc` and
   `ifupdown-ng-wifi`. The wifi firmware set shipped since alpha-3, but a
   box with no wired port could not join a network. Configure with
@@ -71,6 +74,36 @@
   function-local everywhere else, so those five read like locals. (8759fd5)
 
 ### Fixed
+- **SnapRAID: two paths could write a mass deletion into parity.** The
+  threshold gate opened when 'snapraid diff' exited with an unexpected
+  code, and the mount preflight accepted the supervisor's failure
+  placeholder as a real disk. Both fail closed now. q-parity is parsed
+  everywhere, and a dead array disk rows as BLOCKED. (96f59b6)
+- **Alerts were dropped silently.** The shipped notify.conf indents its
+  examples, so uncommenting one produced a sink the helper rejected
+  while 'nas status' reported alerting healthy. Leading whitespace is
+  trimmed. Bodies go to curl on stdin, so a message that starts with
+  '@' or '<' is no longer read as a local file. (d81960e)
+- **'nas upgrade' reported success after a failed save.** The closing
+  commit and write-bootcfg ran unchecked, so the box was told to reboot
+  and came up with the previous release's package world. ldlinux.c32 is
+  no longer refreshed on its own: syslinux needs both halves from one
+  version, and a mismatch stopped the next BIOS boot. (3eb0bb9)
+- **The supervisor could serve an empty share.** Its own placeholder
+  passed the mount test, so Docker, Samba and NFS started against an
+  empty RAM directory. It also ignored 'noauto' and permanently
+  placeholdered a bind mount whose source is on the data disk. (3adcc42)
+- 'nas disk --help' and 'nas shares --help' print the page only. Both
+  printed it and then the whole overview. (e9affad)
+- 'nas status' reads daemon.json with jq. A quoted key before data-root
+  made it fail a correctly configured box. (e9affad)
+- The dashboard renders the mergerfs pool row, tells a broken firewall
+  from a disabled one, and reports the same CPU temperature as the
+  CLI. (2e00cd1)
+- A share path with no leading slash no longer hangs 'nas status'.
+  (96f59b6)
+- 'nas status' reports a dead mount instead of calling it healthy.
+  (3adcc42)
 - smartd no longer crash-loops on a box with no SMART-capable device (USB
   enclosures, VMs): the seeded /etc/conf.d/smartd sets '-q never', so the
   daemon stays up and idle instead of exiting. Boxes that upgraded keep
