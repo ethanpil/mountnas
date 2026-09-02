@@ -280,7 +280,18 @@ jobs:
           # (a fresh install gets them from the apkovl instead).
           cp /home/build/iso/rc.base "$M/rc.base"
           rm -rf "$M/confd.base"; cp -a /home/build/iso/confd.base "$M/confd.base"
-          rm -rf "$M/seed.base"; cp -a /home/build/iso/seed.base "$M/seed.base"
+          # seed.base: REGULAR FILES ONLY, and a plain cp (never 'cp -a').
+          # The destination is the FAT boot partition, which cannot store a
+          # symlink (the seed has one: /etc/apk/cache -> /cfg/cache) and cannot
+          # preserve ownership or modes — 'cp -a' fails on all three and takes
+          # the build down with it. Modes do not matter here anyway: FAT reports
+          # the mount's fmask, so nas upgrade sets each file's mode by path.
+          rm -rf "$M/seed.base"; mkdir -p "$M/seed.base"
+          ( cd /home/build/iso/seed.base && find . -type f ) | while read -r sf; do
+            mkdir -p "$M/seed.base/$(dirname "$sf")"
+            cp "/home/build/iso/seed.base/$sf" "$M/seed.base/$sf" || exit 1
+          done
+          [ -f "$M/seed.base/etc/fstab" ] || { echo "ERROR: seed.base did not reach BOOT"; exit 1; }
           # cmdline.base: the repo's single source (also used by mkimg.nas.sh via
           # CMDLINE_FILE; write-bootcfg reads this on-media copy). Never echo an
           # inline cmdline here — edit scripts/cmdline.base instead.
