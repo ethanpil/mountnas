@@ -56,6 +56,7 @@ _snapraid_disk_table() {
 		case "$(_path_on_disk "$d")" in
 			ok)      mnt=mounted ;;
 			blocked) mnt=BLOCKED ;;
+			dead)    mnt=DEAD ;;
 			*)       mnt=MISSING ;;
 		esac
 		[ "$mnt" = mounted ] && sz=$(df -h "$d" 2>/dev/null | awk 'NR==2{printf "%s/%s", $3, $2}')

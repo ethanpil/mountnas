@@ -87,11 +87,19 @@ rm -f /cfg/mountnas-ops.log
 _ops_log commit "lost"
 [ ! -e /cfg/mountnas-ops.log ] || fail "wrote without /cfg mounted"
 
-t "_path_on_disk classifies ok / blocked / ram"
+t "_path_on_disk classifies ok / dead / ram, and refuses a relative path"
 stub mountpoint 'case "$2" in /|/mnt/disk1) exit 0;; esac; exit 1'
-# _blocked reads the real /proc/mounts, so only the ok/ram cases are testable here
+mkdir -p /mnt/disk1/media/films
+# _blocked reads the real /proc/mounts, so the blocked case is not testable here
 assert_eq "ok" "$(_path_on_disk /mnt/disk1/media/films)"
 assert_eq "ram" "$(_path_on_disk /srv/share)"
+# a relative path must never reach the walk: dirname's fixpoint is '.', which
+# never equals '/', so walking one spun forever and hung the whole command
+assert_eq "ram" "$(_path_on_disk mnt/disk1/media)"
+# a detached device: the mount is still listed but every read returns EIO
+stub ls 'exit 2'
+assert_eq "dead" "$(_path_on_disk /mnt/disk1/media/films)"
+rm -f "$STUBS/ls"
 
 t "_boot_usb_disk uses findfs + lsblk pkname"
 stub findfs 'echo /dev/sdz1'

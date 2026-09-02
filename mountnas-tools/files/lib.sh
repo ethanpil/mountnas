@@ -80,9 +80,10 @@ _uptime_h() {
 _blocked() { awk -v m="$1" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts; }
 # Disk-state of the filesystem a share/export path lands on: walk up to the
 # nearest mountpoint, then classify. Echoes "ok" (a real disk mount), "blocked"
-# (the ro placeholder over a failed disk), or "ram" (nothing mounted — lands on
-# the RAM root). The walk always ends at a mountpoint ("/" and the placeholder
-# are both mountpoints), so only a non-root, non-placeholder mount is a disk.
+# (the ro placeholder over a failed disk), "dead" (the device was detached and
+# every read returns EIO) or "ram" (nothing mounted — lands on the RAM root).
+# The walk always ends at a mountpoint ("/" and the placeholder are both
+# mountpoints), so only a non-root, non-placeholder mount is a disk.
 _path_on_disk() {
 	local td=$1
 	# A relative path is never on a disk mount, and it must not reach the walk:
@@ -93,7 +94,13 @@ _path_on_disk() {
 	case "$td" in /*) ;; *) echo ram; return 0 ;; esac
 	while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
 	if _blocked "$td"; then echo blocked
-	elif [ "$td" != "/" ] && mountpoint -q "$td"; then echo ok
+	elif [ "$td" != "/" ] && mountpoint -q "$td"; then
+		# A detached device leaves its mount in /proc/mounts while every access
+		# returns EIO: mountpoint, findfs and the read-only flag ALL still pass
+		# on it. The supervisor and data-watch probe with a directory read for
+		# exactly this reason; without the same probe here, nas status called a
+		# vanished disk healthy and reported OK on shares nobody could read.
+		if ls "$td" >/dev/null 2>&1; then echo ok; else echo dead; fi
 	else echo ram; fi
 }
 # Parent disk of the BOOT partition (= the MountNAS boot USB); "" if absent.

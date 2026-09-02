@@ -269,6 +269,7 @@ cmd_status() {
 		case "$(_path_on_disk "$p")" in
 			ok)      ok "samba path $p on a mounted fs" ;;
 			blocked) bad "samba path $p is BLOCKED (disk missing/failed)" ;;
+			dead)    bad "samba path $p is on a DEAD mount (device detached, every read fails) — recover: nas restart" ;;
 			*)       bad "samba path $p is on RAM (no disk mounted)" ;;
 		esac
 	done
@@ -276,6 +277,7 @@ cmd_status() {
 		case "$(_path_on_disk "$p")" in
 			ok)      ok "nfs export $p on a mounted fs" ;;
 			blocked) bad "nfs export $p is BLOCKED (disk missing/failed)" ;;
+			dead)    bad "nfs export $p is on a DEAD mount (device detached, every read fails) — recover: nas restart" ;;
 			*)       bad "nfs export $p is on RAM (no disk mounted)" ;;
 		esac
 	done
