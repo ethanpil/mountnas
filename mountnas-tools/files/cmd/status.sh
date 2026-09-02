@@ -280,9 +280,14 @@ cmd_status() {
 		esac
 	done
 	# snapraid parity sizing (best-effort)
-	if grep -q '^data ' /etc/snapraid.conf 2>/dev/null; then
-		maxd=$(awk '/^data /{print $3}' /etc/snapraid.conf | while read -r d; do df -k "$d" 2>/dev/null|awk 'NR==2{print $2}'; done | sort -n | tail -1)
-		par=$(awk '/^parity /{print $2}' /etc/snapraid.conf | sed 's#/[^/]*$##')
+	# Same parser SHAPE as the other three snapraid.conf readers (cmd/snapraid.sh,
+	# snapraid-maint, gen-webstatus): comments skipped by field, every parity
+	# variant, comma-split values. The old '^data '/'^parity ' literals matched
+	# only a single space and no q-/z-/N- prefix, so a tab-indented conf or a
+	# double-parity array silently SKIPPED this check instead of running it.
+	if awk '$1!~/^#/ && $1=="data"{f=1} END{exit !f}' /etc/snapraid.conf 2>/dev/null; then
+		maxd=$(awk '$1!~/^#/ && $1=="data"{print $3}' /etc/snapraid.conf | while read -r d; do df -k "$d" 2>/dev/null|awk 'NR==2{print $2}'; done | sort -n | tail -1)
+		par=$(awk '$1!~/^#/ && $1 ~ /^([2-6]-|q-|z-)?parity$/ { n=split($2,a,","); for(i=1;i<=n;i++) print a[i] }' /etc/snapraid.conf | head -n1 | sed 's#/[^/]*$##')
 		[ -n "$par" ] && { ps=$(df -k "$par" 2>/dev/null|awk 'NR==2{print $2}')
 			[ -n "$ps" ] && [ -n "$maxd" ] && { [ "$ps" -ge "$maxd" ] && ok "SnapRAID parity >= largest data disk" || bad "SnapRAID parity SMALLER than largest data disk"; }; }
 	fi

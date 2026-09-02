@@ -82,15 +82,28 @@ _read_conf() {
 _array_paths() {
 	awk '$1!~/^#/ {
 		if ($1=="data") print $3
-		else if ($1 ~ /^([2-6]-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) print a[i] }
+		else if ($1 ~ /^([2-6]-|q-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) print a[i] }
 	}' "$SRCONF" 2>/dev/null
 }
-_on_mounted_disk() {   # $1=path (file or dir) -> 0 when its mountpoint != /
-	# mountpoint(1) is a busybox applet, so this needs no extra package
+_on_mounted_disk() {   # $1=path (file or dir) -> 0 when it is on a REAL disk
+	# mountpoint(1) is a busybox applet, so this needs no extra package.
+	#
+	# "is a mountpoint" is NOT enough. The mountnas supervisor covers a data
+	# mount that failed with a read-only 'mountnas-blocked' tmpfs, and that
+	# placeholder IS a mountpoint — so the bare test accepted exactly the
+	# failed disk this preflight exists to catch, and snapraid then read the
+	# empty placeholder as "all files deleted". Refuse it like an absent disk.
 	_p=$1
+	# a relative path is never on a mounted disk, and dirname's fixpoint is
+	# '.' (never '/'), so walking one would loop forever
+	case "$_p" in /*) ;; *) return 1 ;; esac
 	[ -d "$_p" ] || _p=$(dirname "$_p")
 	while [ "$_p" != "/" ]; do
-		if mountpoint -q "$_p" 2>/dev/null; then return 0; fi
+		if mountpoint -q "$_p" 2>/dev/null; then
+			awk -v m="$_p" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' \
+				/proc/mounts && return 1
+			return 0
+		fi
 		_p=$(dirname "$_p")
 	done
 	return 1
@@ -171,25 +184,34 @@ erase its parity. Nothing was run. Mount the disk(s), then: nas snapraid run" pr
 say "diff: checking the array for changes"
 DIFFOUT=$(snapraid diff 2>>"$RUNLOG"); diffrc=$?
 printf '%s\n' "$DIFFOUT" >> "$RUNLOG" 2>/dev/null
-# snapraid diff: 0 = nothing to sync, 2 = sync required, 1 = error
-if [ "$diffrc" = 1 ]; then
-	_finish FAILED 4 "diff FAILED" "snapraid diff exited 1 — read the log." problem
-fi
+# snapraid diff: 0 = nothing to sync, 2 = sync required, 1 = error.
+# ANY other code is an error too and must fail CLOSED. A run that is killed
+# (137 = OOM, plausible here: the OS lives in a tmpfs sized at half of RAM
+# and diff walks every file) used to fall past both the '=1' arm and the
+# '=2' parse guard, straight into the gate with unparsed counts.
+case "$diffrc" in
+	0|2) : ;;
+	*) _finish FAILED 4 "diff FAILED (exit $diffrc)" \
+		"snapraid diff exited $diffrc — read the log. Parity was NOT touched." problem ;;
+esac
 # summary lines: '  123 removed' etc. Fail CLOSED: counts that cannot be
 # parsed must read as blocked, never as "0 changes" — the gate must not
 # open exactly when snapraid's output format changes.
 _count() { printf '%s\n' "$DIFFOUT" | awk -v k="$1" '$2==k {print $1; f=1} END{if(!f) print "PARSE"}' | tail -n1; }
 D_ADD=$(_count added); D_REM=$(_count removed); D_UPD=$(_count updated)
-if [ "$diffrc" = 2 ]; then
-	case "$D_REM$D_UPD" in *PARSE*|*[!0-9]*)
-		_finish BLOCKED 1 "sync BLOCKED — could not parse the diff" \
-			"snapraid diff output did not match the expected format; refusing to judge it. Read the log." problem ;;
-	esac
-fi
 
 if [ "$diffrc" = 0 ]; then
 	say "no changes to sync"
 else
+	# Fail CLOSED, on EVERY path that reaches the gate. This guard used to sit
+	# under 'if [ "$diffrc" = 2 ]', so any other exit code skipped it — and the
+	# gate below compares with [ -gt ], where a non-numeric left side makes the
+	# test ERROR (rc 2) rather than succeed. An errored test reads as "threshold
+	# not exceeded", so the gate OPENED exactly when the counts were unusable.
+	case "$D_REM$D_UPD" in *PARSE*|*[!0-9]*)
+		_finish BLOCKED 1 "sync BLOCKED — could not parse the diff" \
+			"snapraid diff output did not match the expected format; refusing to judge it. Read the log." problem ;;
+	esac
 	# ---- 5. gate --------------------------------------------------------
 	say "diff: +$D_ADD added, -$D_REM removed, ~$D_UPD updated"
 	if [ "${SNAPRAID_MAINT_FORCE:-0}" != 1 ]; then

@@ -85,6 +85,12 @@ _blocked() { awk -v m="$1" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /
 # are both mountpoints), so only a non-root, non-placeholder mount is a disk.
 _path_on_disk() {
 	local td=$1
+	# A relative path is never on a disk mount, and it must not reach the walk:
+	# dirname's fixpoint is '.' (dirname . = .), which never equals '/', so the
+	# loop would spin forever forking dirname. smb.conf and /etc/exports are
+	# hand-edited, so a path with no leading slash is reachable input and used
+	# to hang nas status, nas report and the 2-minute dashboard render.
+	case "$td" in /*) ;; *) echo ram; return 0 ;; esac
 	while [ "$td" != "/" ] && ! mountpoint -q "$td"; do td=$(dirname "$td"); done
 	if _blocked "$td"; then echo blocked
 	elif [ "$td" != "/" ] && mountpoint -q "$td"; then echo ok

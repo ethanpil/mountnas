@@ -45,15 +45,19 @@ _snapraid_unsaved() {
 _snapraid_disk_table() {
 	awk '$1!~/^#/ {
 		if ($1=="data") printf "%s\tdata\t%s\n", $2, $3
-		else if ($1 ~ /^([2-6]-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) printf "%s\tparity\t%s\n", $1, a[i] }
+		else if ($1 ~ /^([2-6]-|q-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) printf "%s\tparity\t%s\n", $1, a[i] }
 	}' /etc/snapraid.conf 2>/dev/null | while IFS="$(printf '\t')" read -r name role path; do
 		d=$path; [ -d "$d" ] || d=$(dirname "$path")
 		mnt=MISSING; sz="-"
-		p=$d
-		while [ "$p" != "/" ]; do
-			if mountpoint -q "$p" 2>/dev/null; then mnt=mounted; break; fi
-			p=$(dirname "$p")
-		done
+		# _path_on_disk is THE walk (lib.sh): it also catches the supervisor's
+		# read-only failure placeholder, which a bare 'mountpoint -q' reports
+		# as a healthy mount — so a dead array disk used to row as 'mounted'
+		# and the mounted-count check below went green on it.
+		case "$(_path_on_disk "$d")" in
+			ok)      mnt=mounted ;;
+			blocked) mnt=BLOCKED ;;
+			*)       mnt=MISSING ;;
+		esac
 		[ "$mnt" = mounted ] && sz=$(df -h "$d" 2>/dev/null | awk 'NR==2{printf "%s/%s", $3, $2}')
 		printf '         %-8s %-7s %-22s %-8s %s\n' "$name" "$role" "$path" "$mnt" "${sz:--}"
 	done
