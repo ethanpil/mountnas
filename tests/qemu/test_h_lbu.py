@@ -39,26 +39,6 @@ def test_lbu_exclude_not_captured(golden_guest):
         f"excluded /etc/issue is being tracked by lbu:\n{st.out}"
 
 
-def test_legacy_lbu_files_migrated_once(golden_guest):
-    """Old-style /etc/lbu/include files (shipped by pre-beta-3 seeds) are
-    merged into lbu.list by the mountnas service and parked as *.migrated."""
-    g = golden_guest
-    g.run("mkdir -p /etc/lbu && echo /root/legacy-probe > /etc/lbu/include",
-          check=True)
-    g.run("rc-service mountnas restart", timeout=180, check=True)
-    parked = g.run("ls /etc/lbu/include.migrated 2>/dev/null")
-    assert parked.rc == 0, "legacy include file was not parked as .migrated"
-    # the migration strips the leading slash and prepends '+' (sed s,^/*,+,),
-    # so /root/legacy-probe becomes the entry +root/legacy-probe
-    merged = g.run(f"grep -F '+root/legacy-probe' {LBU_LIST}")
-    assert merged.rc == 0, \
-        f"legacy include entry not merged into {LBU_LIST}"
-    # migration must be one-time: another restart must not duplicate
-    g.run("rc-service mountnas restart", timeout=180, check=True)
-    count = g.run(f"grep -cF '+root/legacy-probe' {LBU_LIST}", check=True)
-    assert count.out.strip() == "1", f"migration ran twice: {count.out}"
-
-
 def test_apk_shipped_etc_not_in_lbu_status(golden_guest):
     """apk-shipped files under /etc (profile.d snippets, periodic wrapper)
     must be lbu-excluded, or every commit would capture code the next apk

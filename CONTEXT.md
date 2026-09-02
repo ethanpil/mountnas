@@ -645,10 +645,10 @@ _reltag sed.
   with `+path`/`-path` entries — the file the `lbu include`/`lbu exclude`
   commands maintain. The plain files the seed shipped since alpha-1 did
   nothing: includes (samba passwords, /root, crontabs, VPN identities) never
-  persisted, excludes (/etc/issue) never excluded. Fixed in the seed; the
-  mountnas service migrates old boxes once (parks the old files as
-  *.migrated). Never reference /etc/lbu/{include,exclude} again — the nas
-  safety checks now grep the `+` entries of lbu.list.
+  persisted, excludes (/etc/issue) never excluded. Fixed in the seed (the
+  one-time migration for pre-beta-3 boxes was removed before 1.0 — no
+  public box ever ran those seeds). Never reference /etc/lbu/{include,exclude}
+  again — the nas safety checks now grep the `+` entries of lbu.list.
 - nas upgrade sniffs gzip via the 1f 8b magic (filenames lie — a tester's
   browser saved the release as .img.tgz); the sniff also drives the temp-space
   precheck, and URL downloads are re-sniffed after arrival.

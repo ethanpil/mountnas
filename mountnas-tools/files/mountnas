@@ -60,27 +60,9 @@ start() {
 	fi
 	log "storage check starting"
 
-	# One-time migration: /etc/lbu/{include,exclude} were plain files nothing
-	# ever read — lbu's real list is /etc/apk/protected_paths.d/lbu.list — so
-	# includes (samba passwords, /root, crontabs, VPN identities) silently did
-	# not persist on boxes seeded before beta-3. Convert once, park the old
-	# files, and let the next commit persist the converted list.
-	if [ -f /etc/lbu/include ] || [ -f /etc/lbu/exclude ]; then
-		mkdir -p /etc/apk/protected_paths.d
-		{
-			cat /etc/apk/protected_paths.d/lbu.list 2>/dev/null
-			[ -f /etc/lbu/include ] && sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's,^/*,+,' /etc/lbu/include
-			[ -f /etc/lbu/exclude ] && sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's,^/*,-,' /etc/lbu/exclude
-		} | sort -u > /etc/apk/protected_paths.d/lbu.list.new \
-			&& mv /etc/apk/protected_paths.d/lbu.list.new /etc/apk/protected_paths.d/lbu.list
-		mv /etc/lbu/include /etc/lbu/include.migrated 2>/dev/null
-		mv /etc/lbu/exclude /etc/lbu/exclude.migrated 2>/dev/null
-		log "migrated /etc/lbu/include+exclude into protected_paths.d/lbu.list (the old files were never read); commit to persist"
-	fi
-
 	# Default login shell is bash (1.0rc7): switch root ONCE off the stock
-	# /bin/sh. Marker-guarded like .rcheal-1 — a user who later chsh's to
-	# ash/zsh on purpose is never fought; only the stock value is upgraded.
+	# /bin/sh. Marker-guarded — a user who later chsh's to ash/zsh on
+	# purpose is never fought; only the stock value is upgraded.
 	# (busybox adduser has no configurable default shell, so new users get
 	# bash via the documented 'adduser -s /bin/bash' — root is handled here.)
 	if [ ! -f /etc/mountnas/.bashshell-1 ] && [ -x /bin/bash ]; then
@@ -158,24 +140,6 @@ start() {
 			cmp -s "$BOOTMNT/world.base" /etc/mountnas/world.base 2>/dev/null \
 				|| cp "$BOOTMNT/world.base" /etc/mountnas/world.base 2>>"$LOG" || true
 		fi
-	fi
-
-	# One-time heal for boxes that reached their current release by UPGRADING:
-	# until rc.base shipped, 'nas upgrade' had no way to deliver a newly enabled
-	# service, so ufw and zram-init exist on those boxes but sit in no runlevel
-	# (ufw: rules never load after a reboot; zram-init: no swap at all). Add the
-	# ones that are missing, ONCE — the marker means a user who later disables
-	# one is never fought. Upgrades from here on are handled by the rc.base
-	# reconciliation in cmd_upgrade, so this block is deletable in a release or
-	# two.
-	if [ ! -f /etc/mountnas/.rcheal-1 ]; then
-		for svc in ufw zram-init; do
-			[ -e "/etc/init.d/$svc" ] || continue
-			rc-update show 2>/dev/null | grep -qE "^[[:space:]]*${svc}[[:space:]]" && continue
-			rc-update add "$svc" boot >/dev/null 2>&1 \
-				&& log "enabled $svc (boot) — it shipped enabled but predates the upgrade path that delivers runlevels; commit to persist"
-		done
-		mkdir -p /etc/mountnas && : > /etc/mountnas/.rcheal-1 2>/dev/null || true
 	fi
 
 	# apk cache lives on the config partition (/cfg/cache, next to the apkovl;

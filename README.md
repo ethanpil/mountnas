@@ -338,7 +338,6 @@ nas commit                # REQUIRED — rules + the enable flag live in /etc/uf
 
 * Defaults once enabled: incoming **deny**, outgoing allow; IPv6 is covered by the same commands (ufw drives iptables *and* ip6tables).
 * `nas status` shows the firewall state — including the one dangerous case, an enabled config whose rules aren't actually loaded. The web dashboard shows the full ruleset (`ufw status verbose`).
-* ⚠️ **If you reached 1.0rc3 by `nas upgrade` rather than by flashing it**, ufw was installed but never added to a runlevel, so its rules load when you run `ufw enable` and then silently *don't* load after a reboot. Check with `rc-status boot | grep ufw`; fix with `rc-update add ufw boot && nas commit`. Later releases repair this automatically at the first boot.
 * **Docker-published ports bypass ufw** — Docker programs its own iptables rules ahead of ufw's. Publish to `127.0.0.1:` or use internal Docker networks for containers that must not be exposed; your router remains the real perimeter.
 * Turn it back off: `ufw disable && nas commit`.
 
