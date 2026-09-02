@@ -78,21 +78,35 @@ else
 fi
 kern="$(uname -r 2>/dev/null || echo '?') &middot; Alpine $(cat /etc/alpine-release 2>/dev/null || echo '?')"
 cputemp="-"
+# Same shape as _status_sensors in cmd/status.sh, which is the other copy of
+# this scan: read EVERY temp*_input on a CPU chip and keep the MAX, and accept
+# negative millidegrees. Reading only temp1_input and breaking at the first
+# chip made this page report a cooler CPU than nas status on any multi-sensor
+# coretemp, and the digits-only guard threw away the sub-zero readings the CLI
+# deliberately keeps. Keep the two in step.
+cpu_c=""
 for h in /sys/class/hwmon/hwmon*; do
 	[ -f "$h/name" ] || continue
 	case "$(cat "$h/name" 2>/dev/null)" in
 	coretemp|k10temp|zenpower|cpu_thermal|soc_thermal|acpitz)
-		t=$(cat "$h/temp1_input" 2>/dev/null) || continue
-		case "$t" in *[!0-9]*|'') continue ;; esac
-		cputemp="$((t / 1000))&deg;C"; break ;;
+		for t in "$h"/temp*_input; do
+			[ -f "$t" ] || continue
+			v=$(cat "$t" 2>/dev/null)
+			case "${v#-}" in ''|*[!0-9]*) continue ;; esac
+			v=$((v / 1000))
+			if [ -z "$cpu_c" ] || [ "$v" -gt "$cpu_c" ]; then cpu_c=$v; fi
+		done ;;
 	esac
 done
-# fan RPMs from any hwmon that exposes them (row omitted when none)
+[ -n "$cpu_c" ] && cputemp="${cpu_c}&deg;C"
+# fan RPMs from any hwmon that exposes them (row omitted when none) — same
+# numeric-and-above-zero filter the CLI uses
 fans=""
 for f in /sys/class/hwmon/hwmon*/fan*_input; do
 	[ -f "$f" ] || continue
 	r=$(cat "$f" 2>/dev/null)
-	case "$r" in ''|*[!0-9]*|0) continue ;; esac
+	case "$r" in ''|*[!0-9]*) continue ;; esac
+	[ "$r" -gt 0 ] || continue
 	fans="$fans${fans:+ &middot; }$r rpm"
 done
 fans_row=""
@@ -136,6 +150,12 @@ ups_name=$(sed -n 's/^\[\(.*\)\]$/\1/p' /etc/nut/ups.conf 2>/dev/null | head -n1
 if [ -n "$ups_name" ]; then
 	ups_chg=$(timeout 3 upsc "$ups_name" battery.charge 2>/dev/null)
 	ups_st=$(timeout 3 upsc "$ups_name" ups.status 2>/dev/null)
+	# Several NUT drivers report the charge as a float ("100.0"). Keep the
+	# integer part: the digits-only guard below rejected the decimal point and
+	# showed a healthy, fully charged UPS as "configured, not answering"
+	# forever. (The guard itself must stay — [ "100.0" -ge 50 ] is a busybox
+	# "bad number" error, not a comparison.)
+	ups_chg=${ups_chg%%.*}
 	case "$ups_chg" in
 		''|*[!0-9]*) ups_html='<span class="pill p-warn">configured, not answering</span>' ;;
 		*) if [ "$ups_chg" -ge 50 ]; then ups_html="<span class=\"pill p-ok\">${ups_chg}% &middot; $(printf '%s' "${ups_st:-?}" | esc)</span>"
@@ -209,12 +229,16 @@ hw="${hw_vendor:+$hw_vendor }${hw_product:-?}"
 now_tz=$(date '+%Y-%m-%d %H:%M:%S %Z')
 
 # ---- mergerfs pools: the namespace users actually mount (df = statfs, free) --
-pool_rows=""
+# pool_dl, NOT pool_rows: the disk TABLE builds its own <tr> rows into
+# pool_rows further down, and when both used one name the second assignment
+# silently destroyed this one — the Config & storage <dl> then received table
+# markup and the Pool line never rendered at all. Two shapes, two names.
+pool_dl=""
 while IFS=' ' read -r _dev _mnt _typ _rest; do
 	[ "$_typ" = "fuse.mergerfs" ] || continue
 	_pu=$(df -k "$_mnt" 2>/dev/null | awk 'NR==2{printf "%.0f%% of ", $3*100/$2}')
 	_pt=$(df -k "$_mnt" 2>/dev/null | awk 'NR==2{print $2}')
-	pool_rows="$pool_rows<dt>Pool $(printf '%s' "$_mnt" | esc)</dt><dd class=\"num\">$_pu$(hum_kb "${_pt:-0}")</dd>"
+	pool_dl="$pool_dl<dt>Pool $(printf '%s' "$_mnt" | esc)</dt><dd class=\"num\">$_pu$(hum_kb "${_pt:-0}")</dd>"
 done < /proc/mounts
 
 # ---- config-partition footprint (always-awake USB, metadata reads only) ----
@@ -351,13 +375,31 @@ done
 # logging, every rule; spawning python for that is fine at render time (root,
 # every ~2 min) and never happens at request time. Chain/rule reads touch no
 # disk, so the no-spin-up contract holds.
-if iptables -nL ufw-user-input >/dev/null 2>&1; then
+# The VERDICT comes from nas status --json, which already computes all three
+# states. Re-deriving it here from the loaded chains alone could only tell
+# loaded from not-loaded, so the state worth shouting about — ENABLED=yes in
+# ufw.conf with NO chains loaded, a box that believes it is firewalled and is
+# silently wide open — rendered as the grey "disabled (shipped default)" pill,
+# indistinguishable from a deliberately open box.
+fw_state=$(printf '%s' "$sj" | jq -r '.firewall // "unknown"')
+if [ "$fw_state" = active ]; then
 	services="$services <span class=\"pill p-ok\"><i></i>ufw</span>"
 	fw_n=$(cat /etc/ufw/user.rules /etc/ufw/user6.rules 2>/dev/null | grep -c '^### tuple')
 	fw_out=$(timeout 10 ufw status verbose 2>/dev/null | esc)
 	[ -n "$fw_out" ] || fw_out="(ufw active — no report; run 'ufw status verbose' over SSH)"
 	fw_sum="active &middot; $fw_n rule(s)"
 	fw_prot="<span class=\"pill p-ok\">active &middot; $fw_n rule(s)</span>"
+elif [ "$fw_state" = broken ]; then
+	services="$services <span class=\"pill p-fail\"><i></i>ufw</span>"
+	fw_sum="ENABLED in config but NOT loaded"
+	fw_prot='<span class="pill p-fail">enabled but NOT loaded &mdash; this box is OPEN</span>'
+	fw_out="ufw is enabled in /etc/ufw/ufw.conf, but its iptables chains are NOT
+loaded. This box accepts every connection while believing it is firewalled.
+
+Reload the rules and make sure the service runs at boot:
+  rc-service ufw restart
+  rc-status boot | grep ufw       # ufw must be in the boot runlevel
+  nas commit"
 else
 	services="$services <span class=\"pill p-off\"><i></i>ufw</span>"
 	fw_sum="disabled &mdash; all ports open (shipped default)"
@@ -874,7 +916,7 @@ $css
         <dt>Unsaved changes</dt><dd>$unsaved_html</dd>
         <dt>Last commit</dt><dd class="num">$lastcommit</dd>
         <dt>Overlay size</dt><dd class="num">$ovl_sz <span class="mut">&middot; cache $cache_sz</span></dd>
-        $pool_rows
+        $pool_dl
       </dl>
     </div>
   </div>
