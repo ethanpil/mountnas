@@ -35,6 +35,31 @@ run_nas commit -m x
 assert_rc 1
 assert_match 'a data path is in the lbu include list — refusing' "$OUT"
 
+t "commit carries the overlay to a NEW hostname instead of failing"
+# THE wizard bug: lbu names the overlay after the current hostname and refuses
+# to commit while /cfg holds one under a different name ("Please use -d to
+# replace"), so changing the hostname — the wizard's FIRST prompt — made its
+# own closing save fail. Setup then claimed success while the root password
+# and hostname were never written, and the next boot reverted everything.
+reset
+printf 'seed overlay\n' > /cfg/oldname.apkovl.tar.gz
+run_nas commit -m renamed
+assert_rc 0
+[ -f "$act" ] || fail "overlay was not carried to $host.apkovl.tar.gz"
+[ ! -f /cfg/oldname.apkovl.tar.gz ] || fail "the stale overlay is still there — lbu would refuse"
+assert_match 'overlay renamed for the new hostname' "$OUT"
+
+t "commit leaves TWO overlays alone — that is lbu's refusal to make"
+# more than one apkovl is a genuine security concern (the diskless init cannot
+# tell which to load), so the rename must not silently pick one
+reset
+printf 'a\n' > /cfg/one.apkovl.tar.gz; printf 'b\n' > /cfg/two.apkovl.tar.gz
+run_nas commit -m twoovl
+[ -f /cfg/one.apkovl.tar.gz ] && [ -f /cfg/two.apkovl.tar.gz ] \
+	|| fail "a stale overlay was removed while two were present"
+assert_nomatch 'overlay renamed' "$OUT"
+reset
+
 t "commit -m needs a note; extra args are a usage error"
 reset
 run_nas commit -m; assert_rc 1; assert_match 'usage: nas commit' "$OUT"

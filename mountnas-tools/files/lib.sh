@@ -295,6 +295,36 @@ MIRROR_KEEP=30
 # already succeeded, so a missing data disk is a hint, never an error. The
 # mirror holds password hashes and SSH host keys: directory 0700, files
 # 0600, and off-site copies belong inside an ENCRYPTED backup.
+# lbu names the overlay after the CURRENT hostname and REFUSES to commit when
+# /cfg holds an apkovl under any other name: more than one apkovl is a real
+# security concern, because the diskless init would not know which to load
+# ("Please use -d to replace.", lbu commit).
+#
+# Changing the hostname is a NORMAL action — it is the FIRST prompt of the
+# first-run wizard — so that refusal used to break the wizard's own closing
+# save: the box said "Setup complete" while the root password, hostname and
+# timezone were never written to the stick, and the next boot reverted all of
+# it and offered the wizard again.
+#
+# The config did not change identity, only its name, so rename the overlay to
+# follow the hostname. Exactly one apkovl exists before and after. Anything
+# else (no overlay, several, or an encrypted one whose name this glob does not
+# match) is left untouched for lbu to judge.
+_rename_stale_overlay() {
+	local want cur
+	want="$CFG/$(hostname).apkovl.tar.gz"
+	[ -e "$want" ] && return 0
+	# count with the glob itself: an unmatched glob stays literal in sh, so
+	# require exactly one element AND that it exists
+	set -- "$CFG"/*.apkovl.tar.gz
+	{ [ "$#" = 1 ] && [ -e "$1" ]; } || return 0
+	cur=$1
+	if mv "$cur" "$want" 2>/dev/null; then
+		step "overlay renamed for the new hostname: ${cur##*/} -> ${want##*/}"
+	fi
+	return 0
+}
+
 _mirror_overlay() {
 	local mdir src dst tmpf mst
 	tmpf=""   # referenced in the failure branch — set -u dies on an unset local

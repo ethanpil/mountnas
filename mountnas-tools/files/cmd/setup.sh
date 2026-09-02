@@ -119,7 +119,17 @@ cmd_setup() {
 	date '+%Y-%m-%d %H:%M' > /etc/mountnas/setup-done
 	_ops_log setup "wizard completed (hostname: $(hostname))"
 
-	printf '%s[5/5]%s Saving...\n' "$C_B" "$C_NO"; cmd_commit --no-ask
+	# A FAILED save must never read as a finished setup: everything above this
+	# line (hostname, root password, timezone, network) lives in RAM until the
+	# commit lands, so claiming "Setup complete" over a failure sent the user
+	# to a reboot that silently reverted all of it.
+	printf '%s[5/5]%s Saving...\n' "$C_B" "$C_NO"
+	if ! cmd_commit --no-ask; then
+		bad "SETUP NOT SAVED — everything above is still only in RAM."
+		hint "Fix what the error above reports, then run:  nas commit"
+		hint "Do NOT reboot until it succeeds, or these answers are lost."
+		return 1
+	fi
 	# "Setup complete" stays a contiguous literal (CI expects it)
 	hdr "Setup complete"
 	cat <<EOF

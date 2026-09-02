@@ -26,6 +26,10 @@ cmd_commit() {
 	mountpoint -q "$CFG" || { bad "config partition ($CFG) not mounted — refusing (would save to RAM)"; return 1; }
 	grep -qE "^\+/?(mnt/nasdata|mnt/disk|mnt/parity)" /etc/apk/protected_paths.d/lbu.list 2>/dev/null \
 		&& { bad "a data path is in the lbu include list — refusing (would tar your data disk)"; return 1; }
+	# The hostname may have changed since the last save (the wizard's first
+	# prompt does exactly that). lbu would then refuse the commit outright —
+	# see _rename_stale_overlay, which carries the overlay to the new name.
+	_rename_stale_overlay
 	# No -m on an interactive run: ask for the note instead of making the user
 	# remember the flag. Enter skips; prompting happens AFTER the refusal
 	# gates so a doomed commit never asks first. Non-tty callers (ssh -T,

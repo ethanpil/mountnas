@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.1] — 2026-09-02
+
+### Fixed
+- **The first-run wizard did not save when you changed the hostname.**
+  lbu names the overlay after the current hostname and refuses to commit
+  while /cfg holds one under another name ("Please use -d to replace"),
+  because two overlays would leave the diskless init unable to tell which
+  to load. Changing the hostname is the wizard's FIRST prompt, so its own
+  step 5 failed: the box printed "Setup complete" while the hostname, root
+  password and timezone never reached the stick, and the next boot reverted
+  all of it and offered the wizard again. 'nas commit' now carries the
+  overlay to the new name, and a failed save no longer reads as a finished
+  setup. Both gating test suites had avoided renaming, which is why this
+  was never caught.
+
 ## [1.0] — 2026-09-02
 
 **First stable release.** Validated on 1.0rc10: the full QEMU suite passed

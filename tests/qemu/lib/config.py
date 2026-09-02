@@ -60,9 +60,12 @@ RELEASE_FILE = "/usr/share/mountnas/release"
 
 # Root password baked into the golden snapshot (recorded in meta.json too).
 GOLDEN_PASSWORD = "mnastest1"
-# Keep the image's DEFAULT hostname: renaming it orphans the seed's
-# <host>.apkovl.tar.gz and makes `lbu commit` refuse ("use -d to replace").
-# The CI supervisor test keeps the default for the same reason.
+# The golden keeps the image's DEFAULT hostname so every overlay guest starts
+# from one known name. Renaming is supported: cmd_commit carries the overlay
+# to the new <host>.apkovl.tar.gz (_rename_stale_overlay). It used to make
+# `lbu commit` refuse ("use -d to replace"), which silently broke the wizard's
+# own save -- both this harness and the CI supervisor test avoided the rename
+# and so never caught it. test_wizard_hostname now asserts the save persists.
 GOLDEN_HOSTNAME = "mountnas"
 
 # fstab line the golden build (and the CI supervisor test) uses for the data

@@ -16,11 +16,24 @@ PW = "wiztest99"
 
 @pytest.mark.smoke
 def test_wizard_full_flow_prompt_order(pristine_guest):
-    """All five steps in order, ending at 'Setup complete' and a shell."""
+    """All five steps in order, ending at 'Setup complete' and a shell.
+
+    The RENAME is the point of using a non-default hostname here: lbu names
+    the overlay after the current hostname and refuses to commit while /cfg
+    holds one under another name, which silently broke the wizard's own step
+    5 -- it printed 'Setup complete' while nothing reached the stick.  Assert
+    the save actually landed, not just that the name was set in RAM.
+    """
     pristine_guest.run_wizard(hostname="wiztest", password=PW)
     pristine_guest.screenshot("wizard-complete")
     r = pristine_guest.run_serial("hostname")
     assert r.out.strip() == "wiztest", r.out
+    # the overlay must exist under the NEW name, and be the only apkovl
+    r = pristine_guest.run_serial("ls -1 /cfg/*.apkovl.tar.gz")
+    assert r.out.strip() == "/cfg/wiztest.apkovl.tar.gz", r.out
+    # and the wizard must have nothing left unsaved
+    r = pristine_guest.run_serial("lbu status | grep -c . || true")
+    assert r.out.strip() in ("0", ""), f"wizard left unsaved changes: {r.out}"
 
 
 def test_wizard_flips_permit_empty_passwords(pristine_guest):
