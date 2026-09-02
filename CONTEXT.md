@@ -235,8 +235,13 @@ payload too (removed the iso9660 + its xorriso `world.base` embed step).
   payload, `*-ucode.img` when present) → **commit** with back-to-back renames
   (see the staged-writes invariant, §3) → reconcile `/etc/apk/world`
   (new base ∪ user extras), `/etc/runlevels` (three-way merge against
-  `rc.base`, so user disables survive) and `/etc/conf.d` (create-if-absent
-  against `confd.base`, never overwriting a user's file) → re-pin repos →
+  `rc.base`, so user disables survive; with NO previous `rc.base` — any
+  stick older than 1.0rc4 — an announced ADD-ONLY pass instead, which is
+  what delivers ufw/zram-init to those boxes), `/etc/conf.d`
+  (create-if-absent against `confd.base`, never overwriting a user's file)
+  and the REST of the seeded `/etc` tree (create-if-absent against
+  `seed.base`, no `.new` — most of those files legitimately differ on a
+  configured box) → re-pin repos →
   `write-bootcfg` + `lbu commit` → BOOT remounted read-only → reboot. The
   config PARTITION and data disks are untouched; the three reconciliations
   above are the only `/etc` writes, and each announces itself. **No automatic
@@ -740,8 +745,7 @@ Output: a GitHub Release tagged `<release_tag>` with the files in §4.
   `~/Downloads/files/`, not in the repo). The shipped design has since diverged
   where §5/§8 say so; this file + CHANGELOG.md are the living record.
 - `README.md` — user-facing docs. `UPGRADE.md` — single-slot in-place upgrade +
-  backup docs (incl. the one-time alpha-1/2/3 migration). `CHANGELOG.md` —
-  per-release history.
+  backup docs. `CHANGELOG.md` — per-release history.
 - Build host base: Alpine **latest-stable (v3.24)**, `jirutka/setup-alpine`, `abuild`.
 
 ## 11. SnapRAID maintenance — nas snapraid (added 2026-08-25)

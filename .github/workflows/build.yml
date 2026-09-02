@@ -207,7 +207,16 @@ jobs:
               [ -s rc.base ] || { echo "ERROR: rc.base is empty — runlevel extraction broke"; exit 1; }
               rm -rf confd.stage confd.base && mkdir -p confd.stage confd.base
               tar -xzf mountnas.apkovl.tar.gz -C confd.stage etc/conf.d 2>/dev/null || true
-              [ -d confd.stage/etc/conf.d ] && cp confd.stage/etc/conf.d/* confd.base/ 2>/dev/null || true )
+              [ -d confd.stage/etc/conf.d ] && cp confd.stage/etc/conf.d/* confd.base/ 2>/dev/null || true
+              # seed.base — the WHOLE seeded /etc tree, same source (the apkovl
+              # itself, so it cannot drift from what a fresh install gets).
+              # confd.base above covers /etc/conf.d only; every other seeded
+              # file reached freshly flashed sticks and nothing else, so a
+              # release could add one and no upgraded box would ever see it.
+              # nas upgrade consumes this create-if-absent (see cmd/upgrade.sh).
+              rm -rf seed.base && mkdir -p seed.base
+              tar -xzf mountnas.apkovl.tar.gz -C seed.base etc 2>/dev/null || true
+              [ -d seed.base/etc ] || { echo "ERROR: seed.base extraction produced no etc/"; exit 1; } )
           '
           echo "== assemble single-slot .img (BOOT + MNASCFG) =="
           apk add sgdisk parted   # sgdisk (own package, not in gptfdisk) + partprobe
@@ -271,6 +280,7 @@ jobs:
           # (a fresh install gets them from the apkovl instead).
           cp /home/build/iso/rc.base "$M/rc.base"
           rm -rf "$M/confd.base"; cp -a /home/build/iso/confd.base "$M/confd.base"
+          rm -rf "$M/seed.base"; cp -a /home/build/iso/seed.base "$M/seed.base"
           # cmdline.base: the repo's single source (also used by mkimg.nas.sh via
           # CMDLINE_FILE; write-bootcfg reads this on-media copy). Never echo an
           # inline cmdline here — edit scripts/cmdline.base instead.

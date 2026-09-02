@@ -154,7 +154,7 @@ start() {
 		# completed before any rename began, so .new is the complete new
 		# release; .old is the intact previous one. Restore a missing dir from
 		# whichever exists (prefer .new).
-		for hd in apks EFI boot/grub confd.base; do
+		for hd in apks EFI boot/grub confd.base seed.base; do
 			[ ! -d "$BOOTMNT/$hd" ] || continue
 			for hsrc in "$hd.new" "$hd.old"; do
 				[ -d "$BOOTMNT/$hsrc" ] || continue

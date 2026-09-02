@@ -158,7 +158,7 @@ _upgrade_check() {
 # kernel modules to RAM, detaches the loopback) — after that the modloop file can
 # be rewritten safely. Config (/cfg) and data disks are never touched.
 cmd_upgrade() {
-	local img url assume_yes a lb plb pbe page tmp img_gz need_kb avail_kb sums want got ec f d av cb pw rl svc sdirs sfiles old_wb new_wb old_rc new_rc
+	local img url assume_yes a lb plb pbe page tmp img_gz need_kb avail_kb sums want got ec f d av cb pw rl svc sdirs sfiles old_wb new_wb old_rc new_rc sf sm
 	img=""; url=""; UPG_DLF=""; assume_yes=0
 	for a in "$@"; do
 		case "$a" in
@@ -389,7 +389,7 @@ EOF
 		_stage_file "$UPG_MNT/$f" "$BOOTMNT/$f" && sfiles="$sfiles $f" || ec=1
 	done
 	_stage_dir "$UPG_MNT/apks" "$BOOTMNT/apks" && sdirs="$sdirs apks" || ec=1
-	for d in EFI boot/grub confd.base; do
+	for d in EFI boot/grub confd.base seed.base; do
 		[ -d "$UPG_MNT/$d" ] || continue
 		_stage_dir "$UPG_MNT/$d" "$BOOTMNT/$d" && sdirs="$sdirs $d" || ec=1
 	done
@@ -399,7 +399,7 @@ EOF
 		for f in boot/vmlinuz-lts boot/initramfs-lts boot/modloop-lts world.base alpine.base rc.base cmdline.base boot/amd-ucode.img boot/intel-ucode.img; do
 			rm -f "$BOOTMNT/$f.new"
 		done
-		for d in apks EFI boot/grub confd.base; do rm -rf "$BOOTMNT/$d.new"; done
+		for d in apks EFI boot/grub confd.base seed.base; do rm -rf "$BOOTMNT/$d.new"; done
 		bad "staging the new system failed (USB full or failing?) — nothing on the USB was changed."
 		_cleanup; trap - EXIT HUP INT TERM
 		return 1
@@ -521,6 +521,36 @@ EOF
 				cp "$f" "/etc/conf.d/$cb.new" 2>/dev/null \
 					&& hint "  shipped default changed: /etc/conf.d/$cb.new (yours is untouched)"
 			fi
+		done
+	fi
+
+	# ---- seed NEW /etc files from the rest of the overlay (create-if-absent) ----
+	# confd.base above covers /etc/conf.d ONLY. Every other file the seed ships
+	# — a new /etc/mountnas/*.conf, a new template, a new protected_paths entry
+	# — used to reach freshly flashed sticks and nothing else, so a release
+	# could add one and no upgraded box would ever see it. Three ad-hoc
+	# workarounds already existed for that gap.
+	# CREATE-IF-ABSENT AND NOTHING ELSE: a file that exists is left exactly as
+	# the user has it, and no .new is written beside it. Unlike conf.d, most of
+	# these files legitimately differ on a configured box (fstab, hostname,
+	# interfaces, smb.conf), so a .new for each would be pure noise at every
+	# upgrade. Modes are set explicitly by path — the source is on FAT, which
+	# reports the mount's fmask rather than the real mode, and two of these
+	# files hold secrets.
+	if [ -d "$BOOTMNT/seed.base/etc" ]; then
+		( cd "$BOOTMNT/seed.base" 2>/dev/null && find etc -type f -print ) 2>/dev/null \
+		| while read -r sf; do
+			[ -n "$sf" ] || continue
+			[ -e "/$sf" ] && continue
+			case "$sf" in
+				etc/msmtprc)   sm=0600 ;;   # holds an SMTP password
+				etc/doas.conf) sm=0400 ;;   # doas refuses a group/world-writable file
+				*)             sm=0644 ;;
+			esac
+			mkdir -p "/${sf%/*}" 2>/dev/null || continue
+			cp "$BOOTMNT/seed.base/$sf" "/$sf" 2>/dev/null \
+				&& chmod "$sm" "/$sf" 2>/dev/null \
+				&& step "  seeded /$sf — new in this release"
 		done
 	fi
 
