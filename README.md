@@ -410,6 +410,14 @@ Recovering a forgotten root password:
 - settings missing after reboot -> confirm `/cfg` is mounted (`nas status`) before `nas commit`.
 - can't find the box -> try `mountnas.local` (mDNS/Avahi), or attach a monitor — the console shows the IP address above the login prompt before you log in.
 - not reachable on the network -> on first boot MountNAS auto-writes a DHCP line for your wired NIC; check the cable/link. To customize (static IP, bond, bridge, VLAN) edit `/etc/network/interfaces` normally, `rc-service networking restart`, `nas commit` — MountNAS won't touch your config once you've set it.
+- wifi only, no wired port -> the auto-config is wired-only, but `wpa_supplicant` and the ifupdown-ng wifi executor are baked in. Add a stanza to `/etc/network/interfaces` (find the interface name with `ip link`), then `rc-service networking restart` and `nas commit`:
+
+  ```text
+  auto wlan0
+  iface wlan0 inet dhcp
+      wifi-ssid MyNetwork
+      wifi-psk  MyPassphrase
+  ```
 - added a custom `/etc/init.d` service and it vanished after reboot -> Alpine's `lbu` deliberately does not track `/etc/init.d` (init scripts belong to packages), so `nas commit` never saved it — the telltale is a surviving `rc-update` symlink in `/etc/runlevels` pointing at a missing script. Track yours explicitly once: `lbu include /etc/init.d/<name>`, then `nas commit`.
 - `nas commit` fails with `tar: empty archive` -> the RAM root is full (check `df -h /`). Free space — or just reboot, which resets RAM — and commit again.
 - two clones in one machine -> don't; both answer to the config label (`MNASCFG`) by design.
@@ -548,6 +556,7 @@ __Networking / Transfer__
 * openssh-client
 * openssh-sftp-server
 * ttyd (browser-based terminal serving a real login prompt — off by default; `nas ttyd on`, port 22222)
+* wpa_supplicant + wpa_supplicant-openrc + ifupdown-ng-wifi (WPA/WPA2 wifi client for a box with no wired port — see [Troubleshooting](#troubleshooting))
 
 __Overlay / Mesh VPN (services OFF by default)__
 

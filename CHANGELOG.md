@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- **Wifi client baked in:** `wpa_supplicant`, `wpa_supplicant-openrc` and
+  `ifupdown-ng-wifi`. The wifi firmware set shipped since alpha-3, but a
+  box with no wired port could not join a network. Configure with
+  `wifi-ssid`/`wifi-psk` in `/etc/network/interfaces` (README
+  "Troubleshooting"); the first-boot auto-config stays wired-only.
 - **Config mirror**: each 'nas commit' and 'nas rollback' copies the
   overlay to /mnt/nasdata/config-backups/ (newest 30, root-only).
   'nas status' and the dashboard show the mirror age. The README

@@ -53,6 +53,13 @@ openssh-sftp-server
 # ttyd: browser-based terminal (the 'nas ttyd' service, OFF by default) —
 # serves a real /bin/login prompt over HTTP on the trusted LAN, port 22222
 ttyd
+# wpa_supplicant: WPA/WPA2 client for a box with no wired port. The wifi
+# firmware set below is useless without it. ifupdown-ng-wifi is the
+# executor that reads wifi-ssid/wifi-psk from /etc/network/interfaces
+# (README "Troubleshooting"); -openrc carries the service script.
+wpa_supplicant
+wpa_supplicant-openrc
+ifupdown-ng-wifi
 
 # --- mesh VPN (services OFF by default) ---
 wireguard-tools
