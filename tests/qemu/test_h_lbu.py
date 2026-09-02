@@ -2,8 +2,9 @@
 
 Guards the beta-3 landmine: /etc/lbu/{include,exclude} are NOT lbu
 interfaces -- the real one is /etc/apk/protected_paths.d/lbu.list with
-+path/-path entries.  These tests assert the real mechanism works and the
-one-time migration of the old files happens.
++path/-path entries.  These tests assert the real mechanism works.  The
+one-time migration of the old files was removed before 1.0 (no public
+release shipped the broken seed), so nothing here covers it.
 """
 
 from __future__ import annotations

@@ -443,7 +443,8 @@ EOF
 # /etc/lbu/{include,exclude} files shipped from alpha-1 through beta-2 were
 # NEVER read by anything: /root, samba passwords, crontabs and VPN identities
 # silently did not persist, and the excluded boot-generated files (/etc/issue)
-# showed as unsaved changes forever. The mountnas service migrates old boxes.
+# showed as unsaved changes forever. (The one-time migration for those boxes
+# was removed before 1.0 — no public release ever shipped the broken seed.)
 mk root:root 0644 "$tmp/etc/apk/protected_paths.d/lbu.list" <<'EOF'
 +usr/local/bin
 +root

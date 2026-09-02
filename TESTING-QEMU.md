@@ -2,7 +2,7 @@
 
 This document covers the self-hosted QEMU test suite in `tests/qemu/`:
 what hardware/VM you need, how to run it on a freshly installed Alpine
-Linux system, how to read the results, and **what every one of the 87
+Linux system, how to read the results, and **what every one of the 89
 tests actually verifies**.
 
 The suite complements — it does not replace — the blocking CI smoke tests
@@ -222,7 +222,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (87 tests)
+## 4. The complete test catalog (89 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -278,7 +278,7 @@ exactly as a new user at a monitor would experience it.
 | `test_backup_restore_drill` **[slow]** | THE restore drill, finally automated: back up a configured box (committed probe file), pull the image to the host, write it to a fresh "stick", **boot it**, and prove the OS + hostname + saved config + release all came back. Until this test, the only rollback net for upgrades had never been booted. |
 | `test_released_image_ships_expected_files` | Packaging integrity against the PURE released image (no dev pushes — the dev_guest pattern would mask an APKBUILD that forgot a file): the full mountnas-tools manifest, the baked-in tools (`btm`/`cyme`/`ttyd`/httpd), and (once shipped) avahi-tools. |
 
-### D — In-place upgrade (`test_d_upgrade.py`, 13 tests, all [upgrade])
+### D — In-place upgrade (`test_d_upgrade.py`, 14 tests, all [upgrade])
 
 The crown jewels. Guest layout mirrors the CI upgrade test: system disk +
 a 12 GB payload disk carrying `new.img.gz` that doubles as TMPDIR scratch.
@@ -300,8 +300,9 @@ image always has something to test the upgrade against.
 | `test_upgrade_from_url` | `nas upgrade https://...` downloads into TMPDIR, re-sniffs the bytes, upgrades, reboots into the right version (served by a suite-local HTTP server). |
 | `test_upgrade_check_against_github` **[network]** | `nas upgrade --check` produces a sane verdict against the live releases API (and a *legible* error if the repo is private — the beta-1 finding). |
 | `test_free_space_precheck_aborts` | With TMPDIR too small for the 3.5 GiB unpack, the upgrade aborts BEFORE touching anything. |
+| `test_runlevel_and_confd_reconciliation` | The upgrade delivers newly enabled services and newly seeded `/etc/conf.d` defaults: a three-way merge against `rc.base` that never undoes a service the user disabled, and create-if-absent against `confd.base` that never overwrites a file the user owns. |
 
-### E — Storage lifecycle (`test_e_storage.py`, 7 tests)
+### E — Storage lifecycle (`test_e_storage.py`, 8 tests)
 
 | Test | What it verifies |
 |---|---|
@@ -311,6 +312,8 @@ image always has something to test the upgrade against.
 | `test_mkdirs_before_localmount_new_mountpoint` | A brand-new fstab mountpoint exists by the time busybox `localmount` runs (the `mountnas-mkdirs` service) — fstab carries no `x-mount.mkdir`, which busybox mount would forward to the kernel and fail the mount at ~3s. |
 | `test_boot_usb_never_treated_as_data_disk` | A `/mnt/*` fstab entry resolving to the boot USB — the one unrecoverable user error — is flagged FAIL by `nas status`. |
 | `test_all_mounts_return_after_reboot` | The whole storage stack (nasdata + extra disk + docker + samba) returns by itself after a reboot, state `ok`. |
+| `test_snapraid_maint_gate_blocks_and_fix_restores` | The parity safety gate: a mass deletion past the threshold BLOCKS the sync, parity still holds the old state, and `snapraid fix` restores the files. |
+| `test_disk_init_mount_snapraid_chain` | The storage chain end to end: `nas disk init` formats a blank disk, writes the fstab line and mounts it, then `nas snapraid add` appends the array lines with the required content copies. |
 
 ### F — Hardware failure & fault injection (`test_f_faults.py`, 10 tests, all [faults])
 
@@ -325,7 +328,7 @@ image always has something to test the upgrade against.
 | `test_netfs_nasdata_refused_services_held` | A network filesystem as `/mnt/nasdata` is refused by design (state `netfs`, services held, box responsive) — a dead remote must never stall the default runlevel. |
 | `test_powercut_mid_mkfs_boots_and_degrades` | Power cut during `mkfs` of a declared disk: next boot reaches SSH; nasdata unaffected; status not wedged. |
 | `test_powercut_mid_lbu_commit_still_boots` | Power cut during `nas commit` (the overlay swap): next boot comes up and a subsequent commit works — never a torn overlay. |
-| `test_corrupt_apkovl_boots_to_defaults` | Garbage written over the active overlay: the diskless init shrugs it off and boots to DEFAULTS (wizard on offer) rather than hanging. |
+| `test_corrupt_apkovl_lands_in_recovery_shell` | Garbage written over the active overlay: the boot stops in the initramfs recovery shell instead of hanging, so the stick is recoverable. |
 
 ### G — Data services (`test_g_services.py`, 4 tests)
 
@@ -364,7 +367,7 @@ user networking.
 | `test_mdns_daemon_advertises_hostname` | avahi is up and `<hostname>.local` resolves to the **LAN-reachable** address (the default-route source), not the Docker bridge — avahi otherwise advertises the hostname on `docker0` (`172.17.0.1`) too and hands it out first. The seed ships `deny-interfaces=docker0` from 1.0rc2; the test self-applies it against older images so the fixed behavior is asserted either way. (avahi-tools ships from beta-7; fetched from the CDN otherwise, skips only when offline.) |
 | `test_hostname_change_regenerates_banner` | `gen-issue` picks up a hostname change and rewrites the banner (the wizard and if-up hook both lean on it). |
 
-### K — Newest features (`test_k_features.py`, 8 tests)
+### K — Newest features (`test_k_features.py`, 11 tests)
 
 These exercise features that exist in the repo but not yet in a published
 image, so each runs on `dev_guest`: a golden guest with the repo's current
@@ -381,6 +384,7 @@ post-reboot assertions read raw files instead of invoking new commands.
 | `test_supervisor_settles_rpcbind_before_nfs` | The nfs/rpcbind race is fixed: from a fully-stopped rpcbind+nfs (the exact boot-time gap), the fixed supervisor settles rpcbind first and brings nfs up via `nas restart` — previously nfs failed at boot and stayed down until a manual restart (caught by the beta-6 validation dashboard render). The boot-*ordering* half (`after rpcbind` in `depend()`) is validated by the beta-7 release run, since a diskless reboot rebuilds the RAM root from the released apk. |
 | `test_ops_log_history_and_no_commit_persistence` | A commit lands in `nas history` with a well-formed record (UTC ts, op, actor with `@`, details), and `/cfg/mountnas-ops.log` survives a reboot **without** any commit — the direct-to-/cfg design. |
 | `test_share_end_to_end_with_real_samba` | 'nas share' against the real samba stack: SMB-only user add, share add via piped answers, an actual smbclient write as the owner, a read-only grant that refuses writes but serves reads, the include landing inside [global] on an upgraded-box smb.conf that ends with a hand-written section (the position samba would otherwise ignore), and remove leaving the hand-written share untouched. |
+| `test_rc_update_guard_redirects_data_services` | The interactive `rc-update` guard intercepts add/del for a supervisor-managed data service and prints the `/etc/conf.d/mountnas` recipe, while every other service and `command rc-update` pass straight through. |
 | `test_user_service_starts_after_world_sync_heal` **[network]** | The supervisor heal: a user-installed service ('apk add X && rc-update add X') whose init script is absent when openrc walks the runlevels — the diskless boot shape — is started by the supervisor once its world re-sync installs the package. The surgical property is asserted too: an enabled-but-stopped service with a resolvable link is not touched. Validated via 'nas restart'; the boot half lands once the supervisor is baked. |
 | `test_web_dashboard_guide_and_json` **[network]** | `nas web on` serves the dashboard (hostname, services, disks, the docker containers table with a live probe container, the hardware-inventory collapsible with `lsusb -tv`/`lspci`/DIMMs), valid `/status.json`, the full `/guide.html`, and the logo; `nas web status` reports running; the enable is in the ops log; `nas web off` stops serving. Installs busybox-extras from the CDN, hence the marker. The rendered page is saved as a report artifact for visual review. |
 | `test_ttyd_browser_terminal` **[network]** | `nas ttyd on` serves the login-prompt terminal on 22222 with the cleartext + commit-honesty warnings, and whitelists ptys in `/etc/securetty` exactly once (root login; idempotency asserted on a second `on`); the dashboard render links "Web terminal" while it runs (and drops the link after `off`); the enable lands in the ops log; `nas ttyd off` stops serving. Installs ttyd from the CDN. |

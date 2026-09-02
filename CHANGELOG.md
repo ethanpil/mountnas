@@ -58,7 +58,7 @@
   read: `/etc/mountnas/notify.conf` is the one place for alert sinks
   (an `email:` line does the same job). UPGRADE.md drops the
   alpha-1/2/3 reflash procedure. Two QEMU tests that covered the shims
-  are removed (suite: 87 tests).
+  are removed (suite: 89 tests).
 
 ### Changed
 - **The `nas` CLI is a file tree.** `/usr/sbin/nas` is a short dispatcher that
