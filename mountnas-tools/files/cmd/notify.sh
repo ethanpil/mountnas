@@ -52,7 +52,7 @@ help_notify() {
 nas notify [--test | <subject> [body]]
   Notification sinks: with no arguments, list what is configured in
   /etc/mountnas/notify.conf (email, ntfy, webhook, slack, discord,
-  gotify — one 'type:target' per line; alert-email still works too).
+  gotify — one 'type:target' per line).
   Disk-loss alerts, SMART trouble and health digests fan out to ALL sinks.
   --test              send a test message to every sink
   <subject> [body]    send an ad-hoc message (cron/script friendly)

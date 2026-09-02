@@ -10,7 +10,7 @@ baseline() {
 	printf 'UUID=aaaa-0002  /mnt/disk1    xfs   rw,noatime,nofail  0 2\n' >> /etc/fstab
 	echo ok > "$STATE/data"
 	: > /etc/apk/protected_paths.d/lbu.list
-	rm -f /etc/conf.d/mountnas /etc/mountnas/notify.conf /etc/mountnas/alert-email \
+	rm -f /etc/conf.d/mountnas /etc/mountnas/notify.conf \
 		/etc/ufw/ufw.conf /etc/exports /etc/snapraid.conf
 	printf '%s %s\n' "$(date +%s)" "$(date '+%Y-%m-%d %H:%M')" > /etc/mountnas/last-backup
 	mkdir -p /etc/docker /etc/samba

@@ -40,12 +40,11 @@ class ReceivedMail:
         return str(msg.get_payload())
 
 
-def configure_guest_msmtp(guest, port: int,
-                          alert_email: str = "alerts@test.local") -> None:
+def configure_guest_msmtp(guest, port: int) -> None:
     """Point the guest's mail pipeline at the host-side sink (10.0.2.2).
 
     Overwrites /etc/msmtprc with a plaintext no-auth account (the shipped
-    file is a commented template) and sets the disk-loss alert address.
+    file is a commented template).
     """
     guest.run(
         "cat > /etc/msmtprc <<'EOF'\n"
@@ -60,8 +59,6 @@ def configure_guest_msmtp(guest, port: int,
         "chmod 600 /etc/msmtprc",
         check=True,
     )
-    guest.run(f"printf '%s\\n' '{alert_email}' > /etc/mountnas/alert-email",
-              check=True)
 
 
 class _Handler(socketserver.StreamRequestHandler):

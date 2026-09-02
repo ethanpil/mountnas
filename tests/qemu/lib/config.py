@@ -55,7 +55,6 @@ STATE_DIR = "/run/mountnas"          # supervisor state ($STATE)
 DATA_MOUNT = "/mnt/nasdata"
 BOOTMNT = "/media/mnasboot"          # the mounted BOOT partition ($BOOTMNT)
 SETUP_DONE = "/etc/mountnas/setup-done"
-ALERT_EMAIL = "/etc/mountnas/alert-email"
 VERSION_FILE = "/usr/share/mountnas/version"
 RELEASE_FILE = "/usr/share/mountnas/release"
 

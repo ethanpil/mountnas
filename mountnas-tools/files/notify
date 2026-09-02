@@ -5,9 +5,8 @@
 #   notify --list                  print the active sinks, one per line
 #
 # Sinks live in /etc/mountnas/notify.conf, one per line as  type:target
-# (see the shipped template). /etc/mountnas/alert-email keeps working as a
-# plain email sink so pre-existing setups need no change. No sinks configured
-# means this is a silent no-op — every caller can invoke it unconditionally.
+# (see the shipped template). No sinks configured means this is a silent
+# no-op — every caller can invoke it unconditionally.
 #
 # Stateless by design: no daemon, nothing resident. It runs only when an
 # event fires (data-watch transition, smartd trouble, failed upgrade, digest,
@@ -15,20 +14,14 @@
 # so a dead sink can never hang a caller like the 15-minute watcher.
 # Exit: 0 when every attempted sink succeeded (or none configured), 1 otherwise.
 CONF=/etc/mountnas/notify.conf
-LEGACY=/etc/mountnas/alert-email
 LOG=/var/log/mountnas.log
 CURL="curl -fsS --max-time 10"
 
 log() { printf '%s notify: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
 
-# Active sinks = non-comment notify.conf lines + the legacy alert-email address
-# (deduped: an address present in both is sent to once).
+# Active sinks = the non-comment notify.conf lines, deduped.
 _sinks() {
-	{
-		sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$CONF" 2>/dev/null
-		la=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LEGACY" 2>/dev/null | head -n1)
-		[ -n "$la" ] && printf 'email:%s\n' "$la"
-	} | sort -u
+	sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$CONF" 2>/dev/null | sort -u
 }
 
 if [ "${1:-}" = "--list" ]; then _sinks; exit 0; fi

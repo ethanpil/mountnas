@@ -313,7 +313,7 @@ DEVICESCAN -n standby,q -m you@example.com
 
 then `rc-service smartd restart && nas commit`. (Boxes seeded before 1.0rc2 shipped without the sink routing — add `-m root -M exec /usr/libexec/mountnas/smartd-notify` to the `DEVICESCAN` line to get it.)
 
-**Disk-loss alerts** (detachment, dead mount, filesystem gone read-only): fire automatically through your sinks — the 15-minute watcher notifies on the transition, once, and tells you the recovery command. (The old `/etc/mountnas/alert-email` file keeps working as one more email sink.) SMART covers a disk *warning* it will fail; this covers a disk that already *vanished*.
+**Disk-loss alerts** (detachment, dead mount, filesystem gone read-only): fire automatically through your sinks — the 15-minute watcher notifies on the transition, once, and tells you the recovery command. SMART covers a disk *warning* it will fail; this covers a disk that already *vanished*.
 
 From cron, pipe anything into a notification: `snapraid sync 2>&1 | nas notify "snapraid sync"`.
 

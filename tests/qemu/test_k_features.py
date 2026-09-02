@@ -65,8 +65,6 @@ def _set_sinks(guest, *sinks: str) -> None:
     # sink URL containing % (URL-encoded tokens) must not be format-parsed
     args = " ".join(f"'{s}'" for s in sinks)
     guest.run(f"printf '%s\\n' {args} > /etc/mountnas/notify.conf", check=True)
-    # keep the legacy file quiet unless a test wants it explicitly
-    guest.run("printf '# none\\n' > /etc/mountnas/alert-email", check=True)
 
 
 # ---------------------------------------------------------------- notify
@@ -75,7 +73,7 @@ def test_notify_fans_out_to_webhook_and_email(dev_guest, smtp_sink, http_server)
     """One --test message must reach EVERY configured sink: a generic JSON
     webhook (host-side catcher) and an email (host-side SMTP sink)."""
     g = dev_guest
-    configure_guest_msmtp(g, smtp_sink.port)   # msmtprc; also sets alert-email
+    configure_guest_msmtp(g, smtp_sink.port)
     _set_sinks(g, f"webhook:http://10.0.2.2:{http_server.port}/hook",
                "email:probe@test.local")
     r = g.run("nas notify --test", timeout=90)

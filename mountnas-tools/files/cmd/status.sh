@@ -141,7 +141,7 @@ cmd_status() {
 	# alerting (data-watch / smartd / upgrades): surface whether any notification
 	# sink is wired and can actually send, so a misconfig is caught now — not
 	# when a disk dies. The notify helper is the single source for the active
-	# sink list (notify.conf + the legacy alert-email address).
+	# sink list (notify.conf).
 	alto=$(/usr/libexec/mountnas/notify --list 2>/dev/null)
 	if [ -n "$alto" ]; then
 		alto_n=$(printf '%s\n' "$alto" | grep -c .)

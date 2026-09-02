@@ -2,7 +2,7 @@
 
 This document covers the self-hosted QEMU test suite in `tests/qemu/`:
 what hardware/VM you need, how to run it on a freshly installed Alpine
-Linux system, how to read the results, and **what every one of the 89
+Linux system, how to read the results, and **what every one of the 87
 tests actually verifies**.
 
 The suite complements — it does not replace — the blocking CI smoke tests
@@ -222,7 +222,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (89 tests)
+## 4. The complete test catalog (87 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -336,17 +336,16 @@ image always has something to test the upgrade against.
 | `test_data_services_absent_from_runlevels` | docker/samba/nfs are in NO runlevel — the mountnas supervisor is their only starter. |
 | `test_vpn_identity_persists_reboot` **[network]** | Mesh VPNs are user-installed now: installs tailscale from the CDN (the one Alpine v3.24 actually carries), then proves the node state (`/var/lib/tailscale`, an lbu include) survives commit + reboot — identity loss would mean a new node ID and re-authorizing everywhere. |
 
-### H — Config persistence / lbu (`test_h_lbu.py`, 5 tests)
+### H — Config persistence / lbu (`test_h_lbu.py`, 4 tests)
 
 | Test | What it verifies |
 |---|---|
 | `test_lbu_include_root_persists` | `/root` is a `+` entry in `/etc/apk/protected_paths.d/lbu.list` and a file there survives commit + reboot — the real lbu mechanism works. |
 | `test_lbu_exclude_not_captured` | `-` entries (e.g. `/etc/issue`, regenerated at boot) are not tracked as unsaved changes. |
-| `test_legacy_lbu_files_migrated_once` | Old-style `/etc/lbu/include` files are merged into `lbu.list` by the mountnas service, parked as `*.migrated`, and the migration is idempotent (no duplicates on a second restart). |
 | `test_apk_shipped_etc_not_in_lbu_status` | apk-shipped files under /etc (profile.d, periodic wrapper) are lbu-excluded — otherwise every commit would capture code the next apk upgrade should own. |
 | `test_user_apk_add_persists_reboot` **[network]** | `apk add` + commit + reboot → the package is back (cache on MNASCFG + the world re-sync in the supervisor). |
 
-### I — Mail pipeline (`test_i_mail.py`, 4 tests)
+### I — Mail pipeline (`test_i_mail.py`, 3 tests)
 
 A suite-local SMTP sink plays the relay; guests reach it through QEMU's
 user networking.
@@ -356,7 +355,6 @@ user networking.
 | `test_msmtprc_shipped_permissions_0600` | `/etc/msmtprc` (it holds a relay password) ships 0600 root:root. |
 | `test_mail_pipeline_delivers_to_sink` **[smoke]** | `mail -s` end-to-end: mailx → msmtp → relay; subject and body arrive intact — proves the `sendmail=`/`mta=` glue in `/etc/mail.rc`. |
 | `test_smartd_test_mail_arrives` | smartd's `-M test` mail traverses the same pipeline, monitored device = an emulated NVMe drive (the one QEMU bus with a SMART health log). |
-| `test_alert_email_comment_stripping` | `/etc/mountnas/alert-email` parsing: comments and blank lines are skipped; the alert goes to the first real address. |
 
 ### J — Network niceties (`test_j_network.py`, 3 tests)
 

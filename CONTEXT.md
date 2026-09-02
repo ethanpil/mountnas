@@ -652,9 +652,10 @@ _reltag sed.
 - nas upgrade sniffs gzip via the 1f 8b magic (filenames lie — a tester's
   browser saved the release as .img.tgz); the sniff also drives the temp-space
   precheck, and URL downloads are re-sniffed after arrival.
-- Disk-loss alerting: data-watch mails the transition when
-  /etc/mountnas/alert-email holds an address (transition-only by construction
-  — the watcher exits early unless the previous state was ok).
+- Disk-loss alerting: data-watch alerts on the transition (transition-only
+  by construction — the watcher exits early unless the previous state was
+  ok). It first read an address from /etc/mountnas/alert-email; that file
+  was removed before 1.0 and notify.conf is the only sink source.
 - nas status and 'nas logs --persist status' surface whether the persistence
   setting is committed (it is /etc config — RAM-only until nas commit).
 
@@ -662,8 +663,7 @@ _reltag sed.
 1.0rc line):**
 - **ONE alert delivery path**: `/usr/libexec/mountnas/notify` fans a
   subject+body out to the `type:target` sinks in `/etc/mountnas/notify.conf`
-  (email/ntfy/webhook/slack/discord/gotify; the legacy `alert-email` address
-  is folded in as one more email sink). data-watch, smartd-notify,
+  (email/ntfy/webhook/slack/discord/gotify). data-watch, smartd-notify,
   health-digest, `nas upgrade` and `nas notify` ALL route through it — never
   send an alert any other way. Stateless (no daemon); every network send is
   bounded (`--max-time 10`) so a dead sink can never hang the 15-min watcher;

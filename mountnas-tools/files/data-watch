@@ -11,8 +11,7 @@ DATA=/mnt/nasdata
 LOG=/var/log/mountnas.log
 log() { printf '%s data-watch: %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; }
 # Push the alert through the notification sinks (/etc/mountnas/notify.conf:
-# email/ntfy/webhook/slack/... — the legacy /etc/mountnas/alert-email address
-# keeps working as an email sink inside the helper). Fires only on the ok->bad
+# email/ntfy/webhook/slack/...). Fires only on the ok->bad
 # TRANSITION: this script exits early unless the state is 'ok', so a flip
 # here can never repeat-spam on later runs. The helper bounds every network
 # send, so a dead sink cannot hang this watcher.
