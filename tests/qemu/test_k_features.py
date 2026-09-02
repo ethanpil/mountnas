@@ -514,11 +514,11 @@ def test_share_end_to_end_with_real_samba(dev_guest):
               timeout=120)
     assert r.rc == 0, f"share add rc={r.rc}:\n{r.out}"
     # the include must be in [global] scope or smbd ignores it silently
-    r = g.run("awk '/^\[/{s=$0} /include = .*mountnas-shares/{print s; exit}'"
+    r = g.run(r"awk '/^\[/{s=$0} /include = .*mountnas-shares/{print s; exit}'"
               " /etc/samba/smb.conf", check=True)
     assert "[handrolled]" not in r.out, \
         f"include landed inside a share section — samba ignores it there: {r.out}"
-    r = g.run("testparm -s 2>/dev/null | grep -A3 '^\[teamdocs\]'", check=True)
+    r = g.run(r"testparm -s 2>/dev/null | grep -A3 '^\[teamdocs\]'", check=True)
     assert "teamdocs" in r.out, "managed share invisible to samba"
     # a REAL write through smbd as alice
     g.run("echo probe > /tmp/upload.txt", check=True)
@@ -540,6 +540,6 @@ def test_share_end_to_end_with_real_samba(dev_guest):
     r = g.run("NO_COLOR=1 nas share list", check=True)
     assert "teamdocs" in r.out and "handrolled" in r.out, r.out
     g.run("printf 'n\n' | nas share remove teamdocs", timeout=60, check=True)
-    g.run("grep -q '^\[handrolled\]' /etc/samba/smb.conf", check=True)
-    r = g.run("testparm -s 2>/dev/null | grep '^\[teamdocs\]'")
+    g.run(r"grep -q '^\[handrolled\]' /etc/samba/smb.conf", check=True)
+    r = g.run(r"testparm -s 2>/dev/null | grep '^\[teamdocs\]'")
     assert r.rc != 0, "share still served after remove"
