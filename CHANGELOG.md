@@ -38,6 +38,10 @@
   the dashboard Protection row and `nas status` show the verdict.
   Thresholds: `/etc/mountnas/snapraid-maint.conf`; history:
   `/mnt/nasdata/snapraid/logs`.
+- **Boot from eMMC / SD:** `mmc_block`, `sdhci`, `sdhci_pci` and
+  `sdhci_acpi` join the kernel cmdline module list, so the image boots
+  from the built-in storage of thin clients and mini-PCs. Not covered by
+  CI; verify on hardware.
 
 ### Removed
 - **Mesh VPNs are no longer baked in** (tailscale, zerotier-one — and the

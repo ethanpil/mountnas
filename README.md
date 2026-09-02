@@ -466,7 +466,7 @@ __Shipped config that differs from stock__
 
 __Boot / image level__
 
-* Kernel cmdline includes disk-bus drivers (ahci/nvme/virtio) so the image also boots as a VM disk, not just a USB stick; the config overlay is found by partition label
+* Kernel cmdline includes disk-bus drivers (ahci/nvme/virtio/mmc) so the image also boots from a VM disk or an eMMC/SD card, not just a USB stick; the config overlay is found by partition label
 * AMD + Intel early CPU microcode shipped as boot addons
 * The `linux-lts` apk is deliberately absent from the on-media repo — kernel updates arrive only via `nas upgrade` replacing `/boot`
 * ufw baked in but shipped **disabled** — its service idles in the boot runlevel as a quiet no-op (`/etc/conf.d/ufw`) until `ufw enable`, then rules load before networking at every boot (see [Firewall](#firewall))

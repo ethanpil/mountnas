@@ -537,8 +537,9 @@ resize, disks --json, nas report, data-watch/bind mounts, dead-mount recovery,
    **single source**: `scripts/cmdline.base` — `mkimg.nas.sh` reads it (via
    `CMDLINE_FILE`), `build.yml` copies it onto BOOT, and `write-bootcfg` reads the
    on-media copy (no baked-in fallback; it fails loudly if the file is missing).
-   eMMC/SD boot (mmc_block/sdhci) is a known gap to evaluate if such hardware
-   shows up — the `mmc` mkinitfs feature is present in the standard profile.
+   eMMC/SD boot: `mmc_block,sdhci,sdhci_pci,sdhci_acpi` are in the list (the
+   `mmc` mkinitfs feature ships them in the initramfs). Not covered by CI —
+   QEMU's sdhci emulation is not wired into the suite; verify on hardware.
 
 **Known bug (ROOT CAUSE FOUND, fixed in alpha-4) — in-place upgrade failed at
 `copy-modloop`.** The CI upgrade test + a live-box diagnostic session nailed it:
