@@ -70,10 +70,6 @@ _is_placeholder() {
 	while [ "$_ip" != "/" ] && [ "${_ip%/}" != "$_ip" ]; do _ip=${_ip%/}; done
 	awk -v m="$_ip" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts
 }
-# Bring ONE declared /mnt mountpoint to a defined state: clear a dead or
-# leftover-placeholder mount, try its fstab entry once, then cover it with the
-# read-only placeholder if that failed. Shared by the boot pass and the
-# deferred pass below so both behave identically.
 # Clear anything at $1 that is mounted but is NOT a real filesystem:
 #   - our own placeholder, which 'mountpoint -q' cannot tell from a disk. It
 #     is not a disk, so leaving it makes the retry look unnecessary and
@@ -96,6 +92,10 @@ _clear_stale_mount() {
 	fi
 }
 
+# Bring ONE declared /mnt mountpoint to a defined state: clear a dead or
+# leftover-placeholder mount, try its fstab entry once, then cover it with the
+# read-only placeholder if that failed. Shared by the boot pass and the
+# deferred pass below so both behave identically.
 _settle_mp() {
 	smp=$1
 	# a real, readable filesystem is already here — nothing to do
