@@ -74,23 +74,35 @@ _is_placeholder() {
 # leftover-placeholder mount, try its fstab entry once, then cover it with the
 # read-only placeholder if that failed. Shared by the boot pass and the
 # deferred pass below so both behave identically.
+# Clear anything at $1 that is mounted but is NOT a real filesystem:
+#   - our own placeholder, which 'mountpoint -q' cannot tell from a disk. It
+#     is not a disk, so leaving it makes the retry look unnecessary and
+#     strands a drive the user just plugged back in.
+#   - a mount whose device was detached: /proc/mounts still lists it while
+#     every access returns EIO (beta-1 test 13 note B).
+# A healthy mount is left alone. Shared by _settle_mp and the $DATA tier
+# because those two had their own copies of this and diverged once already;
+# a placeholder the $DATA copy failed to recognise is how Docker, Samba and
+# NFS came up against an empty read-only tmpfs where the user's data was.
+_clear_stale_mount() {
+	_csm=$1
+	mountpoint -q "$_csm" || return 0
+	if _is_placeholder "$_csm"; then
+		log "$_csm still carries a placeholder — clearing it to retry the real mount"
+		umount -l "$_csm" 2>>"$LOG" || true
+	elif ! ls "$_csm" >/dev/null 2>&1; then
+		log "$_csm is a dead mount (EIO) — clearing with umount -l"
+		umount -l "$_csm" 2>>"$LOG" || true
+	fi
+}
+
 _settle_mp() {
 	smp=$1
-	if mountpoint -q "$smp"; then
-		if _is_placeholder "$smp"; then
-			# A placeholder is not a disk. Leaving one here would make the
-			# retry below look unnecessary and strand a reattached drive.
-			log "$smp still carries a placeholder — clearing it to retry the real mount"
-			umount -l "$smp" 2>>"$LOG" || true
-		elif ls "$smp" >/dev/null 2>&1; then
-			return 0
-		else
-			# A mountpoint can outlive a detached device: /proc/mounts still
-			# lists it while every access returns EIO (beta-1 test 13 note B).
-			log "$smp is a dead mount (EIO) — clearing with umount -l"
-			umount -l "$smp" 2>>"$LOG" || true
-		fi
+	# a real, readable filesystem is already here — nothing to do
+	if mountpoint -q "$smp" && ! _is_placeholder "$smp" && ls "$smp" >/dev/null 2>&1; then
+		return 0
 	fi
+	_clear_stale_mount "$smp"
 	mkdir -p "$smp"
 	# Ask the KERNEL whether the mount happened. Do not read mount's status.
 	# Every data entry carries 'nofail', because the README requires it.
@@ -333,22 +345,13 @@ start() {
 		_drain_deferred
 		return 0
 	fi
-	# clear a dead mount left by a detached device before retrying (same EIO
-	# case as the loop above — a bind-mounted nasdata whose backing disk was
-	# reattached could otherwise only recover via reboot)
-	# A placeholder that survived an earlier stop() (its umount can fail with
-	# EBUSY when anything sits inside it) is NOT a disk, and 'mountpoint -q'
-	# cannot tell them apart. Without this the supervisor declared the data
-	# tier healthy and started Docker, Samba and NFS against an empty
-	# read-only tmpfs: Samba then served an empty share where the user's data
-	# was, and every status surface reported ok.
-	if _is_placeholder "$DATA"; then
-		log "$DATA still carries a placeholder — clearing it to retry the real mount"
-		umount -l "$DATA" 2>>"$LOG" || true
-	elif mountpoint -q "$DATA" && ! ls "$DATA" >/dev/null 2>&1; then
-		log "$DATA is a dead mount (EIO) — clearing with umount -l"
-		umount -l "$DATA" 2>>"$LOG" || true
-	fi
+	# Clear a placeholder left by an earlier stop() (its umount can fail with
+	# EBUSY when anything sits inside it) or a dead mount left by a detached
+	# device, before retrying. Both are invisible to 'mountpoint -q': without
+	# this the supervisor declared the data tier healthy and started Docker,
+	# Samba and NFS against an empty read-only tmpfs, so Samba served an empty
+	# share where the user's data was and every status surface said ok.
+	_clear_stale_mount "$DATA"
 	# retry /mnt/nasdata once (local disk; safe, no hang). No placeholder exists
 	# here — the loop above skipped it and stop() clears placeholders on restart.
 	if ! mountpoint -q "$DATA"; then
