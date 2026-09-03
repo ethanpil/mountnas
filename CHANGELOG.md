@@ -31,6 +31,11 @@
 - 'nas status' refuses the SnapRAID parity-size check when a member disk is
   not mounted. It measured the 4 KB placeholder and reported parity healthy
   on a dead array.
+- The dashboard says 'firewall state unknown' when the status run behind it
+  is degraded. It told the owner of a firewalled box that every port was
+  open.
+- UPGRADE.md said the upgrade refreshes ldlinux.c32. The opposite is true.
+  Hand-copying it from a newer syslinux stops a BIOS box from booting.
 - 'nas status' no longer probes a sleeping disk. The new checks used blkid
   and a directory read on the fast path, which can wake an array.
 
