@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.2] — 2026-09-03
 
 ### Fixed
 - A missing data disk was left WRITABLE on the RAM root. Data entries
