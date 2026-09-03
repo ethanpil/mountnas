@@ -2,7 +2,7 @@
 
 This document covers the self-hosted QEMU test suite in `tests/qemu/`:
 what hardware/VM you need, how to run it on a freshly installed Alpine
-Linux system, how to read the results, and **what every one of the 107
+Linux system, how to read the results, and **what every one of the 108
 tests actually verifies**.
 
 The suite complements — it does not replace — the blocking CI smoke tests
@@ -222,7 +222,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (107 tests)
+## 4. The complete test catalog (108 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -406,7 +406,7 @@ parity before and after, because a refusal is worthless if parity moved.
 | `test_whole_disk_loss_rebuilds_from_parity` | The whole promise: a data disk is destroyed and every file returns from parity, byte for byte. Also proves the content-copy rule, since the copy on the parity disk is the only one that survives. |
 | `test_blocked_run_alerts_through_sinks` | A blocked sync reaches the notification sinks. A block nobody hears about is not a protection. |
 
-### M — Homelab failure modes (`test_m_resilience.py`, 12 tests)
+### M — Homelab failure modes (`test_m_resilience.py`, 13 tests)
 
 The messy states a NAS actually reaches. The shared property is HONESTY: a
 NAS may degrade, but it may not degrade silently, wedge the boot, or report
@@ -426,6 +426,7 @@ health it does not have.
 | `test_full_ram_root_never_destroys_the_overlay` | Succeeding under memory pressure is correct. The invariant is that a commit which cannot finish leaves the previous overlay intact and readable. |
 | `test_duplicate_filesystem_label_is_not_silently_ambiguous` | Cloning a disk copies its label, after which a `LABEL=` spec resolves to whichever device enumerated first and can change across reboots. |
 | `test_wrong_clock_does_not_destroy_the_newest_mirror` | Repurposed hardware has dead CMOS batteries. The config mirror prunes by the stamp in the name, so a backwards clock must not delete the mirror just written. |
+| `test_bind_under_a_missing_data_disk_is_not_writable` | A bind whose source is under `/mnt/nasdata`, with the data disk absent. The supervisor holds the entry back until the disk is up, so the target must not be left a bare writable directory on the RAM root. The assertion is on the write, not on the placeholder. |
 
 ## 5. Troubleshooting
 

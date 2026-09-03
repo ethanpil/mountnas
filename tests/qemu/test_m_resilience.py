@@ -563,3 +563,73 @@ def test_full_boot_media_is_reported(golden_guest):
     finally:
         g.run("rm -f /media/mnasboot/BALLAST", timeout=300)
         g.run("mount -o remount,ro /media/mnasboot")
+
+
+# ------------------------------------ a bind whose source disk never arrived
+
+@pytest.mark.faults
+@pytest.mark.slow
+def test_bind_under_a_missing_data_disk_is_not_writable(guest_factory,
+                                                       overlay_disks, golden):
+    """A bind whose SOURCE is under /mnt/nasdata, with the data disk absent.
+
+    The supervisor holds such an entry back until the data disk is up --
+    binding it early would pin an empty directory on the RAM root. That
+    queue was drained only on the path where the disk actually MOUNTED, so
+    on every failure path the bind target stayed a bare writable directory
+    on tmpfs. A Samba share, an NFS export or a container bind pointed
+    there then writes into RAM until the box dies: the exact outage the
+    placeholder exists to prevent, reached through the code added to
+    prevent it.
+
+    The assertion is on the WRITE, not on the placeholder. A placeholder is
+    the mechanism; an accepted write is the harm.
+    """
+    sysd, datad = overlay_disks(prefix="bind")
+    base = [DiskSpec(str(sysd))]
+    g1 = guest_factory(base + [DiskSpec(str(datad), serial="NASDATA0")],
+                       name="bind-a", ssh_key=golden.ssh_key)
+    g1.wait_ssh()
+    g1.run("mkdir -p /mnt/nasdata/media", check=True)
+    g1.run("printf '%s\n' '/mnt/nasdata/media /mnt/media none bind,nofail 0 0'"
+           " >> /etc/fstab", check=True)
+    g1.run("nas commit -m 'bind fstab'", timeout=180, check=True)
+    _poweroff(g1)
+
+    # boot with the data disk GONE. The released image's supervisor ran at
+    # boot, so the fixed code has to be pushed and asked to run -- the same
+    # arrangement the late-disk test above explains.
+    g2 = guest_factory(base, name="bind-b", ssh_key=golden.ssh_key,
+                       throwaway=[sysd, datad])
+    g2.wait_ssh(timeout=420)
+    _push_tools(g2)
+    g2.run("rc-service mountnas restart", timeout=240)
+
+    blocked = ""
+    for _ in range(18):
+        blocked = g2.run("awk '$1==\"mountnas-blocked\"{print $2}'"
+                         " /proc/mounts").out
+        if "/mnt/media" in blocked.split():
+            break
+        time.sleep(10)
+
+    w = g2.run("if echo payload > /mnt/media/probe 2>/dev/null;"
+               " then echo WRITABLE; else echo REFUSED; fi")
+    if "WRITABLE" in w.out:
+        raise AssertionError(
+            "a bind under an ABSENT data disk accepted a write to the RAM "
+            "root -- this is how a share fills tmpfs and stops the box\n"
+            f"--- blocked mounts ---\n{blocked}\n"
+            f"--- /proc/mounts (/mnt) ---\n"
+            f"{g2.run('grep /mnt /proc/mounts || true').out}\n"
+            f"--- ls /mnt ---\n{g2.run('ls -la /mnt/ || true').out}\n"
+            f"--- supervisor log ---\n"
+            f"{g2.run('cat /var/log/mountnas.log || true').out}")
+    assert "/mnt/media" in blocked.split(), (
+        "the bind target was refused a write but carries no placeholder, so "
+        "the refusal is incidental rather than the supervisor's doing; "
+        f"blocked mounts: {blocked!r}")
+    # and /mnt/nasdata itself, the case that was already covered, still holds
+    assert "/mnt/nasdata" in blocked.split(), (
+        f"the data mountpoint lost its placeholder: {blocked!r}")
+    g2.screenshot("bind-under-missing-data-disk")
