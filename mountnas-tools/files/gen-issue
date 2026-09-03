@@ -32,5 +32,17 @@ ips=$(ip -4 -o addr show scope global 2>/dev/null | awk '{sub(/\/.*/,"",$4); pri
 	if [ -n "$mem_kb" ] && [ "$mem_kb" -lt 3500000 ]; then
 		printf '  NOTE: only %s MB RAM — 4 GB+ recommended (the OS runs from RAM)\n' "$((mem_kb/1024))"
 	fi
+	# A dead modloop is the one failure where this banner is the ONLY way to
+	# reach the owner: no modules means no af_packet, so the box never gets an
+	# address and neither SSH, the dashboard nor the notify sinks can carry
+	# the news. It also explains the symptom they are actually looking at --
+	# a NAS that answers on nothing. Printed last so it sits directly above
+	# the login prompt.
+	if ! /usr/libexec/mountnas/modules-ok 2>/dev/null; then
+		printf '\n  *** KERNEL MODULES MISSING — the modloop did not mount ***\n'
+		printf '  No network drivers, no zram, and data disks may not mount.\n'
+		printf '  The USB stick is probably failing. Re-flash it: your config is\n'
+		printf '  saved on the MNASCFG partition and mirrored to the data disk.\n'
+	fi
 	printf '  Console login: root   then run: nas setup\n\n'
 } > /etc/issue 2>/dev/null || true

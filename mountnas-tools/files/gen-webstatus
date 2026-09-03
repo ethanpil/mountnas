@@ -393,6 +393,15 @@ done
 # ufw.conf with NO chains loaded, a box that believes it is firewalled and is
 # silently wide open — rendered as the grey "disabled (shipped default)" pill,
 # indistinguishable from a deliberately open box.
+# Kernel modules. A dead modloop leaves the box running with none, which
+# breaks zram, the network drivers and any filesystem not built into the
+# kernel -- and Alpine boots straight past it. Read from the same status JSON
+# as the firewall verdict, and shown ONLY when broken: a healthy box needs no
+# pill for something that is true on every box, but a broken one must not be
+# able to look identical to it.
+if [ "$(printf '%s' "$sj" | jq -r '.kernel_modules // "unknown"')" = missing ]; then
+	services="$services <span class=\"pill p-fail\"><i></i>no kernel modules</span>"
+fi
 fw_state=$(printf '%s' "$sj" | jq -r '.firewall // "unknown"')
 if [ "$fw_state" = active ]; then
 	services="$services <span class=\"pill p-ok\"><i></i>ufw</span>"

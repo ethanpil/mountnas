@@ -142,6 +142,18 @@ start() {
 	fi
 	log "storage check starting"
 
+	# A failed modloop is not fatal to Alpine: it boots on to a login prompt
+	# with no loadable modules at all. Say so on the console while somebody is
+	# still watching the boot, and in the log for afterwards. Deliberately NO
+	# notify call here -- this runs before busybox init starts the gettys, so a
+	# bounded-but-real network send would delay console login, and the same
+	# missing af_packet usually means there is no network to send on. The
+	# 15-minute data-watch carries the alert if a network does exist.
+	if ! /usr/libexec/mountnas/modules-ok 2>/dev/null; then
+		log "kernel modules MISSING for $(uname -r) — the modloop did not mount"
+		eerror "Kernel modules MISSING — the modloop did not mount. No zram, no network drivers, and data disks may not mount. The boot media is probably failing; re-flash it (config is on /cfg and mirrored to the data disk)."
+	fi
+
 	# Default login shell is bash (1.0rc7): switch root ONCE off the stock
 	# /bin/sh. Marker-guarded — a user who later chsh's to ash/zsh on
 	# purpose is never fought; only the stock value is upgraded.

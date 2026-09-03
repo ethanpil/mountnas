@@ -145,42 +145,44 @@ def test_corrupt_modloop_fails_visibly(guest_factory, overlay_disks, golden):
 
     g2 = guest_factory(disks, name="rot-b", ssh_key=golden.ssh_key,
                        throwaway=[sysd, datad])
-    booted = True
-    try:
-        g2.wait_ssh(timeout=240)
-    except Exception:
-        booted = False
-    g2.screenshot("corrupt-modloop-boot")
-    if booted:
-        # If it does come up, it must NOT claim to be healthy: no modules
-        # means no data disk, and status has to say so.
-        st = g2.run("nas status", timeout=180)
-        assert st.rc != 0, \
-            "booted with a corrupt modloop and still reported a clean status"
-        return
-    # The fail-safe path must be ASSERTED, not assumed. A bare 'except' here
-    # swallows every harness failure too -- a QEMU launch error, a port
-    # collision, a host-side ssh timeout -- and an empty branch would score
-    # all of them as a pass, making this test permanently green. Require
-    # positive evidence that the BOOT is what stopped: the serial console has
-    # to show the modloop failing, not a login prompt.
+    # SSH is NOT a proxy for "did it boot". af_packet is a MODULE, so a
+    # modules-less box cannot bring its NIC up, udhcpc never runs and nothing
+    # answers on port 22 -- while the box itself boots all the way to a login
+    # prompt and starts Docker, Samba and NFS. Judging by SSH scored that as
+    # "refused to boot", the exact opposite of what happened. Read the
+    # console instead.
+    slog = Path(g2.log_dir) / "serial.log"
+    deadline = time.time() + g2.cfg.scaled(420)
     serial = ""
-    for cand in (getattr(g2, "serial_log_path", None),
-                 getattr(g2, "log_dir", None)):
-        if not cand:
-            continue
-        p = Path(cand)
-        p = p if p.is_file() else next(iter(sorted(p.glob("*serial*"))), None)
-        if p and p.is_file():
-            serial = p.read_text(errors="replace")
+    reached_login = False
+    while time.time() < deadline:
+        serial = slog.read_text(errors="replace") if slog.exists() else ""
+        if "login:" in serial.lower():
+            reached_login = True
             break
-    assert serial, "guest did not boot AND no serial log was captured to prove why"
+        time.sleep(5)
+    g2.screenshot("corrupt-modloop-boot")
+    assert serial, "no serial log was captured, so nothing can be concluded"
     low = serial.lower()
-    assert ("modloop" in low or "squashfs" in low
-            or "emergency" in low or "initramfs" in low), \
-        f"boot stopped, but the console never blamed the modloop:\n{serial[-3000:]}"
-    assert "login:" not in low, \
-        "the console reached a login prompt, so the boot did not actually stop"
+    # First: prove the corruption actually took. Without this the test can
+    # pass on a box whose modloop was fine, which is what an earlier version
+    # did when the random bytes landed in a page nothing read.
+    assert ("modloop failed" in low or "failed to verify" in low
+            or "squashfs" in low), \
+        f"the modloop corruption had no visible effect:\n{serial[-3000:]}"
+
+    if not reached_login:
+        return          # refusing to boot is the acceptable outcome
+
+    # It booted. Then it must NOT look healthy. There is no network here
+    # (see above), so this has to be asked over the serial console.
+    g2.login_serial(password=golden.password, timeout=g2.cfg.scaled(300))
+    st = g2.run_serial("NO_COLOR=1 nas status; echo RC=$?", timeout=240)
+    assert "RC=0" not in st.out, (
+        "the box booted with NO kernel modules -- no zram, no af_packet, no "
+        "filesystem modules -- started Docker, Samba and NFS, and still "
+        "reported a clean status. A NAS that looks healthy and serves "
+        f"nothing is worse than one that plainly refuses:\n{st.out[-3000:]}")
 
 
 # ------------------------------------------------------------ disk full

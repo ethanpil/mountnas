@@ -419,6 +419,7 @@ Recovering a forgotten root password:
   ```
 - added a custom `/etc/init.d` service and it vanished after reboot -> Alpine's `lbu` deliberately does not track `/etc/init.d` (init scripts belong to packages), so `nas commit` never saved it — the telltale is a surviving `rc-update` symlink in `/etc/runlevels` pointing at a missing script. Track yours explicitly once: `lbu include /etc/init.d/<name>`, then `nas commit`.
 - `nas commit` fails with `tar: empty archive` -> the RAM root is full (check `df -h /`). Free space — or just reboot, which resets RAM — and commit again.
+- box boots but nothing is reachable, and the console says `KERNEL MODULES MISSING` -> the modloop (the squashfs holding every kernel module) did not mount, so there is no network driver, no zram and no filesystem driver beyond what is built into the kernel. Alpine does not treat this as fatal, so the box boots on and looks alive. It almost always means the USB stick is failing. Re-flash it — your settings are on the `MNASCFG` partition and mirrored to `/mnt/nasdata/config-backups` (see *Recovery from a dead USB*). `nas status` names it too, if you can reach a console.
 - two clones in one machine -> don't; both answer to the config label (`MNASCFG`) by design.
 
 ## What's different from stock Alpine

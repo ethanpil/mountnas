@@ -415,7 +415,7 @@ health it does not have.
 | Test | What it verifies |
 |---|---|
 | `test_powercut_mid_parity_sync_array_recovers` | Power is cut during the one operation that rewrites parity. The box boots, a fresh sync completes, and the data verifies against parity. |
-| `test_corrupt_modloop_fails_visibly` | The modloop carries every kernel module and USB flash is the most failure-prone part of the design. A corrupt one must stop the boot, not bring up a box that serves nothing while looking healthy. |
+| `test_corrupt_modloop_fails_visibly` | The modloop carries every kernel module and USB flash is the most failure-prone part of the design. Alpine boots straight past a corrupt one, so the box must not look healthy: it judges the boot from the SERIAL console (a modules-less box has no network, so SSH is not a proxy for booting) and requires `nas status` to report the failure. |
 | `test_data_disk_full_is_reported_before_it_is_an_outage` | A full data disk stops writes, Docker and logging. `nas status` must say so before the consequence arrives. |
 | `test_full_cfg_partition_is_reported` | The quietest serious failure: a full `/cfg` stops `nas commit` saving, so settings stop persisting with nobody told. |
 | `test_full_boot_media_is_reported` | `nas upgrade` stages the new system beside the old, so the boot media needs headroom or the upgrade fails partway. |

@@ -22,6 +22,18 @@ _alert() {
 		|| log "alert notification failed (some or all sinks)"
 }
 
+# Kernel modules are checked BEFORE the data-state early exit below: a dead
+# modloop is independent of the data disk, and it is the loudest early sign
+# that the boot media is failing. One alert per boot -- the marker lives on
+# the tmpfs $STATE, so a reboot re-arms it. Best effort by nature: this is
+# exactly the state where af_packet is missing and there is no network to
+# send on, which is why gen-issue also puts the warning on the console.
+if ! /usr/libexec/mountnas/modules-ok 2>/dev/null && [ ! -e "$STATE/.modloop-alerted" ]; then
+	: > "$STATE/.modloop-alerted" 2>/dev/null
+	log "kernel modules MISSING for $(uname -r) — the modloop did not mount; re-flash the boot media"
+	_alert "kernel modules MISSING — the modloop did not mount (failing boot media?)"
+fi
+
 [ "$(cat "$STATE/data" 2>/dev/null)" = ok ] || exit 0
 spec=$(awk '$1!~/^#/ && $2=="/mnt/nasdata"{print $1; exit}' /etc/fstab)
 [ -n "$spec" ] || exit 0

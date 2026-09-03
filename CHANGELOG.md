@@ -36,6 +36,13 @@
   open.
 - UPGRADE.md said the upgrade refreshes ldlinux.c32. The opposite is true.
   Hand-copying it from a newer syslinux stops a BIOS box from booting.
+- A corrupt modloop is now reported. The box came up with NO kernel
+  modules -- no zram, no network driver, no filesystem driver that is not
+  built into the kernel -- started Docker, Samba and NFS, and said nothing.
+  Alpine does not treat a failed modloop as fatal, so MountNAS must report
+  it: 'nas status' FAILs, the console banner names it (the only channel
+  left when there is no network), the supervisor logs it and the dashboard
+  shows it. It is the loudest early sign that the boot media is failing.
 - 'nas status' no longer probes a sleeping disk. The new checks used blkid
   and a directory read on the fast path, which can wake an array.
 

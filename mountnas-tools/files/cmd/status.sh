@@ -178,6 +178,15 @@ cmd_status() {
 	else
 		hint "alerts off (add sinks to /etc/mountnas/notify.conf — email/ntfy/webhook/...)"
 	fi
+	# kernel modules: a failed modloop is the loudest early sign the boot
+	# media is dying, and Alpine boots straight past it. Checked BEFORE swap
+	# because it explains a missing zram rather than leaving it a mystery.
+	if /usr/libexec/mountnas/modules-ok; then
+		ok "kernel modules present ($(uname -r))"; _rec MOD ok
+	else
+		bad "kernel modules MISSING for $(uname -r) — the modloop did not mount. No zram, no network drivers, and any filesystem not built into the kernel cannot mount. The boot media is probably failing: re-flash the stick (your config is on $CFG and mirrored to $DATA/config-backups)"
+		_rec MOD missing
+	fi
 	# swap (zram): shipped on, so a box with none has either turned it off
 	# deliberately or lost the service — either way that is a hint, not a
 	# warning, but it must be VISIBLE: without this a thrashing box and a
@@ -511,6 +520,7 @@ cmd_status_json() {
 	  config_partition:$cfg, data_disk:$data,
 	  services: [$r[] | select(.[0]=="SVC") | {name:.[1], running:(.[2]=="true")}],
 	  firewall: (msgs("FW")[0] // "unknown"),
+	  kernel_modules: (msgs("MOD")[0] // "unknown"),
 	  memory: $memory,
 	  unsaved_changes:$unsaved, last_backup_epoch:$last_backup_epoch, deep:$deep,
 	  snapraid_last_run: (if $snapraid_last_run == "" then null else $snapraid_last_run end),

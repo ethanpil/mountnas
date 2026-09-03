@@ -17,6 +17,11 @@ baseline() {
 	# the FAIL breaks the exit code, for reasons that have nothing to do with
 	# the code under test.
 	stub df 'echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/x 1000000 400000 600000 40% /p"'
+	# Kernel modules: the check is a real stat against /lib/modules, not a
+	# stubbed command, so the healthy baseline has to provide one. A throwaway
+	# chroot has no /lib/modules at all, which would otherwise FAIL every
+	# status test in this file for the wrong reason.
+	mkdir -p "/lib/modules/$(uname -r)"; : > "/lib/modules/$(uname -r)/modules.dep"
 	: > /etc/apk/protected_paths.d/lbu.list
 	rm -f /etc/conf.d/mountnas /etc/mountnas/notify.conf \
 		/etc/ufw/ufw.conf /etc/exports /etc/snapraid.conf
@@ -73,6 +78,7 @@ assert_match '\[ OK \] samba path /mnt/disk1/media on a mounted fs' "$OUT"
 assert_match '\[ OK \] docker/samba/nfs not in a runlevel' "$OUT"
 assert_match 'all [0-9]+ checks passed' "$OUT"
 assert_nomatch '\[FAIL\]' "$OUT"
+assert_match '\[ OK \] kernel modules present' "$OUT"
 [ ! -s "$STATE/probe-blkid" ] \
 	|| fail "nas status called blkid — that probe spins up a sleeping array, on a path that also runs every 2 minutes behind the dashboard"
 
@@ -237,6 +243,24 @@ assert_eq true "$(printf '%s' "$b" | jq -r .deep)" "--deep reached the JSON (rev
 run_nas status --json
 assert_eq false "$(printf '%s' "$OUT" | jq -r .deep)" "plain --json is not deep"
 assert_eq "$(printf '%s' "$a" | jq -S 'del(.uptime_seconds, .memory)')" "$(printf '%s' "$b" | jq -S 'del(.uptime_seconds, .memory)')"
+
+t "a dead modloop (no loadable kernel modules) FAILS status"
+# The defect the 1.0.2rc2 full run exposed: a corrupt modloop leaves the box
+# running with NO modules -- no zram, no af_packet so no network at all, and
+# no filesystem driver that is not built into the kernel -- and Alpine boots
+# straight past it to a login prompt, starting Docker, Samba and NFS. Nothing
+# reported it. 'nas status' had no modloop coverage whatsoever.
+baseline; rm -f "/lib/modules/$(uname -r)/modules.dep"
+run_nas status
+assert_rc 1
+assert_match '\[FAIL\] kernel modules MISSING' "$OUT"
+assert_match 'modloop did not mount' "$OUT"
+assert_match 're-flash the stick' "$OUT" "the message must carry the recovery"
+# and the machine-readable surface the dashboard reads
+run_nas status --json
+assert_eq missing "$(printf '%s' "$OUT" | jq -r .kernel_modules)"
+baseline; run_nas status --json
+assert_eq ok "$(printf '%s' "$OUT" | jq -r .kernel_modules)"
 
 t "snapraid parity sizing is refused when a member is not on its disk"
 # df measures the filesystem AT the path. When a data disk is down that path

@@ -62,6 +62,7 @@ package() {
 	install -Dm644 "$startdir"/files/web-guide.html "$pkgdir"/usr/share/mountnas/web/guide.html
 	install -Dm644 "$startdir"/files/web-logo.png   "$pkgdir"/usr/share/mountnas/web/logo.png
 	install -Dm755 "$startdir"/files/release-string "$pkgdir"/usr/libexec/mountnas/release-string
+	install -Dm755 "$startdir"/files/modules-ok    "$pkgdir"/usr/libexec/mountnas/modules-ok
 	install -Dm755 "$startdir"/files/periodic-datawatch "$pkgdir"/etc/periodic/15min/mountnas-datawatch
 	install -Dm755 "$startdir"/files/issue-ifupdown "$pkgdir"/etc/network/if-up.d/mountnas-issue
 	install -Dm644 "$startdir"/files/profile-nas-welcome.sh "$pkgdir"/etc/profile.d/nas-welcome.sh

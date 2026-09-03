@@ -1,0 +1,28 @@
+#!/bin/sh
+# modules-ok — exit 0 when this kernel's modules can actually be loaded.
+#
+# Alpine mounts the modloop squashfs at /.modloop and points /lib/modules
+# into it. USB flash is the most failure-prone part of this whole design, and
+# a rotting stick (or a torn modloop write) leaves the box RUNNING with no
+# loadable modules at all:
+#
+#   - no zram, on a box whose root filesystem IS RAM
+#   - no af_packet, so udhcpc cannot open its socket and the box never gets
+#     an address — it looks DEAD on the network rather than degraded
+#   - no filesystem driver that is not already built into the kernel, so a
+#     data disk can silently fail to mount
+#
+# Alpine does not treat a failed modloop as fatal and boots on to a login
+# prompt, starting every service. Nothing else notices, so MountNAS has to be
+# the one that says it out loud. See 'nas status', gen-issue and the
+# supervisor, which all ask this.
+#
+# modules.dep is the index modprobe itself reads, so its absence IS the
+# failure however it was caused. Deliberately NOT 'mountpoint -q /.modloop':
+# 'nas upgrade' (_free_modloop) copies the modules to RAM and unmounts the
+# modloop ON PURPOSE, and such a box is healthy until it reboots — a mount
+# test would cry wolf after every single upgrade.
+#
+# One stat, no device I/O, so this is safe on the fast path that must never
+# spin up a sleeping disk.
+[ -f "/lib/modules/$(uname -r)/modules.dep" ]
