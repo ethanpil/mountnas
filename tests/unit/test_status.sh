@@ -47,6 +47,19 @@ baseline() {
 	stub free 'echo "Mem: 4000 1000 3000"'
 	stub iptables 'exit 1'
 	stub hdparm 'echo " drive state is:  standby"'
+	# A status run must never wake a sleeping array disk. It runs on demand,
+	# from the shell prompt banner, and every 2 minutes behind the dashboard,
+	# so one device probe here is a spin-up every 2 minutes forever. blkid is
+	# the way that happens: it scans every device and re-probes a cold cache.
+	# The duplicate-spec check used 'blkid -t' until it was replaced with a
+	# single lsblk pass over the udev database, which reads no devices.
+	# The stub records to a FILE, not to stderr: real callers redirect
+	# (the check that was removed ran 'blkid -t ... 2>/dev/null'), and a
+	# stderr marker is silently swallowed by exactly the code shape this
+	# guards against. Verified by injecting a redirected blkid call and
+	# confirming this catches it.
+	rm -f "$STATE/probe-blkid"
+	stub blkid "echo called >> $STATE/probe-blkid; exit 1"
 }
 
 t "healthy box: exit 0, compact ok lines"
@@ -60,6 +73,8 @@ assert_match '\[ OK \] samba path /mnt/disk1/media on a mounted fs' "$OUT"
 assert_match '\[ OK \] docker/samba/nfs not in a runlevel' "$OUT"
 assert_match 'all [0-9]+ checks passed' "$OUT"
 assert_nomatch '\[FAIL\]' "$OUT"
+[ ! -s "$STATE/probe-blkid" ] \
+	|| fail "nas status called blkid — that probe spins up a sleeping array, on a path that also runs every 2 minutes behind the dashboard"
 
 t "missing nofail is a warning, not a failure"
 baseline; sed -i 's/xfs   rw,noatime,nofail/xfs   rw,noatime/' /etc/fstab
