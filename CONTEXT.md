@@ -109,6 +109,24 @@ unpinned auto-latest fetch. Do not re-add either without an explicit ask.)
 
 ## 3. Architecture invariants (do not break)
 
+- **`mount(8)` exit 0 does NOT mean anything mounted. Ask the kernel.** Every
+  data entry in the shipped fstab carries `nofail` (the README requires it, so
+  a box with an unplugged disk still boots). `nofail` makes `mount <target>`
+  exit **0 and print nothing** when the device is absent. The supervisor
+  trusted that status, logged "late-mounted" and skipped the read-only
+  placeholder, so a Samba share, an NFS export or a container bind pointed at
+  the missing disk wrote to the **RAM root** — filling the tmpfs and stopping
+  the box, which is the exact disaster the placeholder exists to prevent
+  (fixed in `f81999a`; the deferred-bind queue reopened it on the failure
+  paths and was closed again in `6b0f4e5`). Rule: after every `mount`, test
+  `mountpoint -q`. Never branch on `mount`'s return value.
+  The same class of error shows up when *reading* a path: `df`, `ls` and
+  `stat` describe whatever is mounted there **right now**, which on a failed
+  disk is the 4 KB placeholder tmpfs and on an unmounted one is the RAM root.
+  Anything that sizes or classifies a configured path must first ask
+  `_path_on_disk` whether the path is genuinely on its own disk — `4ca60d0`
+  is the case where it did not, and `nas status` printed a green
+  "SnapRAID parity >= largest data disk" on a fully dead array.
 - **Code in the apk, editable config in the seed overlay.** Diskless applies the
   overlay *before* packages install, so anything an apk writes to `/etc` would
   clobber user config every boot. `mountnas-tools` ships only code

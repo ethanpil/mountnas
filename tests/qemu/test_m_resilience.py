@@ -80,15 +80,24 @@ def test_powercut_mid_parity_sync_array_recovers(guest_factory, overlay_disks,
            "data d1 /mnt/disk1/\n"
            "EOF", check=True)
     # enough data that the sync is still running when the power goes
-    g1.run("mkdir -p /mnt/disk1/docs && for i in $(seq 1 200); do"
+    g1.run("mkdir -p /mnt/disk1/docs && for i in $(seq 1 400); do"
            " head -c 1048576 /dev/urandom > /mnt/disk1/docs/f$i.bin; done",
-           timeout=600, check=True)
+           timeout=900, check=True)
     g1.run("nas commit -m 'psync fstab'", timeout=180, check=True)
     g1.run("( snapraid sync >/tmp/sync.log 2>&1 & ) ; echo started", check=True)
     # wait until parity is actually being written, then cut
     g1.poll_until("test -s /mnt/parity1/snapraid.parity", timeout=180,
                   desc="parity file growing")
-    time.sleep(2.0)
+    time.sleep(1.5)
+    # The cut must land INSIDE the parity write. A non-empty parity file only
+    # proves the sync STARTED -- on a fast host it can also have finished,
+    # and this test would then be an ordinary power cut on an idle box,
+    # passing while covering none of the torn-parity window it exists for.
+    # 'pidof' is used, not 'pgrep -f': busybox pgrep has no -f/-c.
+    still = g1.run("pidof snapraid >/dev/null && echo RUNNING || echo DONE")
+    assert "RUNNING" in still.out, (
+        "snapraid sync had already finished when the power was cut, so the "
+        "parity window was never tested. Enlarge the data set.\n" + still.out)
     g1.quit_hard()
 
     g2 = guest_factory(disks, name="psync-b", ssh_key=golden.ssh_key,
