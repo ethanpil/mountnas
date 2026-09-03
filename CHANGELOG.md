@@ -25,6 +25,9 @@
   It showed a dead disk as mounted. (3dce10f)
 - The boot-path world sync bounds its networked fallback. A box that boots
   before its router waited on an unreachable CDN with no console. (3dce10f)
+- 'nas status' refuses the SnapRAID parity-size check when a member disk is
+  not mounted. It measured the 4 KB placeholder and reported parity healthy
+  on a dead array.
 - 'nas status' no longer probes a sleeping disk. The new checks used blkid
   and a directory read on the fast path, which can wake an array.
 

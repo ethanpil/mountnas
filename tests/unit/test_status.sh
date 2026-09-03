@@ -17,10 +17,6 @@ baseline() {
 	# the FAIL breaks the exit code, for reasons that have nothing to do with
 	# the code under test.
 	stub df 'echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/x 1000000 400000 600000 40% /p"'
-	# lsblk drives the duplicate LABEL/UUID check; one clean device set here
-	stub lsblk 'echo "LABEL=\"MNASCFG\" UUID=\"aaaa-0000\" FSTYPE=\"ext4\""
-echo "LABEL=\"nasdata\" UUID=\"aaaa-0001\" FSTYPE=\"ext4\""
-echo "LABEL=\"disk1\" UUID=\"aaaa-0002\" FSTYPE=\"xfs\""'
 	: > /etc/apk/protected_paths.d/lbu.list
 	rm -f /etc/conf.d/mountnas /etc/mountnas/notify.conf \
 		/etc/ufw/ufw.conf /etc/exports /etc/snapraid.conf
@@ -39,6 +35,9 @@ echo "LABEL=\"disk1\" UUID=\"aaaa-0002\" FSTYPE=\"xfs\""'
 		*pkname*) echo sdz ;;
 		*NAME,PKNAME*) printf "sda1 sda\nsda2 sda\nsdz1 sdz\nsdz3 sdz\n" ;;
 		*NAME,TYPE*) echo "sda disk" ;;
+		*LABEL,UUID*) echo "LABEL=\"MNASCFG\" UUID=\"cfg-0000\" FSTYPE=\"ext4\""
+			echo "LABEL=\"nasdata\" UUID=\"aaaa-0001\" FSTYPE=\"ext4\""
+			echo "LABEL=\"disk1\" UUID=\"aaaa-0002\" FSTYPE=\"xfs\"" ;;
 		*) exit 0 ;; esac'
 	stub mountpoint 'case "$2" in /|/cfg|/mnt/nasdata|/mnt/disk1) exit 0 ;; esac; exit 1'
 	stub rc-service 'exit 0'
@@ -223,5 +222,45 @@ assert_eq true "$(printf '%s' "$b" | jq -r .deep)" "--deep reached the JSON (rev
 run_nas status --json
 assert_eq false "$(printf '%s' "$OUT" | jq -r .deep)" "plain --json is not deep"
 assert_eq "$(printf '%s' "$a" | jq -S 'del(.uptime_seconds, .memory)')" "$(printf '%s' "$b" | jq -S 'del(.uptime_seconds, .memory)')"
+
+t "snapraid parity sizing is refused when a member is not on its disk"
+# df measures the filesystem AT the path. When a data disk is down that path
+# holds the supervisor's 4 KB placeholder, or nothing at all -- so an
+# unguarded df reads "largest data disk = 4 KB" and the check reported a
+# GREEN parity OK on a fully dead array. A NAS owner reading that line would
+# believe the array was protected.
+snapraid_case() {
+	baseline
+	stub mountpoint 'case "$2" in /|/cfg|/mnt/nasdata|/mnt/disk1|/mnt/parity1) exit 0 ;; esac; exit 1'
+	stub df 'h="Filesystem 1024-blocks Used Available Capacity Mounted"
+	case "$*" in
+		*parity1*) echo "$h"; echo "/dev/p1 '"$1"' 100 400 20% /mnt/parity1" ;;
+		*disk1*)   echo "$h"; echo "/dev/sda2 1000 100 900 10% /mnt/disk1" ;;
+		*)         echo "$h"; echo "/dev/x 1000000 400000 600000 40% /p" ;;
+	esac'
+	printf 'parity /mnt/parity1/snapraid.parity\n' > /etc/snapraid.conf
+	printf 'data d1 /mnt/disk1\n' >> /etc/snapraid.conf
+	[ -n "${2:-}" ] && printf 'data d2 %s\n' "$2" >> /etc/snapraid.conf
+	run_nas status
+}
+# 1. every member mounted, parity BIGGER -> the check runs and passes
+snapraid_case 2000
+assert_match '\[ OK \] SnapRAID parity >= largest data disk' "$OUT"
+# 2. every member mounted, parity SMALLER -> the check runs and fails
+snapraid_case 500
+assert_match '\[FAIL\] SnapRAID parity SMALLER' "$OUT"
+# 3. a data disk NOT on its disk -> refuse, never a green OK. Parity is 500
+#    against a real 1000 KB disk1, so the old code would have compared it
+#    against the missing member and called a broken array healthy.
+snapraid_case 500 /mnt/disk9
+assert_match '\[WARN\] SnapRAID parity size NOT checked: 1 data disk' "$OUT"
+assert_nomatch 'SnapRAID parity >= largest' "$OUT" "no green OK on a degraded array"
+# 4. the PARITY disk itself not mounted -> refuse, and do not call it small
+baseline
+stub mountpoint 'case "$2" in /|/cfg|/mnt/nasdata|/mnt/disk1) exit 0 ;; esac; exit 1'
+printf 'parity /mnt/parity9/snapraid.parity\ndata d1 /mnt/disk1\n' > /etc/snapraid.conf
+run_nas status
+assert_match '\[WARN\] SnapRAID parity size NOT checked: the parity disk is not mounted' "$OUT"
+assert_nomatch 'SnapRAID parity SMALLER' "$OUT" "an absent parity disk is not a sizing verdict"
 
 finish

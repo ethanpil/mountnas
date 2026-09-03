@@ -10,7 +10,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate srv srd fsp dups altb
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate srv srd fsp dups altb sizes offn
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -362,10 +362,34 @@ cmd_status() {
 	# only a single space and no q-/z-/N- prefix, so a tab-indented conf or a
 	# double-parity array silently SKIPPED this check instead of running it.
 	if awk '$1!~/^#/ && $1=="data"{f=1} END{exit !f}' /etc/snapraid.conf 2>/dev/null; then
-		maxd=$(awk '$1!~/^#/ && $1=="data"{print $3}' /etc/snapraid.conf | while read -r d; do df -k "$d" 2>/dev/null|awk 'NR==2{print $2}'; done | sort -n | tail -1)
+		# df measures what is mounted at the path RIGHT NOW, not the disk the
+		# conf names. When a member is down the supervisor puts a 4 KB read-only
+		# tmpfs there, and an unmounted path is the RAM root. An unguarded df
+		# therefore reads "largest data disk = 4 KB" and this check printed a
+		# GREEN OK on a fully dead array. Size only the members that are really
+		# on their own disk, and refuse the comparison when one is not.
+		sizes=$(awk '$1!~/^#/ && $1=="data"{print $3}' /etc/snapraid.conf | while IFS= read -r d; do
+			if [ "$(_path_on_disk "$d")" = ok ]; then
+				df -Pk "$d" 2>/dev/null | awk 'NR==2 && $2 ~ /^[0-9]+$/ {print $2}'
+			else echo off; fi
+		done)
+		maxd=$(echo "$sizes" | grep -v '^off$' | sort -n | tail -1)
+		offn=$(echo "$sizes" | grep -c '^off$')
 		par=$(awk '$1!~/^#/ && $1 ~ /^([2-6]-|q-|z-)?parity$/ { n=split($2,a,","); for(i=1;i<=n;i++) print a[i] }' /etc/snapraid.conf | head -n1 | sed 's#/[^/]*$##')
-		[ -n "$par" ] && { ps=$(df -k "$par" 2>/dev/null|awk 'NR==2{print $2}')
-			[ -n "$ps" ] && [ -n "$maxd" ] && { [ "$ps" -ge "$maxd" ] && ok "SnapRAID parity >= largest data disk" || bad "SnapRAID parity SMALLER than largest data disk"; }; }
+		if [ -z "$par" ]; then :
+		elif [ "$(_path_on_disk "$par")" != ok ]; then
+			warn "SnapRAID parity size NOT checked: the parity disk is not mounted"
+		elif [ "$offn" -gt 0 ]; then
+			warn "SnapRAID parity size NOT checked: $offn data disk(s) not mounted"
+		else
+			ps=$(df -Pk "$par" 2>/dev/null|awk 'NR==2{print $2}')
+			case "$ps" in ''|*[!0-9]*) ps= ;; esac
+			case "$maxd" in ''|*[!0-9]*) maxd= ;; esac
+			if [ -n "$ps" ] && [ -n "$maxd" ]; then
+				if [ "$ps" -ge "$maxd" ]; then ok "SnapRAID parity >= largest data disk"
+				else bad "SnapRAID parity SMALLER than largest data disk"; fi
+			fi
+		fi
 	fi
 	# data services must NOT be in a runlevel — mountnas owns them. A user who runs
 	# 'rc-update add docker default' would start Docker before the disk mounts.
@@ -401,7 +425,7 @@ cmd_status() {
 			h=$(smartctl -H "/dev/$d" 2>/dev/null | awk -F: '/overall-health/{gsub(/ /,"",$2);print $2}')
 			[ -n "$h" ] && { [ "$h" = PASSED ] && ok "/dev/$d SMART PASSED" || bad "/dev/$d SMART $h"; }
 		done
-		command -v snapraid >/dev/null 2>&1 && grep -q '^data ' /etc/snapraid.conf 2>/dev/null && \
+		command -v snapraid >/dev/null 2>&1 && awk '$1!~/^#/ && $1=="data"{f=1} END{exit !f}' /etc/snapraid.conf 2>/dev/null && \
 			snapraid status 2>/dev/null | grep -iE 'days|sync|scrub' | sed 's/^/  /'
 		chronyc tracking >/dev/null 2>&1 && ok "time sync active" || warn "time not synced"
 	else
