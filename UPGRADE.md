@@ -89,9 +89,14 @@ It will:
    rewritten safely.
 5. Overwrite the boot files (`vmlinuz`, `initramfs`, `modloop`, the on-USB `apks` repo,
    `world.base`) in place, writing to temp names then renaming so an interruption can't
-   corrupt the running system. The bootloader payload (grub's EFI core + modules,
-   syslinux's `ldlinux.c32`) is refreshed the same way, so the loader never drifts
-   behind the system it boots.
+   corrupt the running system. The UEFI loader (grub's EFI core + modules) is refreshed
+   the same way, so it never drifts behind the system it boots.
+   The legacy-BIOS loader is deliberately **not** touched. syslinux needs `ldlinux.sys`
+   and its `.c32` modules to come from one version, and only `syslinux --install` against
+   an unmounted partition can write `ldlinux.sys`. Do **not** hand-copy a newer
+   `ldlinux.c32` onto the BOOT partition to "re-sync" it: that gives you a new module
+   beside an old loader, and the next BIOS boot stops at `Failed to load ldlinux.c32`.
+   The pair your stick was flashed with stays matched and keeps working.
 6. Reconcile `/etc/apk/world` so packages this release **added** are installed and packages
    it **dropped** are removed — while keeping any packages **you** installed yourself.
 7. Re-pin the Alpine package repositories in `/etc/apk/repositories` to the new release's

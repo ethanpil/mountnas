@@ -2,7 +2,7 @@
 
 This document covers the self-hosted QEMU test suite in `tests/qemu/`:
 what hardware/VM you need, how to run it on a freshly installed Alpine
-Linux system, how to read the results, and **what every one of the 89
+Linux system, how to read the results, and **what every one of the 107
 tests actually verifies**.
 
 The suite complements — it does not replace — the blocking CI smoke tests
@@ -222,7 +222,7 @@ slightly different phase each run.
 
 ---
 
-## 4. The complete test catalog (89 tests)
+## 4. The complete test catalog (107 tests)
 
 Markers: **[smoke]** = smoke tier · **[upgrade]** / **[faults]** /
 **[slow]** = selectable blocks · **[network]** = needs internet ·
@@ -390,6 +390,42 @@ post-reboot assertions read raw files instead of invoking new commands.
 | `test_ttyd_browser_terminal` **[network]** | `nas ttyd on` serves the login-prompt terminal on 22222 with the cleartext + commit-honesty warnings, and whitelists ptys in `/etc/securetty` exactly once (root login; idempotency asserted on a second `on`); the dashboard render links "Web terminal" while it runs (and drops the link after `off`); the enable lands in the ops log; `nas ttyd off` stops serving. Installs ttyd from the CDN. |
 
 ---
+
+### L — SnapRAID under real failure (`test_l_snapraid.py`, 6 tests, all [slow])
+
+Category E proves the happy path. These prove the promises an owner depends
+on, against a real array with real parity. Every refusal test fingerprints
+parity before and after, because a refusal is worthless if parity moved.
+
+| Test | What it verifies |
+|---|---|
+| `test_preflight_refuses_supervisor_placeholder` | A data disk carrying the supervisor's read-only placeholder is REFUSED. An empty placeholder reads to snapraid as "every file deleted", and syncing that writes the deletion into parity. Parity is proven unmoved. |
+| `test_preflight_refuses_missing_disk` | The same guarantee for an array path that is simply not mounted. |
+| `test_bitrot_is_detected_and_repaired` | Bytes are changed in place and the mtime is reset, so only a checksum can see it. A full scrub reports the damage, and a fix restores the original bytes. |
+| `test_corrupted_parity_is_detected` | Parity itself can rot. A scrub must report it rather than trust it, and a fix must repair the array. |
+| `test_whole_disk_loss_rebuilds_from_parity` | The whole promise: a data disk is destroyed and every file returns from parity, byte for byte. Also proves the content-copy rule, since the copy on the parity disk is the only one that survives. |
+| `test_blocked_run_alerts_through_sinks` | A blocked sync reaches the notification sinks. A block nobody hears about is not a protection. |
+
+### M — Homelab failure modes (`test_m_resilience.py`, 12 tests)
+
+The messy states a NAS actually reaches. The shared property is HONESTY: a
+NAS may degrade, but it may not degrade silently, wedge the boot, or report
+health it does not have.
+
+| Test | What it verifies |
+|---|---|
+| `test_powercut_mid_parity_sync_array_recovers` | Power is cut during the one operation that rewrites parity. The box boots, a fresh sync completes, and the data verifies against parity. |
+| `test_corrupt_modloop_fails_visibly` | The modloop carries every kernel module and USB flash is the most failure-prone part of the design. A corrupt one must stop the boot, not bring up a box that serves nothing while looking healthy. |
+| `test_data_disk_full_is_reported_before_it_is_an_outage` | A full data disk stops writes, Docker and logging. `nas status` must say so before the consequence arrives. |
+| `test_full_cfg_partition_is_reported` | The quietest serious failure: a full `/cfg` stops `nas commit` saving, so settings stop persisting with nobody told. |
+| `test_full_boot_media_is_reported` | `nas upgrade` stages the new system beside the old, so the boot media needs headroom or the upgrade fails partway. |
+| `test_boot_with_blackholed_repos_is_bounded` | A NAS routinely boots before its router. The world re-sync must not hold the console hostage to an unreachable CDN. |
+| `test_disk_arriving_after_the_spinup_window_recovers` | A disk that appears after the 15 s wait is placeholdered, then recovered by the documented `nas restart`, with no placeholder left behind. |
+| `test_flapping_disk_converges_without_leaking_mounts` | A failing cable does not fail once, it flaps. Three detach/reattach cycles must leave no stacked placeholders and no duplicate mounts on one target. |
+| `test_readonly_cfg_fails_the_commit_loudly` | Failing flash usually goes read-only. The commit must fail loudly, and the box must keep serving. |
+| `test_full_ram_root_never_destroys_the_overlay` | Succeeding under memory pressure is correct. The invariant is that a commit which cannot finish leaves the previous overlay intact and readable. |
+| `test_duplicate_filesystem_label_is_not_silently_ambiguous` | Cloning a disk copies its label, after which a `LABEL=` spec resolves to whichever device enumerated first and can change across reboots. |
+| `test_wrong_clock_does_not_destroy_the_newest_mirror` | Repurposed hardware has dead CMOS batteries. The config mirror prunes by the stamp in the name, so a backwards clock must not delete the mirror just written. |
 
 ## 5. Troubleshooting
 

@@ -9,6 +9,18 @@ baseline() {
 	printf 'UUID=aaaa-0001  /mnt/nasdata  ext4  rw,noatime,nofail  0 2\n' >> /etc/fstab
 	printf 'UUID=aaaa-0002  /mnt/disk1    xfs   rw,noatime,nofail  0 2\n' >> /etc/fstab
 	echo ok > "$STATE/data"
+	# df MUST be stubbed. _space_check now runs against $DATA, /cfg and the
+	# boot media, and in this harness those are plain directories on the
+	# TESTER's own root filesystem — so an unstubbed df makes the healthy
+	# baseline depend on how full the machine running the suite happens to be.
+	# Above 80% the WARN breaks the "all checks passed" assertion; above 90%
+	# the FAIL breaks the exit code, for reasons that have nothing to do with
+	# the code under test.
+	stub df 'echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/x 1000000 400000 600000 40% /p"'
+	# lsblk drives the duplicate LABEL/UUID check; one clean device set here
+	stub lsblk 'echo "LABEL=\"MNASCFG\" UUID=\"aaaa-0000\" FSTYPE=\"ext4\""
+echo "LABEL=\"nasdata\" UUID=\"aaaa-0001\" FSTYPE=\"ext4\""
+echo "LABEL=\"disk1\" UUID=\"aaaa-0002\" FSTYPE=\"xfs\""'
 	: > /etc/apk/protected_paths.d/lbu.list
 	rm -f /etc/conf.d/mountnas /etc/mountnas/notify.conf \
 		/etc/ufw/ufw.conf /etc/exports /etc/snapraid.conf

@@ -30,7 +30,19 @@ _sinks() {
 		"$CONF" 2>/dev/null | sort -u
 }
 
-if [ "${1:-}" = "--list" ]; then _sinks; exit 0; fi
+# The sink types this helper can actually deliver to. A line whose type is not
+# one of these is DISCARDED at delivery, so it must never be counted as a
+# working sink — 'nas status' used to count raw lines, which meant a bare
+# 'you@example.com' (the natural mistake now that the old single-address file
+# is gone) read as "alerting healthy" while every alert went nowhere.
+_is_kind() {
+	case "$1" in email|ntfy|webhook|slack|discord|gotify) return 0 ;; *) return 1 ;; esac
+}
+_sinks_valid() { _sinks | while IFS= read -r s; do _is_kind "${s%%:*}" && printf '%s\n' "$s"; done; }
+_sinks_bad()   { _sinks | while IFS= read -r s; do _is_kind "${s%%:*}" || printf '%s\n' "$s"; done; }
+
+if [ "${1:-}" = "--list" ]; then _sinks_valid; exit 0; fi
+if [ "${1:-}" = "--list-bad" ]; then _sinks_bad; exit 0; fi
 
 [ -n "${1:-}" ] || { echo "usage: notify <subject> [body]   |   notify --list" >&2; exit 1; }
 subject="$1"; shift

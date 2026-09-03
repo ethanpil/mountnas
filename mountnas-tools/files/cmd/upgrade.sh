@@ -547,10 +547,18 @@ EOF
 				etc/doas.conf) sm=0400 ;;   # doas refuses a group/world-writable file
 				*)             sm=0644 ;;
 			esac
-			mkdir -p "/${sf%/*}" 2>/dev/null || continue
-			cp "$BOOTMNT/seed.base/$sf" "/$sf" 2>/dev/null \
-				&& chmod "$sm" "/$sf" 2>/dev/null \
-				&& step "  seeded /$sf — new in this release"
+			# A failure here must SPEAK. Swallowing it is the same shape as
+			# the two bugs fixed just below: a near-full RAM root or a BOOT
+			# already back to read-only would silently seed nothing, and the
+			# upgrade would still print success while the release's new
+			# config files never arrived.
+			if mkdir -p "/${sf%/*}" 2>/dev/null \
+				&& cp "$BOOTMNT/seed.base/$sf" "/$sf" 2>/dev/null \
+				&& chmod "$sm" "/$sf" 2>/dev/null; then
+				step "  seeded /$sf — new in this release"
+			else
+				warn "  could not seed /$sf — create it by hand after the reboot"
+			fi
 		done
 	fi
 

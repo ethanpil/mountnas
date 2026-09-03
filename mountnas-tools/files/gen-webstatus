@@ -294,15 +294,27 @@ fi
 if grep -qE '^[[:space:]]*data[[:space:]]' /etc/snapraid.conf 2>/dev/null; then
 	srt_rows=$(awk '$1!~/^#/ {
 		if ($1=="data") printf "%s\tdata\t%s\n", $2, $3
-		else if ($1 ~ /^([2-6]-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) printf "%s\tparity\t%s\n", $1, a[i] }
+		else if ($1 ~ /^([2-6]-|q-|z-)?parity$/) { n=split($2,a,","); for(i=1;i<=n;i++) printf "%s\tparity\t%s\n", $1, a[i] }
 	}' /etc/snapraid.conf 2>/dev/null | while IFS="$(printf '\t')" read -r srt_n srt_r srt_p; do
 		srt_d=$srt_p; [ -d "$srt_d" ] || srt_d=$(dirname "$srt_p")
 		srt_m='<span class="pill p-warn">MISSING</span>'; srt_s="-"
 		srt_w=$srt_d
 		while [ "$srt_w" != "/" ]; do
 			if mountpoint -q "$srt_w" 2>/dev/null; then
-				srt_m='<span class="pill p-ok">mounted</span>'
-				srt_s=$(df -h "$srt_d" 2>/dev/null | awk 'NR==2{printf "%s / %s", $3, $2}')
+				# A mountpoint is not necessarily a DISK. The supervisor covers
+				# a failed data mount with a read-only 'mountnas-blocked' tmpfs,
+				# which passes this test, so the dashboard used to pill a dead
+				# array disk green while nas snapraid status called it BLOCKED.
+				# Same normalization as lib.sh's _blocked: /proc/mounts never
+				# carries a trailing slash and snapraid.conf data paths do.
+				srt_c=$srt_w
+				while [ "$srt_c" != "/" ] && [ "${srt_c%/}" != "$srt_c" ]; do srt_c=${srt_c%/}; done
+				if awk -v m="$srt_c" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts; then
+					srt_m='<span class="pill p-fail">BLOCKED</span>'
+				else
+					srt_m='<span class="pill p-ok">mounted</span>'
+					srt_s=$(df -h "$srt_d" 2>/dev/null | awk 'NR==2{printf "%s / %s", $3, $2}')
+				fi
 				break
 			fi
 			srt_w=$(dirname "$srt_w")
@@ -389,6 +401,22 @@ if [ "$fw_state" = active ]; then
 	[ -n "$fw_out" ] || fw_out="(ufw active — no report; run 'ufw status verbose' over SSH)"
 	fw_sum="active &middot; $fw_n rule(s)"
 	fw_prot="<span class=\"pill p-ok\">active &middot; $fw_n rule(s)</span>"
+elif [ "$fw_state" = unknown ]; then
+	# 'unknown' must NOT share the disabled arm. cmd_status_json emits
+	# {"error":"mktemp failed"} when the RAM root is full — valid JSON, so the
+	# sj guard does not fire and .firewall is null. Rendering that as
+	# "disabled, all ports open" tells the owner of a firewalled box that it is
+	# wide open, which is a worse lie than saying nothing.
+	services="$services <span class=\"pill p-warn\"><i></i>ufw?</span>"
+	fw_sum="state unknown"
+	fw_prot='<span class="pill p-warn">state unknown — nas status could not report</span>'
+	fw_out="The firewall state could not be read from 'nas status --json'.
+
+That usually means the status run itself is degraded — most often a full RAM
+root, which stops it creating its own scratch file. Check over SSH:
+  df -h /
+  nas status
+  ufw status verbose"
 elif [ "$fw_state" = broken ]; then
 	services="$services <span class=\"pill p-fail\"><i></i>ufw</span>"
 	fw_sum="ENABLED in config but NOT loaded"

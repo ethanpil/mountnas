@@ -127,10 +127,18 @@ _path_on_disk() {
 	elif [ "$td" != "/" ] && mountpoint -q "$td"; then
 		# A detached device leaves its mount in /proc/mounts while every access
 		# returns EIO: mountpoint, findfs and the read-only flag ALL still pass
-		# on it. The supervisor and data-watch probe with a directory read for
-		# exactly this reason; without the same probe here, nas status called a
-		# vanished disk healthy and reported OK on shares nobody could read.
-		if ls "$td" >/dev/null 2>&1; then echo ok; else echo dead; fi
+		# on it. Only a directory READ tells the truth.
+		#
+		# That read is licensed for $DATA ONLY. data-watch states the reason:
+		# the system disk hosts Docker and is never spun down, so probing it
+		# cannot wake anything. Every OTHER mount here may be a sleeping array
+		# disk, and this helper runs on the FAST path — every 'nas status',
+		# every 'nas snapraid status' row, and the dashboard render every two
+		# minutes. A readdir whose dentries have been reclaimed goes to the
+		# platter, so probing them all would poll the whole array awake, which
+		# is exactly what '-n standby,q' and the hdparm gate exist to prevent.
+		if [ "$td" = "$DATA" ] && ! ls "$td" >/dev/null 2>&1; then echo dead
+		else echo ok; fi
 	else echo ram; fi
 }
 # Parent disk of the BOOT partition (= the MountNAS boot USB); "" if absent.

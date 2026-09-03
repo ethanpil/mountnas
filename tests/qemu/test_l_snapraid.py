@@ -138,6 +138,15 @@ def test_bitrot_is_detected_and_repaired(array_guest):
     want = g.run("md5sum /mnt/disk1/docs/f1.bin | cut -d' ' -f1", check=True).out.strip()
     ts = g.run("stat -c %Y /mnt/disk1/docs/f1.bin", check=True).out.strip()
 
+    # BASELINE first. Detection has to be a DIFFERENTIAL, because every
+    # snapraid scrub prints "0 data errors" and "No error detected" -- so any
+    # assertion on the word "error" passes on a perfectly healthy array and
+    # proves nothing. Establish clean, corrupt, then require the verdict to
+    # change. The exit status is the signal that actually discriminates.
+    base = g.run("snapraid scrub -p 100 -o 0", timeout=900)
+    assert base.rc == 0, \
+        f"the array was not clean before corrupting it:\n{base.out[-2000:]}"
+
     # corrupt in place: same size, same mtime -> invisible to snapraid's
     # timestamp-based change detection, visible only to a checksum
     g.run("dd if=/dev/urandom of=/mnt/disk1/docs/f1.bin bs=1024 seek=8 count=4"
@@ -146,14 +155,9 @@ def test_bitrot_is_detected_and_repaired(array_guest):
     assert g.run("md5sum /mnt/disk1/docs/f1.bin | cut -d' ' -f1",
                  check=True).out.strip() != want, "corruption did not take"
 
-    # DETECTION: a full scrub must report a data error, not just exit noisily.
-    # snapraid counts silent corruption as a "data error" in its summary.
     r = g.run("snapraid scrub -p 100 -o 0", timeout=900)
-    low = r.out.lower()
-    assert "error" in low, \
-        f"a full scrub did not report the silent corruption:\n{r.out[-3000:]}"
-    assert "data error" in low or "silent error" in low or "f1.bin" in r.out, \
-        f"scrub reported errors but never identified the damage:\n{r.out[-3000:]}"
+    assert r.rc != 0, \
+        f"a full scrub did not notice the silent corruption (rc=0):\n{r.out[-3000:]}"
     g.screenshot("snapraid-scrub-detected-bitrot")
 
     # REPAIR: the targeted per-file recovery, which is what the docs tell a
@@ -175,11 +179,18 @@ def test_corrupted_parity_is_detected(array_guest):
     rather than silently trusted -- a NAS that believes in bad parity gives
     false confidence, which is worse than knowing you are unprotected."""
     g = array_guest()
+    # clean baseline, so a non-zero verdict below is attributable to OUR
+    # corruption and not to a pre-existing fault
+    base = g.run("snapraid scrub -p 100 -o 0", timeout=900)
+    assert base.rc == 0, \
+        f"the array was not clean before corrupting parity:\n{base.out[-2000:]}"
     g.run("dd if=/dev/urandom of=/mnt/parity1/snapraid.parity bs=1024 seek=64"
           " count=16 conv=notrunc status=none", check=True)
     r = g.run("snapraid scrub -p 100 -o 0", timeout=900)
-    assert r.rc != 0 or "error" in r.out.lower(), \
-        f"corrupted parity was not detected by a full scrub:\n{r.out[-3000:]}"
+    # rc ALONE. "0 data errors" and "No error detected" appear in every clean
+    # scrub, so an 'or "error" in out' disjunct can never fail.
+    assert r.rc != 0, \
+        f"corrupted parity was not detected by a full scrub (rc=0):\n{r.out[-3000:]}"
     g.screenshot("snapraid-corrupt-parity-detected")
     # the array is repairable: a fix rewrites parity from the intact data
     r = g.run("snapraid fix -e", timeout=900)

@@ -10,7 +10,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate srv srd fsp nmatch
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate srv srd fsp dups altb
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -164,6 +164,10 @@ cmd_status() {
 	# when a disk dies. The notify helper is the single source for the active
 	# sink list (notify.conf).
 	alto=$(/usr/libexec/mountnas/notify --list 2>/dev/null)
+	# Lines that are not 'type:target' are dropped at delivery, so say so
+	# loudly rather than counting them as working sinks.
+	altb=$(/usr/libexec/mountnas/notify --list-bad 2>/dev/null)
+	[ -n "$altb" ] && bad "notify.conf: $(printf '%s\n' "$altb" | grep -c .) line(s) are not 'type:target' and are IGNORED (e.g. '$(printf '%s\n' "$altb" | head -n1)') — those alerts go nowhere"
 	if [ -n "$alto" ]; then
 		alto_n=$(printf '%s\n' "$alto" | grep -c .)
 		if printf '%s\n' "$alto" | grep -q '^email:' && ! command -v mail >/dev/null 2>&1; then
@@ -254,13 +258,37 @@ cmd_status() {
 	# move and it copies the label with the data, after which the spec resolves
 	# to whichever device the kernel enumerated first — so the box can silently
 	# mount the wrong disk, and mount a different one after the next reboot.
-	# blkid is read from its cache and touches no platter.
-	awk '$1!~/^#/ && $1 ~ /^(LABEL|UUID|PARTUUID)=/{print $1}' /etc/fstab \
-	| sort -u | while read -r fsp; do
-		[ -n "$fsp" ] || continue
-		nmatch=$(blkid -t "$fsp" -o device 2>/dev/null | grep -c .)
-		[ "${nmatch:-0}" -gt 1 ] && bad "$fsp matches $nmatch filesystems on this box — the mount is ambiguous (a cloned disk?); use UUID= or relabel one"
-	done
+	# ONE lsblk pass, never 'blkid -t'. blkid with no device argument searches
+	# EVERY block device and re-probes a superblock whenever its cache is cold
+	# — /run/blkid lives on tmpfs, so it is cold at every boot — which is a
+	# platter read on a path that promises never to wake a disk. lsblk reads
+	# the udev database, the same idiom cmd_disks already uses for these
+	# fields, and costs one fork no matter how many disks are attached.
+	# Multi-device filesystems are SKIPPED, not flagged. Every member of a
+	# btrfs RAID, an md array or an LVM PV set carries the same fs UUID (they
+	# differ only in a sub-UUID lsblk does not print), so counting devices
+	# would report a healthy 2-disk btrfs mirror as ambiguous, FAIL status
+	# forever, redden the dashboard and mail a weekly digest about it — with
+	# advice ("relabel one") that is wrong and unactionable.
+	dups=$(lsblk -Pno LABEL,UUID,FSTYPE 2>/dev/null | awk '
+		{ l=""; u=""; t=""
+		  if (match($0, /LABEL="[^"]*"/))  l = substr($0, RSTART+7, RLENGTH-8)
+		  if (match($0, /UUID="[^"]*"/))   u = substr($0, RSTART+6, RLENGTH-7)
+		  if (match($0, /FSTYPE="[^"]*"/)) t = substr($0, RSTART+8, RLENGTH-9)
+		  if (t == "btrfs" || t == "linux_raid_member" \
+		      || t == "LVM2_member" || t == "zfs_member") next
+		  if (l != "") L[l]++
+		  if (u != "") U[u]++ }
+		END { for (k in L) if (L[k] > 1) print "LABEL=" k
+		      for (k in U) if (U[k] > 1) print "UUID=" k }')
+	if [ -n "$dups" ]; then
+		awk '$1!~/^#/ && $1 ~ /^(LABEL|UUID)=/{print $1}' /etc/fstab \
+		| sort -u | while read -r fsp; do
+			[ -n "$fsp" ] || continue
+			printf '%s\n' "$dups" | grep -qxF "$fsp" \
+				&& bad "$fsp matches more than one filesystem on this box — the mount is ambiguous (a cloned disk?); use UUID= or relabel one"
+		done
+	fi
 	# The one unrecoverable user error: a DATA fstab entry that resolves to the
 	# boot USB itself — formatting or mounting it destroys the running OS.
 	# /cfg (LABEL=MNASCFG) legitimately lives on the stick; only /mnt/* entries

@@ -23,6 +23,22 @@ from lib.guest import DiskSpec, push_nas_tree
 FILES_DIR = Path(__file__).resolve().parent.parent.parent / "mountnas-tools" / "files"
 
 
+def _poweroff(g, timeout: float = 180.0) -> None:
+    """Clean shutdown over SSH.
+
+    Guest.poweroff() sends '/sbin/poweroff' to the SERIAL console, and that
+    only works when the console is already logged in -- golden.py does that
+    via run_wizard, but every guest here is reached by wait_ssh() alone, so
+    ttyS0 is sitting at a getty login prompt. The string is eaten as a
+    username, nothing shuts down, the harness burns the whole timeout and
+    then SIGKILLs. That silently turns every "clean shutdown" in this file
+    into an unannounced power cut, which is a different test.
+    """
+    g.run("sync", timeout=60)
+    g.run("(sleep 1; poweroff) >/dev/null 2>&1 &", timeout=30)
+    g.wait_dead(timeout)
+
+
 def _push_tools(g):
     """Run the REPO's tools, not the released ones."""
     push_nas_tree(g, FILES_DIR)
@@ -112,7 +128,7 @@ def test_corrupt_modloop_fails_visibly(guest_factory, overlay_disks, golden):
     g1.run("dd if=/dev/urandom of=/media/mnasboot/boot/modloop-lts bs=4096"
            " count=4 conv=notrunc status=none", check=True)
     g1.run("sync", check=True)
-    g1.poweroff()
+    _poweroff(g1)
 
     g2 = guest_factory(disks, name="rot-b", ssh_key=golden.ssh_key,
                        throwaway=[sysd, datad])
@@ -128,8 +144,30 @@ def test_corrupt_modloop_fails_visibly(guest_factory, overlay_disks, golden):
         st = g2.run("nas status", timeout=180)
         assert st.rc != 0, \
             "booted with a corrupt modloop and still reported a clean status"
-    # If it did NOT boot, that is the expected fail-safe path: the screenshot
-    # above is the evidence, and refusing to come up beats coming up broken.
+        return
+    # The fail-safe path must be ASSERTED, not assumed. A bare 'except' here
+    # swallows every harness failure too -- a QEMU launch error, a port
+    # collision, a host-side ssh timeout -- and an empty branch would score
+    # all of them as a pass, making this test permanently green. Require
+    # positive evidence that the BOOT is what stopped: the serial console has
+    # to show the modloop failing, not a login prompt.
+    serial = ""
+    for cand in (getattr(g2, "serial_log_path", None),
+                 getattr(g2, "log_dir", None)):
+        if not cand:
+            continue
+        p = Path(cand)
+        p = p if p.is_file() else next(iter(sorted(p.glob("*serial*"))), None)
+        if p and p.is_file():
+            serial = p.read_text(errors="replace")
+            break
+    assert serial, "guest did not boot AND no serial log was captured to prove why"
+    low = serial.lower()
+    assert ("modloop" in low or "squashfs" in low
+            or "emergency" in low or "initramfs" in low), \
+        f"boot stopped, but the console never blamed the modloop:\n{serial[-3000:]}"
+    assert "login:" not in low, \
+        "the console reached a login prompt, so the boot did not actually stop"
 
 
 # ------------------------------------------------------------ disk full
@@ -184,7 +222,7 @@ def test_boot_with_blackholed_repos_is_bounded(guest_factory, overlay_disks, gol
            check=True)
     g1.run("printf 'figlet\\n' >> /etc/apk/world", check=True)
     g1.run("nas commit -m 'blackholed repos'", timeout=180, check=True)
-    g1.poweroff()
+    _poweroff(g1)
 
     g2 = guest_factory(disks, name="noname-b", ssh_key=golden.ssh_key,
                        throwaway=[sysd, datad])
@@ -219,7 +257,7 @@ def test_disk_arriving_after_the_spinup_window_recovers(guest_factory,
            " >> /etc/fstab", check=True)
     g1.run("echo payload > /mnt/late1/probe || true")
     g1.run("nas commit -m 'late disk fstab'", timeout=180, check=True)
-    g1.poweroff()
+    _poweroff(g1)
 
     # boot WITHOUT the disk: it must be placeholdered, not fatal.
     #
@@ -258,7 +296,7 @@ def test_disk_arriving_after_the_spinup_window_recovers(guest_factory,
             f"--- block devices (is the 'absent' disk actually here?) ---\n{blk}\n"
             f"--- a fresh supervisor restart ---\n{settle}\n"
             f"--- supervisor log (full) ---\n{slog}")
-    g2.poweroff()
+    _poweroff(g2)
 
     # now it arrives: the documented recovery must bring it back cleanly
     g3 = guest_factory(base + [DiskSpec(str(extra), serial="LATE0")],
@@ -348,6 +386,11 @@ def test_full_ram_root_never_destroys_the_overlay(golden_guest):
     config-loss shape as the 1.0 wizard bug."""
     g = golden_guest
     _push_tools(g)
+    # The overlay's identity BEFORE the attempt. Without this, "a valid
+    # archive exists afterwards" is satisfied by the NEW overlay a successful
+    # commit just wrote, and the stated invariant is never actually tested.
+    ovl0 = g.run("ls -1 /cfg/*.apkovl.tar.gz", check=True).out.strip()
+    before_ovl = g.run(f"md5sum {ovl0} | cut -d' ' -f1", check=True).out.strip()
     avail = int(g.run("df -Pk / | awk 'NR==2{print $4}'", check=True).out.strip())
     fill_mb = max(1, (avail - 20480) // 1024)
     g.run(f"dd if=/dev/zero of=/root/BALLAST bs=1M count={fill_mb} status=none"
@@ -358,14 +401,19 @@ def test_full_ram_root_never_destroys_the_overlay(golden_guest):
         assert used >= 90, f"could not fill the RAM root (used={used}%)"
         r = g.run("NO_COLOR=1 nas commit -m ramfull", timeout=300)
         g.screenshot("full-ram-root-commit")
-        if r.rc != 0:
-            assert "fail" in r.out.lower() or "error" in r.out.lower() \
-                or "space" in r.out.lower(), \
-                f"the commit failed but said nothing legible:\n{r.out}"
         ovl = g.run("ls -1 /cfg/*.apkovl.tar.gz", check=True).out.strip()
         assert ovl, "no overlay left on /cfg after a commit under memory pressure"
         assert g.run(f"gzip -t {ovl}").rc == 0, \
             f"the overlay is no longer a valid archive: {ovl}"
+        after_ovl = g.run(f"md5sum {ovl} | cut -d' ' -f1", check=True).out.strip()
+        if r.rc != 0:
+            # A commit that could not finish must have left the PREVIOUS
+            # overlay exactly as it was.
+            assert after_ovl == before_ovl, \
+                "a failed commit replaced or damaged the previous overlay"
+            assert "fail" in r.out.lower() or "error" in r.out.lower() \
+                or "space" in r.out.lower(), \
+                f"the commit failed but said nothing legible:\n{r.out}"
     finally:
         g.run("rm -f /root/BALLAST", timeout=120)
 
@@ -413,20 +461,30 @@ def test_wrong_clock_does_not_destroy_the_newest_mirror(golden_guest):
     g.run("nas commit -m 'before the clock moves'", timeout=240, check=True)
     before = g.run("ls -1 /mnt/nasdata/config-backups/ | wc -l",
                    check=True).out.strip()
+    now = g.run("date -u +%Y-%m-%dT%H:%M:%S", check=True).out.strip()
     g.run("date -s '2019-01-01 00:00:00'", check=True)
     try:
         r = g.run("NO_COLOR=1 nas commit -m 'from the past'", timeout=240)
         assert r.rc == 0, f"commit failed with a backwards clock:\n{r.out}"
-        newest = g.run("ls -1t /mnt/nasdata/config-backups/*.apkovl.tar.gz"
-                       " | head -n1", check=True).out.strip()
-        assert newest, "the mirror directory is empty after a past-dated commit"
+        # Name the file we are looking for. 'ls -1t | head -n1' is mtime
+        # order, and the new mirror's mtime is 2019 -- so it returns the
+        # PRE-EXISTING mirror and proves only that the directory is not empty.
+        # A count comparison is no better: if the prune deleted the mirror it
+        # just wrote, the count is unchanged and '>=' still passes. The one
+        # thing that discriminates is the 2019-stamped file existing.
+        past = g.run("ls -1 /mnt/nasdata/config-backups/ | grep -c -- '-2019'",
+                     check=True).out.strip()
+        assert int(past) >= 1, (
+            "the past-dated mirror was written and then pruned away - the "
+            "prune is ordering by mtime, not by the stamp in the name")
         after = g.run("ls -1 /mnt/nasdata/config-backups/ | wc -l",
                       check=True).out.strip()
-        assert int(after) >= int(before), \
-            f"mirror count went backwards ({before} -> {after})"
+        assert int(after) > int(before), \
+            f"no new mirror appeared at all ({before} -> {after})"
         assert g.run("nas rollback --list", timeout=180).rc == 0
     finally:
-        g.run("rc-service ntpd restart >/dev/null 2>&1 || true")
+        # restore the clock directly; chrony may have no reachable source here
+        g.run(f"date -u -s '{now}' >/dev/null 2>&1 || true")
         g.run("chronyc makestep >/dev/null 2>&1 || true")
 
 
@@ -447,7 +505,14 @@ def test_full_cfg_partition_is_reported(golden_guest):
     # land above the 80% warn line without filling it completely: the box has
     # to stay usable while we read the verdict
     want_kb = int(total * 0.86) - used
-    assert want_kb < avail, "not enough room on /cfg to stage this test"
+    # The guard that matters is "/cfg is not ALREADY past the threshold".
+    # Otherwise want_kb goes negative, dd fails, the '|| true' hides it, and
+    # the percentage assertion below passes on pre-existing fullness with no
+    # ballast ever written. ('want_kb < avail' is algebraically always true
+    # for any ext4 with a root reserve, so it guarded nothing.)
+    assert want_kb > 0, \
+        f"/cfg is already >=86% full before staging (used {used}K of {total}K)"
+    assert want_kb < avail, "not enough free space on /cfg to stage this test"
     g.run(f"dd if=/dev/zero of=/cfg/BALLAST bs=1024 count={want_kb} status=none"
           " || true", timeout=600)
     try:

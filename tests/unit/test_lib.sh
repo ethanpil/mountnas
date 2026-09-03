@@ -96,10 +96,18 @@ assert_eq "ram" "$(_path_on_disk /srv/share)"
 # a relative path must never reach the walk: dirname's fixpoint is '.', which
 # never equals '/', so walking one spun forever and hung the whole command
 assert_eq "ram" "$(_path_on_disk mnt/disk1/media)"
-# a detached device: the mount is still listed but every read returns EIO
+# A detached device leaves its mount listed while every read returns EIO.
+# The read probe is deliberately $DATA-ONLY: every other mount may be a
+# sleeping array disk, and this helper runs on the fast path (nas status,
+# the snapraid table, the 2-minute dashboard render), which must never wake
+# one. $DATA hosts Docker and is never spun down, so probing it is free.
+mkdir -p /mnt/nasdata
+stub mountpoint 'case "$2" in /|/mnt/disk1|/mnt/nasdata) exit 0;; esac; exit 1'
 stub ls 'exit 2'
-assert_eq "dead" "$(_path_on_disk /mnt/disk1/media/films)"
+assert_eq "dead" "$(_path_on_disk /mnt/nasdata/share)" "\$DATA is probed"
+assert_eq "ok" "$(_path_on_disk /mnt/disk1/media/films)" "a data disk is NOT probed"
 rm -f "$STUBS/ls"
+stub mountpoint 'case "$2" in /|/mnt/disk1) exit 0;; esac; exit 1'
 
 t "_space_check: ok / warn / fail by percent used"
 # df is stubbed so the thresholds are exercised deterministically, with no

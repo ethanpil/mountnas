@@ -60,7 +60,16 @@ _fstab_opts() { awk '$1!~/^#/ && $2=="'"$1"'"{print $4; exit}' /etc/fstab; }
 _is_noauto() { case ",$(_fstab_opts "$1")," in *,noauto,*) return 0 ;; *) return 1 ;; esac; }
 # True when $1 carries THIS service's own read-only failure placeholder.
 # 'mountpoint -q' cannot tell that tmpfs apart from a real disk mount.
-_is_placeholder() { awk -v m="$1" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts; }
+# NORMALIZE first, exactly as lib.sh's _blocked does. /proc/mounts never
+# carries a trailing slash, but an fstab mountpoint may ('/mnt/disk1/'), and
+# the raw compare then never matches — so the supervisor could not recognise
+# its OWN placeholder, and _settle_mp took the readable-directory branch and
+# stranded a reattached disk behind it.
+_is_placeholder() {
+	_ip=$1
+	while [ "$_ip" != "/" ] && [ "${_ip%/}" != "$_ip" ]; do _ip=${_ip%/}; done
+	awk -v m="$_ip" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts
+}
 # Bring ONE declared /mnt mountpoint to a defined state: clear a dead or
 # leftover-placeholder mount, try its fstab entry once, then cover it with the
 # read-only placeholder if that failed. Shared by the boot pass and the
@@ -83,23 +92,32 @@ _settle_mp() {
 		fi
 	fi
 	mkdir -p "$smp"
-	# NEVER trust mount's exit status here. Every data entry carries 'nofail'
-	# — the README REQUIRES it so a missing disk cannot hang the boot — and
-	# mount honours that by exiting 0 and saying nothing when the device is
-	# absent (verified on a live box: with nofail exit 0 and nothing mounted;
-	# without it exit 1 and "can't find LABEL=..."). Believing that status
-	# meant a declared-but-missing disk was logged as "late-mounted" and left
-	# as a BARE WRITABLE DIRECTORY on the RAM root, so a container bind, an
-	# rsync or a Samba share writing there filled the tmpfs and could OOM the
-	# box — the exact disaster the placeholder exists to prevent, and the
-	# promise the README makes about a disconnected drive. Ask the kernel
-	# instead. (/cfg and $DATA already re-check this way; only this path did
-	# not, so every data disk EXCEPT nasdata was unprotected.)
+	# Ask the KERNEL whether the mount happened. Do not read mount's status.
+	# Every data entry carries 'nofail', because the README requires it.
+	# With 'nofail', mount exits 0 and prints nothing when the device is
+	# absent. Verified on a live box.
+	# This code used to believe that status. It then logged "late-mounted"
+	# and left a bare writable directory on the RAM root. A container bind,
+	# an rsync or a Samba share can fill the tmpfs there and stop the box.
+	# The placeholder exists to prevent exactly that.
+	# /cfg and $DATA already re-check this way. Only this path did not, so
+	# every data disk except nasdata was unprotected.
 	mount "$smp" 2>>"$LOG"
 	if mountpoint -q "$smp"; then log "late-mounted $smp"; return 0; fi
 	if mount -t tmpfs -o ro,size=4k,mode=0555 mountnas-blocked "$smp" 2>>"$LOG"; then
 		log "placeholder (ro tmpfs) over unmounted $smp"
 	fi
+}
+
+# Settle every mountpoint the boot pass held back. Called on EVERY exit from
+# the data tier, not only the success one: a bind whose source is under $DATA
+# cannot mount when $DATA is absent, unsupported or failed, and leaving it
+# unsettled leaves the bare directory mountnas-mkdirs created on the RAM root
+# — the writable dead end this service exists to prevent. _settle_mp
+# placeholders it instead, which is the correct degraded state.
+_drain_deferred() {
+	for _dmp in $deferred; do _settle_mp "$_dmp"; done
+	deferred=""
 }
 
 start() {
@@ -229,7 +247,7 @@ start() {
 		# package is boot noise; an unreachable network must not cost the
 		# console.
 		apk add --quiet --no-network $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
-			|| timeout 120 apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
+			|| timeout 60 apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
 			|| log "world sync (apk add) reported errors — a package may be missing until network/cache provides it"
 		# Start exactly the services the sync just made startable. Surgical by
 		# construction: a service the user stopped, or one that crashed, has a
@@ -296,6 +314,7 @@ start() {
 		echo fresh > "$STATE/data"; log "no data disk configured"
 		ewarn "No data disk configured. Add it to /etc/fstab, then: nas commit"
 		ewarn "Docker/Samba/NFS stay off until $DATA is mounted."
+		_drain_deferred
 		return 0
 	fi
 	# A network filesystem as the system disk is unsupported: a dead remote
@@ -311,6 +330,7 @@ start() {
 		# services that stop() stopped mid-transition, so a stop inside start()
 		# is immediately undone. `nas restart` (cmd_restart) enforces 'held'
 		# after the transition, where the stop sticks.
+		_drain_deferred
 		return 0
 	fi
 	# clear a dead mount left by a detached device before retrying (same EIO
@@ -338,7 +358,7 @@ start() {
 		mkdir -p "$DATA/docker" "$DATA/appdata" "$DATA/backups"
 		# Deferred pass: the binds held back above can only mount now that the
 		# data disk is really up.
-		for mp in $deferred; do _settle_mp "$mp"; done
+		_drain_deferred
 		# persistent syslog (nas logs --persist on) targets $DATA/logs — the
 		# boot-time syslogd started before this disk was mounted, so kick it
 		# now that the target directory exists
@@ -385,6 +405,7 @@ start() {
 	fi
 	# block stray writes to the empty system mountpoint, too
 	mkdir -p "$DATA"; mount -t tmpfs -o ro,size=4k,mode=0555 mountnas-blocked "$DATA" 2>>"$LOG" || true
+	_drain_deferred
 	return 0     # always succeed; state is reported, never a failed boot service
 }
 

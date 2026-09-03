@@ -25,7 +25,12 @@ case $- in *i*)
 		# ("it starts on its own") and circular ("set DATA_SERVICES=").
 		# The '=' sentinel separates "set to empty" (meaningful: no data
 		# services) from "file absent or died", where the default must stand.
-		dsov=$( . /etc/conf.d/mountnas 2>/dev/null; printf '=%s' "${DATA_SERVICES-__unset__}" )
+		# 'unset' FIRST, like the other two readers (lib.sh, gen-webstatus):
+		# this runs in an interactive shell, so a DATA_SERVICES the user
+		# happens to have exported would otherwise win over the conf.d file
+		# and the built-in default alike.
+		dsov=$( unset DATA_SERVICES; . /etc/conf.d/mountnas 2>/dev/null || :; \
+			printf '=%s' "${DATA_SERVICES-__unset__}" )
 		case "$dsov" in
 			"=__unset__"|"") ;;
 			"="*) ds=${dsov#=} ;;

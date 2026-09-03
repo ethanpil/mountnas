@@ -3,24 +3,30 @@
 ## [Unreleased]
 
 ### Fixed
-- **A missing data disk was left writable on the RAM root.** Every data
-  entry carries `nofail` (the README requires it), and mount honours that
-  by exiting 0 and saying nothing when the device is absent. The
-  supervisor believed it, logged "late-mounted" and skipped the read-only
-  placeholder, so a container bind, an rsync or a Samba share writing to
-  that path filled the tmpfs and could OOM the box — the exact disaster
-  the placeholder exists to prevent. It asks the kernel now. /mnt/nasdata
-  was never affected; every OTHER data disk was.
-- `nas status` reports free space on the data disk, the config partition
-  and the boot media. It checked none of them before.
-- A LABEL= or UUID= fstab spec that matches two filesystems is reported.
-  Cloning a disk copies its label, and the mount then resolves to
-  whichever device enumerated first.
-- The SnapRAID maintenance runner prints its verdict. A preflight refusal
-  printed nothing at all and exited 2.
-- The boot-path world sync bounds its networked fallback, so a box that
-  boots before its router does not wait on an unreachable CDN with no
-  console available.
+- A missing data disk was left WRITABLE on the RAM root. Data entries
+  carry 'nofail', and mount then exits 0 with nothing mounted. The
+  supervisor believed that status and skipped the placeholder. A write to
+  that path could fill the tmpfs and stop the box. /mnt/nasdata was never
+  affected. Every other data disk was. (f81999a)
+- A bind mount below /mnt/nasdata is settled on every exit from the data
+  tier, not only the good one. It was left bare and writable when the
+  data disk was absent or failed.
+- The supervisor recognises its own placeholder on a path with a trailing
+  slash. It compared the raw fstab value against /proc/mounts.
+- 'nas status' reports free space on the data disk, the config partition
+  and the boot media. It checked none of them. (3dce10f)
+- 'nas status' reports an fstab spec that matches two filesystems. A
+  cloned disk carries the same label. (3dce10f)
+- 'nas status' reports notify.conf lines that are not 'type:target'. It
+  counted them as working sinks while every alert was discarded.
+- The SnapRAID maintenance runner prints its verdict. A refused preflight
+  printed nothing and exited 2. (3dce10f)
+- The dashboard shows a blocked array disk as BLOCKED, and reads q-parity.
+  It showed a dead disk as mounted. (3dce10f)
+- The boot-path world sync bounds its networked fallback. A box that boots
+  before its router waited on an unreachable CDN with no console. (3dce10f)
+- 'nas status' no longer probes a sleeping disk. The new checks used blkid
+  and a directory read on the fast path, which can wake an array.
 
 ## [1.0.1] — 2026-09-02
 
