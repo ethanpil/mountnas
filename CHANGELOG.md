@@ -25,6 +25,9 @@
   It showed a dead disk as mounted. (3dce10f)
 - The boot-path world sync bounds its networked fallback. A box that boots
   before its router waited on an unreachable CDN with no console. (3dce10f)
+- 'nas rollback' lists and restores snapshots taken under an older
+  hostname. Renaming the box hid the whole history, while commit retention
+  went on deleting it.
 - 'nas status' refuses the SnapRAID parity-size check when a member disk is
   not mounted. It measured the 4 KB placeholder and reported parity healthy
   on a dead array.

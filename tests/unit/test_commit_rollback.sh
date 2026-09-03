@@ -207,6 +207,28 @@ assert_rc 1
 assert_match 'encrypted overlay detected' "$OUT"
 rm -f "$act.gpg"
 
+t "rollback lists and restores snapshots taken under an OLD hostname"
+# Renaming the box does not rename its history. The lister was pinned to the
+# current hostname while 'nas commit' retention was not, so after a rename
+# the time machine went blank while the snapshots it hid were still being
+# counted and deleted -- and a rename is exactly the kind of change a user
+# wants to be able to undo.
+reset
+run_nas commit -m "before the rename"
+run_nas commit -m "also before"
+# rename every file on /cfg to the old name, as a real rename leaves it
+for f in /cfg/"$host".*; do mv "$f" "/cfg/oldbox.${f#/cfg/"$host".}"; done
+run_nas rollback --list
+assert_rc 0
+assert_match '\[1\] .*oldbox\.' "$OUT" "an old-hostname snapshot must still be listed"
+assert_nomatch 'no snapshots yet' "$OUT"
+# and restoring one must work: the overlay is carried to the new name first
+want=$(cat "$(ls -1t /cfg/oldbox.[0-9]*.tar.gz | sed -n 1p)")
+run_nas_in y rollback 1
+assert_rc 0
+[ -f "$act" ] || fail "restore did not create the overlay under the NEW hostname"
+assert_eq "$want" "$(cat "$act")" "restored content"
+
 t "changes lists lbu status; --diff without an overlay warns"
 reset; run_nas changes
 assert_rc 0; assert_match 'no unsaved changes' "$OUT"

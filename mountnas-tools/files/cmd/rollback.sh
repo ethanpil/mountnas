@@ -10,8 +10,23 @@
 # preserved under lbu's own backup naming, so a rollback can itself be rolled
 # back (roll forward). Before this existed, recovering from a bad commit meant
 # pulling the stick and hand-editing tarballs on another machine.
-_ovl_backups() {   # newest first, one path per line
-	ls -1t "$CFG/$(hostname)".[0-9]*.tar.gz 2>/dev/null
+# newest first, one path per line. Deliberately across EVERY hostname, not
+# just the current one: renaming the box does not rename its history, so a
+# host-pinned glob hid every snapshot taken under the old name — while
+# 'nas commit' retention, which is already host-agnostic, went on counting
+# and deleting them. The time machine went blank at the exact moment a user
+# most wants it, after a change big enough to rename the machine for.
+# The restore path always WRITES the current hostname, so a snapshot from
+# any era restores correctly.
+# The case arm drops the ACTIVE overlay, which the wider glob can otherwise
+# reach on a box whose hostname ends in a dot and digits (nas.2 ->
+# nas.2.apkovl.tar.gz). The active overlay is printed separately above.
+# 'ls -1t' supplies the newest-first order a glob cannot; the filter is a
+# case, not a grep, so the order survives and shellcheck stays quiet.
+_ovl_backups() {
+	ls -1t "$CFG"/*.[0-9]*.tar.gz 2>/dev/null | while IFS= read -r _f; do
+		case "$_f" in *.apkovl.tar.gz) ;; *) printf '%s\n' "$_f" ;; esac
+	done
 }
 cmd_rollback() {
 	local act list i f fn an sel seln ts keep kc
@@ -57,7 +72,13 @@ cmd_rollback() {
 	case "$1" in *[!0-9]*) usage "nas rollback [--list | <number>]"; return 1 ;; esac
 	sel=$(printf '%s\n' "$list" | awk -v n="$1" 'NR==n{print; exit}')
 	[ -n "$sel" ] || { bad "no snapshot number $1 — see: nas rollback --list"; return 1; }
-	[ -f "$act" ] || { bad "no active overlay at $act (hostname changed since the last commit?)"; return 1; }
+	# The list above shows snapshots from every hostname this box has had, so
+	# the restore must accept one. Right after a rename there is no overlay
+	# under the NEW name yet, which used to refuse the restore and contradict
+	# the list. Carry the overlay across first -- a no-op on a box that never
+	# changed its name.
+	[ -f "$act" ] || _rename_stale_overlay
+	[ -f "$act" ] || { bad "no active overlay at $act — run 'nas commit' first"; return 1; }
 	seln=$(_snap_note "$sel")
 	echo "Rolling the SAVED config back to: $(basename "$sel")  ($(date -r "$sel" '+%Y-%m-%d %H:%M:%S' 2>/dev/null))${seln:+  — $seln}"
 	echo "  - the running system is NOT changed; the restored config applies at the NEXT boot"
