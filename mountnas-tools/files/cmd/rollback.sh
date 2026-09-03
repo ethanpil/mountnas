@@ -24,6 +24,7 @@
 # 'ls -1t' supplies the newest-first order a glob cannot; the filter is a
 # case, not a grep, so the order survives and shellcheck stays quiet.
 _ovl_backups() {
+	local _f
 	ls -1t "$CFG"/*.[0-9]*.tar.gz 2>/dev/null | while IFS= read -r _f; do
 		case "$_f" in *.apkovl.tar.gz) ;; *) printf '%s\n' "$_f" ;; esac
 	done
