@@ -83,7 +83,20 @@ _settle_mp() {
 		fi
 	fi
 	mkdir -p "$smp"
-	mount "$smp" 2>>"$LOG" && { log "late-mounted $smp"; return 0; }
+	# NEVER trust mount's exit status here. Every data entry carries 'nofail'
+	# — the README REQUIRES it so a missing disk cannot hang the boot — and
+	# mount honours that by exiting 0 and saying nothing when the device is
+	# absent (verified on a live box: with nofail exit 0 and nothing mounted;
+	# without it exit 1 and "can't find LABEL=..."). Believing that status
+	# meant a declared-but-missing disk was logged as "late-mounted" and left
+	# as a BARE WRITABLE DIRECTORY on the RAM root, so a container bind, an
+	# rsync or a Samba share writing there filled the tmpfs and could OOM the
+	# box — the exact disaster the placeholder exists to prevent, and the
+	# promise the README makes about a disconnected drive. Ask the kernel
+	# instead. (/cfg and $DATA already re-check this way; only this path did
+	# not, so every data disk EXCEPT nasdata was unprotected.)
+	mount "$smp" 2>>"$LOG"
+	if mountpoint -q "$smp"; then log "late-mounted $smp"; return 0; fi
 	if mount -t tmpfs -o ro,size=4k,mode=0555 mountnas-blocked "$smp" 2>>"$LOG"; then
 		log "placeholder (ro tmpfs) over unmounted $smp"
 	fi

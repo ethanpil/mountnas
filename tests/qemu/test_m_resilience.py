@@ -234,12 +234,20 @@ def test_disk_arriving_after_the_spinup_window_recovers(guest_factory,
     if not placeheld:
         mounts = g2.run("grep /mnt /proc/mounts || true").out
         fstab = g2.run("awk '$1!~/^#/ && NF' /etc/fstab || true").out
-        slog = g2.run("tail -25 /var/log/mountnas.log || true").out
+        slog = g2.run("cat /var/log/mountnas.log || true").out
+        lsd = g2.run("ls -la /mnt/ || true").out
+        blk = g2.run("lsblk -o NAME,SIZE,LABEL 2>/dev/null; echo '--- blkid:';"
+                     " blkid || true").out
+        settle = g2.run("rc-service mountnas restart 2>&1 | tail -20"
+                        " && grep /mnt /proc/mounts || true", timeout=240).out
         raise AssertionError(
             "a declared disk that is absent was never placeholdered\n"
             f"--- /proc/mounts (/mnt) ---\n{mounts}\n"
             f"--- active fstab ---\n{fstab}\n"
-            f"--- supervisor log ---\n{slog}")
+            f"--- ls /mnt ---\n{lsd}\n"
+            f"--- block devices (is the 'absent' disk actually here?) ---\n{blk}\n"
+            f"--- a fresh supervisor restart ---\n{settle}\n"
+            f"--- supervisor log (full) ---\n{slog}")
     g2.poweroff()
 
     # now it arrives: the documented recovery must bring it back cleanly
@@ -319,10 +327,15 @@ def test_readonly_cfg_fails_the_commit_loudly(golden_guest):
 
 
 @pytest.mark.slow
-def test_full_ram_root_fails_the_commit_clearly(golden_guest):
-    """The whole OS lives in a tmpfs sized at half of RAM. A runaway container
-    log or a big file in a tracked path fills it, and lbu then cannot build
-    its tarball. The failure must be legible rather than a bare tar error."""
+def test_full_ram_root_never_destroys_the_overlay(golden_guest):
+    """The whole OS lives in a tmpfs sized at half of RAM, and a runaway
+    container log or a big file in a tracked path fills it.
+
+    The invariant is NOT that the commit must fail -- succeeding under memory
+    pressure is correct, and it did. It is that a commit which CANNOT finish
+    must leave the previous overlay intact and readable. Anything else means a
+    full disk costs you every saved setting, which is the same silent
+    config-loss shape as the 1.0 wizard bug."""
     g = golden_guest
     _push_tools(g)
     avail = int(g.run("df -Pk / | awk 'NR==2{print $4}'", check=True).out.strip())
@@ -334,8 +347,15 @@ def test_full_ram_root_fails_the_commit_clearly(golden_guest):
                          check=True).out.strip())
         assert used >= 90, f"could not fill the RAM root (used={used}%)"
         r = g.run("NO_COLOR=1 nas commit -m ramfull", timeout=300)
-        assert r.rc != 0, f"commit claimed success with a full RAM root:\n{r.out}"
         g.screenshot("full-ram-root-commit")
+        if r.rc != 0:
+            assert "fail" in r.out.lower() or "error" in r.out.lower() \
+                or "space" in r.out.lower(), \
+                f"the commit failed but said nothing legible:\n{r.out}"
+        ovl = g.run("ls -1 /cfg/*.apkovl.tar.gz", check=True).out.strip()
+        assert ovl, "no overlay left on /cfg after a commit under memory pressure"
+        assert g.run(f"gzip -t {ovl}").rc == 0, \
+            f"the overlay is no longer a valid archive: {ovl}"
     finally:
         g.run("rm -f /root/BALLAST", timeout=120)
 

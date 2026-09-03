@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **A missing data disk was left writable on the RAM root.** Every data
+  entry carries `nofail` (the README requires it), and mount honours that
+  by exiting 0 and saying nothing when the device is absent. The
+  supervisor believed it, logged "late-mounted" and skipped the read-only
+  placeholder, so a container bind, an rsync or a Samba share writing to
+  that path filled the tmpfs and could OOM the box — the exact disaster
+  the placeholder exists to prevent. It asks the kernel now. /mnt/nasdata
+  was never affected; every OTHER data disk was.
+- `nas status` reports free space on the data disk, the config partition
+  and the boot media. It checked none of them before.
+- A LABEL= or UUID= fstab spec that matches two filesystems is reported.
+  Cloning a disk copies its label, and the mount then resolves to
+  whichever device enumerated first.
+- The SnapRAID maintenance runner prints its verdict. A preflight refusal
+  printed nothing at all and exited 2.
+- The boot-path world sync bounds its networked fallback, so a box that
+  boots before its router does not wait on an unreachable CDN with no
+  console available.
+
 ## [1.0.1] — 2026-09-02
 
 ### Fixed
