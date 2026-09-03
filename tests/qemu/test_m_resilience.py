@@ -221,10 +221,20 @@ def test_disk_arriving_after_the_spinup_window_recovers(guest_factory,
     g1.run("nas commit -m 'late disk fstab'", timeout=180, check=True)
     g1.poweroff()
 
-    # boot WITHOUT the disk: it must be placeholdered, not fatal
+    # boot WITHOUT the disk: it must be placeholdered, not fatal.
+    #
+    # The supervisor RESTART below is load-bearing, not decoration. A diskless
+    # guest boots the RELEASED image, so the supervisor that ran at boot is the
+    # released one -- and the released one has the bug this test found (it
+    # trusted mount's exit status, which 'nofail' makes 0 even when nothing
+    # mounted, so the placeholder was never created). Pushing the repo tools
+    # patches only the RAM root, so the fixed code has to be asked to run.
+    # The BOOT half of this validates on the next release run, the same
+    # arrangement category K uses for anything not yet in an image.
     g2 = guest_factory(base, name="late-b", ssh_key=golden.ssh_key)
     g2.wait_ssh(timeout=420)
     _push_tools(g2)
+    g2.run("rc-service mountnas restart", timeout=240)
     placeheld = False
     for _ in range(18):
         if g2.run("grep -q '^mountnas-blocked /mnt/late1 ' /proc/mounts").rc == 0:
