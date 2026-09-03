@@ -77,7 +77,37 @@ _uptime_h() {
 # True if $1 is covered by the read-only 'mountnas-blocked' placeholder that the
 # mountnas service mounts over failed data mounts — mountpoint -q alone reports
 # that placeholder as a healthy mount.
-_blocked() { awk -v m="$1" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts; }
+# One filesystem-fullness check, shared by every partition nas status watches.
+# $1=path $2=label $3=warn% $4=fail% $5=what breaks when it fills.
+# Percent USED, not bytes free: what breaks is running out, and the last few
+# percent is the part worth shouting about whatever the disk's size. A df that
+# cannot be read is silent — an unreadable filesystem is already somebody
+# else's louder problem.
+_space_check() {
+	local sp su sf
+	sp=$1
+	su=$(df -Pk "$sp" 2>/dev/null | awk 'NR==2{print int($3*100/$2)}')
+	sf=$(df -Ph "$sp" 2>/dev/null | awk 'NR==2{print $4}')
+	case "${su:-x}" in ''|*[!0-9]*) return 0 ;; esac
+	if [ "$su" -ge "$4" ]; then
+		bad "$2 is ${su}% full (${sf:-?} free) — $5"
+	elif [ "$su" -ge "$3" ]; then
+		warn "$2 is ${su}% full (${sf:-?} free) — $5"
+	else
+		ok "$2 ${su}% used (${sf:-?} free)"
+	fi
+}
+_blocked() {
+	local m=$1
+	# NORMALIZE first. /proc/mounts never carries a trailing slash, but
+	# snapraid.conf conventionally writes data paths WITH one — 'nas snapraid
+	# add' itself writes 'data d1 /mnt/disk1/'. Comparing the raw value
+	# therefore never matched on a real array, so this check silently did
+	# nothing in exactly the place it exists to protect (caught by
+	# test_preflight_refuses_supervisor_placeholder).
+	while [ "$m" != "/" ] && [ "${m%/}" != "$m" ]; do m=${m%/}; done
+	awk -v m="$m" '$1=="mountnas-blocked" && $2==m{f=1} END{exit !f}' /proc/mounts
+}
 # Disk-state of the filesystem a share/export path lands on: walk up to the
 # nearest mountpoint, then classify. Echoes "ok" (a real disk mount), "blocked"
 # (the ro placeholder over a failed disk), "dead" (the device was detached and

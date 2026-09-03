@@ -10,7 +10,7 @@ cmd_status() {
 	# cmd_status is nested by cmd_report and cmd_status_json (CONTEXT.md: nesting
 	# functions must not leak generic names into their callers); scope the
 	# presentation vars this pass added so they can't clobber a caller.
-	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate srv srd
+	local svc_up rlv rl_ok vc vok vwa vfa alto alto_n ds_on ds_off fwr swt swu deep _own_checks ip swp lbu_out n plt lbk bdays res nf mt spec mp opts dupu dupm busb pkmap bd pk dr maxd par ps src fv h d s p dstate srv srd fsp nmatch
 	deep=0; [ "${1:-}" = "--deep" ] && deep=1
 	# Health-probe friendly: any FAIL record flips the exit code to 1. The
 	# records file may already be provided by cmd_status_json; otherwise
@@ -91,6 +91,27 @@ cmd_status() {
 	# last-commit age, and a month without commits is an idle box, not a
 	# failure — the one real failure (commits skipping the mirror) is not
 	# age-shaped.
+	# Free space, on EVERY filesystem whose exhaustion breaks something. None
+	# of these was checked before: a box could fill any of them and hear
+	# nothing until the consequence arrived.
+	#   data disk  — writes, Docker, persistent logging and the config mirror
+	#                all stop. The owner manages this space consciously, so
+	#                the thresholds are the loose ones.
+	#   /cfg       — 'nas commit' stops saving. TIGHTER thresholds: the
+	#                partition is ~1 GB, the apk cache on it grows with every
+	#                package the user installs and is never pruned, and the
+	#                failure is the silent one — settings simply stop
+	#                persisting and the next reboot reverts them.
+	#   boot media — 'nas upgrade' stages the new system alongside the old
+	#                (apks and boot are copied to .new before the rename), so
+	#                it needs roughly the payload size FREE or the upgrade
+	#                fails partway.
+	[ "$dstate" = ok ] && _space_check "$DATA" "$DATA" 85 95 \
+		"writes are about to start failing"
+	mountpoint -q "$CFG" && _space_check "$CFG" "config partition ($CFG)" 80 90 \
+		"'nas commit' will stop saving your settings"
+	mountpoint -q "$BOOTMNT" && _space_check "$BOOTMNT" "boot media ($BOOTMNT)" 80 90 \
+		"'nas upgrade' needs room to stage the new system"
 	local cmir
 	if [ "$dstate" = ok ]; then
 		if cmir=$(_mirror_newest); then
@@ -227,6 +248,19 @@ cmd_status() {
 	[ -n "$dupu" ] && bad "duplicate UUID in fstab: $dupu"
 	dupm=$(awk '$1!~/^#/ && $2 ~ /^\/(cfg|mnt)/{print $2}' /etc/fstab | sort | uniq -d)
 	[ -n "$dupm" ] && bad "duplicate mountpoint in fstab: $dupm"
+	# The checks above catch a duplicate written TWICE IN FSTAB. This catches
+	# the other shape, which fstab cannot show: one LABEL=/UUID= spec that
+	# matches TWO filesystems ON THE BOX. Cloning a disk is a normal homelab
+	# move and it copies the label with the data, after which the spec resolves
+	# to whichever device the kernel enumerated first — so the box can silently
+	# mount the wrong disk, and mount a different one after the next reboot.
+	# blkid is read from its cache and touches no platter.
+	awk '$1!~/^#/ && $1 ~ /^(LABEL|UUID|PARTUUID)=/{print $1}' /etc/fstab \
+	| sort -u | while read -r fsp; do
+		[ -n "$fsp" ] || continue
+		nmatch=$(blkid -t "$fsp" -o device 2>/dev/null | grep -c .)
+		[ "${nmatch:-0}" -gt 1 ] && bad "$fsp matches $nmatch filesystems on this box — the mount is ambiguous (a cloned disk?); use UUID= or relabel one"
+	done
 	# The one unrecoverable user error: a DATA fstab entry that resolves to the
 	# boot USB itself — formatting or mounting it destroys the running OS.
 	# /cfg (LABEL=MNASCFG) legitimately lives on the stick; only /mnt/* entries

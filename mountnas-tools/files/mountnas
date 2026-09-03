@@ -207,8 +207,16 @@ start() {
 		# networked run tried; net may still be settling here (DHCP), so its
 		# failure stays a logged warning, as before.
 		# shellcheck disable=SC2046  # world entries are single tokens by format
+		# The networked fallback is BOUNDED. It reaches the pinned CDN repos
+		# from inside start(), and busybox init starts the inittab gettys only
+		# after the default runlevel finishes — so on a box whose DNS or CDN is
+		# black-holed (a NAS that boots before its router: the normal case, not
+		# an edge case) apk paid its own per-repository timeout and added
+		# minutes of boot with NO console login available. A missing extra
+		# package is boot noise; an unreachable network must not cost the
+		# console.
 		apk add --quiet --no-network $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
-			|| apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
+			|| timeout 120 apk add --quiet $(cat /etc/apk/world 2>/dev/null) >>"$LOG" 2>&1 \
 			|| log "world sync (apk add) reported errors — a package may be missing until network/cache provides it"
 		# Start exactly the services the sync just made startable. Surgical by
 		# construction: a service the user stopped, or one that crashed, has a

@@ -101,6 +101,22 @@ stub ls 'exit 2'
 assert_eq "dead" "$(_path_on_disk /mnt/disk1/media/films)"
 rm -f "$STUBS/ls"
 
+t "_space_check: ok / warn / fail by percent used"
+# df is stubbed so the thresholds are exercised deterministically, with no
+# real filesystem to fill. Columns match df -Pk / -Ph: size, used, avail.
+NAS_CHECKS=$(mktemp); export NAS_CHECKS
+stub df 'echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/x 1000 500 500 50% /p"'
+out=$(_space_check /p "test fs" 80 90 "it breaks"); assert_match "\[ OK \]" "$out" "50% is ok"
+stub df 'echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/x 1000 850 150 85% /p"'
+out=$(_space_check /p "test fs" 80 90 "it breaks"); assert_match "\[WARN\]" "$out" "85% warns"
+assert_match "it breaks" "$out" "the consequence is named"
+stub df 'echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/x 1000 950 50 95% /p"'
+out=$(_space_check /p "test fs" 80 90 "it breaks"); assert_match "\[FAIL\]" "$out" "95% fails"
+# an unreadable df must stay SILENT, never invent a verdict
+stub df 'exit 1'
+out=$(_space_check /p "test fs" 80 90 "it breaks"); assert_eq "" "$out" "unreadable df says nothing"
+rm -f "$STUBS/df"
+
 t "_boot_usb_disk uses findfs + lsblk pkname"
 stub findfs 'echo /dev/sdz1'
 stub lsblk 'echo sdz'
